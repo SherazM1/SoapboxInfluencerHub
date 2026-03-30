@@ -9,12 +9,16 @@ import streamlit as st
 
 WORKFLOW_SESSION_KEYS = [
     "review_result",
+    "later_export_path",
     "selected_identifiers",
     "recruiting_identifiers",
     "preview_result",
     "template_path",
     "population_result",
 ]
+UPLOAD_PAGE_PATH = "pages/uploadcsv.py"
+REVIEW_PAGE_PATH = "pages/reviewdata.py"
+GENERATE_PAGE_PATH = "pages/generateworkbook.py"
 
 
 @dataclass(slots=True)
@@ -114,7 +118,7 @@ def render_header() -> None:
         if logo_path.exists() and logo_path.is_file():
             st.image(str(logo_path), width=120)
     with title_col:
-        st.title("KKG Campaign Workbook Automation")
+        st.title("Soapbox - Influencer Campaign Hub")
         st.markdown(
             "Use this app to move from a Later export to a validated, template-ready "
             "campaign workbook with a guided step-by-step workflow."
@@ -180,6 +184,31 @@ def render_next_step(status: WorkflowStatus) -> None:
         )
 
 
+def switch_to_page(page_path: str) -> None:
+    """Navigate to a target Streamlit page using native page switching when available."""
+    switch_page = getattr(st, "switch_page", None)
+    if callable(switch_page):
+        switch_page(page_path)
+
+
+def render_workflow_cta(status: WorkflowStatus) -> None:
+    """Render direct workflow navigation calls to action."""
+    st.subheader("Workflow Actions")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Go to Upload Later Export", type="primary", use_container_width=True):
+            switch_to_page(UPLOAD_PAGE_PATH)
+    with col2:
+        next_page_path = {
+            "uploadcsv": UPLOAD_PAGE_PATH,
+            "reviewdata": REVIEW_PAGE_PATH,
+            "generateworkbook": GENERATE_PAGE_PATH,
+        }.get(status.next_step_page)
+        if next_page_path:
+            st.page_link(next_page_path, label="Open Recommended Step")
+
+
 def render_quick_summary() -> None:
     """Render concise summary values from available session data."""
     st.subheader("Quick Summary")
@@ -233,6 +262,7 @@ def render_reset_action() -> None:
     st.caption("Clears workflow data from this session only.")
     if st.button("Start New Run", use_container_width=False):
         clear_workflow_session_state()
+        switch_to_page(UPLOAD_PAGE_PATH)
         st.rerun()
 
 
@@ -258,6 +288,8 @@ def main() -> None:
     st.divider()
 
     render_next_step(workflow_status)
+    st.divider()
+    render_workflow_cta(workflow_status)
     st.divider()
 
     render_quick_summary()

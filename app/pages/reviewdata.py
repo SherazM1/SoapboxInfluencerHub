@@ -101,6 +101,32 @@ def clear_population_state() -> None:
             del st.session_state[key]
 
 
+def switch_to_page(page_path: str) -> None:
+    """Navigate to a target Streamlit page using native page switching when available."""
+    switch_page = getattr(st, "switch_page", None)
+    if callable(switch_page):
+        switch_page(page_path)
+
+
+def render_bottom_navigation(preview_result: Any) -> None:
+    """Render guided back/next page controls for workflow progression."""
+    st.subheader("Navigation")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("<- Back to Upload", use_container_width=True):
+            switch_to_page("pages/uploadcsv.py")
+    with col2:
+        can_continue = preview_result is not None
+        if st.button(
+            "Next -> Generate Workbook",
+            use_container_width=True,
+            disabled=not can_continue,
+        ):
+            switch_to_page("pages/generateworkbook.py")
+    if preview_result is None:
+        st.caption("Build a preview before continuing to workbook generation.")
+
+
 def display_validation_result(validation_result: Any) -> None:
     """Display validation errors and warnings safely and clearly."""
     if validation_result is None:
@@ -385,6 +411,8 @@ def main() -> None:
     preview_result = st.session_state.get("preview_result")
     if preview_result is None:
         st.info("Build a preview to review mapped sections and validation status.")
+        st.divider()
+        render_bottom_navigation(None)
         return
 
     st.divider()
@@ -418,6 +446,8 @@ def main() -> None:
     render_preview_sections(preview_result)
     st.divider()
     render_next_step_guidance(preview_result)
+    st.divider()
+    render_bottom_navigation(preview_result)
 
 
 if __name__ == "__main__":

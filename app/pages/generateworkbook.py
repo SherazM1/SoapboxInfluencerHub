@@ -13,6 +13,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from core.campaign_service import populate_campaign_template
 
+WORKFLOW_SESSION_KEYS = [
+    "review_result",
+    "later_export_path",
+    "selected_identifiers",
+    "recruiting_identifiers",
+    "preview_result",
+    "template_path",
+    "population_result",
+]
+
 
 def safe_get(value: Any, field_name: str, default: Any = None) -> Any:
     """Safely fetch object or dict fields without raising errors."""
@@ -52,6 +62,20 @@ def ensure_xlsx_extension(filename: str) -> str:
 def get_preview_result() -> Any:
     """Retrieve preview result from session state."""
     return st.session_state.get("preview_result")
+
+
+def clear_workflow_session_state() -> None:
+    """Clear only workflow-related keys for a new run."""
+    for key in WORKFLOW_SESSION_KEYS:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def switch_to_page(page_path: str) -> None:
+    """Navigate to a target Streamlit page using native page switching when available."""
+    switch_page = getattr(st, "switch_page", None)
+    if callable(switch_page):
+        switch_page(page_path)
 
 
 def save_uploaded_template_file(uploaded_file: Any) -> Path | None:
@@ -256,6 +280,27 @@ def render_next_step_guidance(population_result: Any) -> None:
         st.warning("Resolve generation errors and retry template population.")
 
 
+def render_bottom_navigation(population_result: Any) -> None:
+    """Render guided back/start-new-run controls for final step."""
+    st.subheader("Navigation")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("<- Back to Review Data", use_container_width=True):
+            switch_to_page("pages/reviewdata.py")
+    with col2:
+        generation_success = bool(safe_get(population_result, "is_successful", False))
+        if st.button(
+            "Start New Run",
+            use_container_width=True,
+            disabled=not generation_success,
+        ):
+            clear_workflow_session_state()
+            switch_to_page("pages/uploadcsv.py")
+            st.rerun()
+    if not bool(safe_get(population_result, "is_successful", False)):
+        st.caption("Start New Run becomes available after successful generation.")
+
+
 def main() -> None:
     """Render final workbook generation page."""
     st.set_page_config(page_title="Generate Workbook", page_icon="??", layout="wide")
@@ -363,6 +408,8 @@ def main() -> None:
 
     st.divider()
     render_next_step_guidance(population_result)
+    st.divider()
+    render_bottom_navigation(population_result)
 
 
 if __name__ == "__main__":

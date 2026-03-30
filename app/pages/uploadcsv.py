@@ -26,6 +26,7 @@ DOWNSTREAM_SESSION_KEYS = [
     "template_path",
     "population_result",
 ]
+REVIEW_PAGE_PATH = "pages/reviewdata.py"
 
 
 def safe_get(value: Any, field_name: str, default: Any = None) -> Any:
@@ -76,6 +77,29 @@ def clear_downstream_session_state() -> None:
     for key in DOWNSTREAM_SESSION_KEYS:
         if key in st.session_state:
             del st.session_state[key]
+
+
+def switch_to_page(page_path: str) -> None:
+    """Navigate to a target Streamlit page using native page switching when available."""
+    switch_page = getattr(st, "switch_page", None)
+    if callable(switch_page):
+        switch_page(page_path)
+
+
+def render_bottom_navigation(review_result: Any) -> None:
+    """Render guided bottom navigation for workflow progression."""
+    st.subheader("Navigation")
+    is_ready = bool(safe_get(review_result, "is_successful", False))
+
+    if st.button(
+        "Next -> Review Data",
+        disabled=not is_ready,
+        use_container_width=False,
+    ):
+        switch_to_page(REVIEW_PAGE_PATH)
+
+    if not is_ready:
+        st.caption("Complete a successful review on this page to continue.")
 
 
 def get_issue_severity(issue: Any) -> str:
@@ -313,6 +337,9 @@ def main() -> None:
         display_records_preview(safe_get(review_result_to_display, "records", []) or [])
         st.divider()
         render_next_step_guidance(review_result_to_display)
+
+    st.divider()
+    render_bottom_navigation(review_result_to_display)
 
 
 if __name__ == "__main__":
