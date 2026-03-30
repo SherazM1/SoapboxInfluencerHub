@@ -295,7 +295,7 @@ def render_bottom_navigation(population_result: Any) -> None:
             disabled=not generation_success,
         ):
             clear_workflow_session_state()
-            switch_to_page("pages/uploadcsv.py")
+            switch_to_page("pages/campaigns.py")
             st.rerun()
     if not bool(safe_get(population_result, "is_successful", False)):
         st.caption("Start New Run becomes available after successful generation.")

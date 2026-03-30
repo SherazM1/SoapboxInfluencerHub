@@ -27,6 +27,7 @@ DOWNSTREAM_SESSION_KEYS = [
     "population_result",
 ]
 REVIEW_PAGE_PATH = "pages/reviewdata.py"
+CAMPAIGNS_PAGE_PATH = "pages/campaigns.py"
 
 
 def safe_get(value: Any, field_name: str, default: Any = None) -> Any:
@@ -90,13 +91,17 @@ def render_bottom_navigation(review_result: Any) -> None:
     """Render guided bottom navigation for workflow progression."""
     st.subheader("Navigation")
     is_ready = bool(safe_get(review_result, "is_successful", False))
-
-    if st.button(
-        "Next -> Review Data",
-        disabled=not is_ready,
-        use_container_width=False,
-    ):
-        switch_to_page(REVIEW_PAGE_PATH)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("<- Back to Workbook Automation", use_container_width=True):
+            switch_to_page(CAMPAIGNS_PAGE_PATH)
+    with col2:
+        if st.button(
+            "Next -> Review Data",
+            disabled=not is_ready,
+            use_container_width=True,
+        ):
+            switch_to_page(REVIEW_PAGE_PATH)
 
     if not is_ready:
         st.caption("Complete a successful review on this page to continue.")
