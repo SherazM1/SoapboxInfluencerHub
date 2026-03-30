@@ -146,27 +146,6 @@ def get_issue_message(issue: Any) -> str:
     return f"{message}{suffix}" if message else f"Validation issue{suffix}"
 
 
-def display_review_summary(review_result: Any) -> None:
-    """Render compact review summary details for a service review result."""
-    st.subheader("Review Summary")
-
-    review_success = bool(safe_get(review_result, "is_successful", False))
-    records = safe_get(review_result, "records", [])
-    parsed_count = len(records) if isinstance(records, list) else 0
-
-    parsed_validation = safe_get(review_result, "parsed_validation", None)
-    error_count = safe_get(parsed_validation, "error_count", None)
-    warning_count = safe_get(parsed_validation, "warning_count", None)
-
-    status_text = "Successful" if review_success else "Failed"
-    st.markdown(
-        f"- **Review status:** {status_text}\n"
-        f"- **Parsed record count:** {parsed_count}\n"
-        f"- **Validation errors:** {error_count if error_count is not None else 'Not available'}\n"
-        f"- **Validation warnings:** {warning_count if warning_count is not None else 'Not available'}"
-    )
-
-
 def display_validation_messages(parsed_validation: Any, errors: list[str] | None = None) -> None:
     """Render runtime/service errors and parsed validation issues."""
     st.subheader("Review Issues")
@@ -276,15 +255,6 @@ def render_page_header() -> None:
     )
 
 
-def render_source_of_truth_notice() -> None:
-    """Render prominent source-of-truth guidance for phase-1 input expectations."""
-    st.info(
-        "**Excel Source of Truth**\n\n"
-        "This phase-1 workflow expects the **Later Excel export (.xlsx)** as the required "
-        "source of truth. The app parses this workbook and uses it for downstream automation."
-    )
-
-
 def render_uploaded_file_info(uploaded_file: Any) -> None:
     """Render uploaded file metadata when a file is currently selected."""
     if uploaded_file is None:
@@ -307,9 +277,6 @@ def main() -> None:
     hide_default_streamlit_sidebar_nav()
 
     render_page_header()
-    st.divider()
-
-    render_source_of_truth_notice()
     st.divider()
 
     st.subheader("Upload File")
@@ -346,8 +313,6 @@ def main() -> None:
                     st.error("Review failed. Check issues below.")
 
     if review_result_to_display is not None:
-        st.divider()
-        display_review_summary(review_result_to_display)
         st.divider()
         display_validation_messages(
             parsed_validation=safe_get(review_result_to_display, "parsed_validation", None),

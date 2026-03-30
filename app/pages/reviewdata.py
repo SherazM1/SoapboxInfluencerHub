@@ -141,79 +141,6 @@ def render_bottom_navigation(preview_result: Any) -> None:
         st.caption("Build a preview before continuing to workbook generation.")
 
 
-def display_validation_result(validation_result: Any) -> None:
-    """Display validation errors and warnings safely and clearly."""
-    if validation_result is None:
-        st.info("No combined validation details available.")
-        return
-
-    issues = safe_get(validation_result, "issues", []) or []
-    error_messages: list[str] = []
-    warning_messages: list[str] = []
-
-    for issue in issues:
-        severity = str(safe_get(issue, "severity", "")).lower()
-        message = str(safe_get(issue, "message", "") or "Validation issue")
-        code = str(safe_get(issue, "code", "") or "")
-        field_name = str(safe_get(issue, "field_name", "") or "")
-        record_identifier = str(safe_get(issue, "record_identifier", "") or "")
-
-        details: list[str] = []
-        if code:
-            details.append(f"code={code}")
-        if field_name:
-            details.append(f"field={field_name}")
-        if record_identifier:
-            details.append(f"record={record_identifier}")
-
-        suffix = f" ({', '.join(details)})" if details else ""
-        line = f"- {message}{suffix}"
-
-        if severity == "error":
-            error_messages.append(line)
-        elif severity == "warning":
-            warning_messages.append(line)
-
-    st.subheader("Validation")
-    if error_messages:
-        st.error("Blocking Validation Errors")
-        for message in error_messages:
-            st.markdown(message)
-    else:
-        st.success("No blocking validation errors.")
-
-    if warning_messages:
-        st.warning("Validation Warnings")
-        for message in warning_messages:
-            st.markdown(message)
-    else:
-        st.info("No validation warnings.")
-
-
-def display_unresolved_identifiers(preview_result: Any) -> None:
-    """Display unresolved selected/recruiting identifiers clearly."""
-    unresolved_selected = safe_get(preview_result, "unresolved_selected_identifiers", []) or []
-    unresolved_recruiting = safe_get(
-        preview_result,
-        "unresolved_recruiting_identifiers",
-        [],
-    ) or []
-
-    st.subheader("Unresolved Identifiers")
-
-    if unresolved_selected:
-        st.error("Unresolved selected influencer identifiers:")
-        st.markdown("\n".join(f"- {value}" for value in unresolved_selected))
-    else:
-        st.success("No unresolved selected identifiers.")
-
-    if unresolved_recruiting:
-        st.error("Unresolved recruiting identifiers:")
-        st.markdown("\n".join(f"- {value}" for value in unresolved_recruiting))
-    else:
-        st.success("No unresolved recruiting identifiers.")
-
-
 def render_preview_sections(preview_result: Any) -> None:
     """Render all mapped preview sections for workflow and influencer rounds."""
     mapping_result = safe_get(preview_result, "mapping_result", None)
@@ -430,33 +357,12 @@ def main() -> None:
         render_bottom_navigation(None)
         return
 
-    st.divider()
-    st.subheader("Preview Summary")
-
-    unresolved_selected = safe_get(preview_result, "unresolved_selected_identifiers", []) or []
-    unresolved_recruiting = safe_get(preview_result, "unresolved_recruiting_identifiers", []) or []
-    combined_validation = safe_get(preview_result, "combined_validation", None)
-    validation_error_count = safe_get(combined_validation, "error_count", "Not available")
-    validation_warning_count = safe_get(combined_validation, "warning_count", "Not available")
-
-    st.markdown(
-        f"- **Preview valid:** {'Yes' if bool(safe_get(preview_result, 'is_valid', False)) else 'No'}\n"
-        f"- **Unresolved selected identifiers:** {len(unresolved_selected)}\n"
-        f"- **Unresolved recruiting identifiers:** {len(unresolved_recruiting)}\n"
-        f"- **Validation errors:** {validation_error_count}\n"
-        f"- **Validation warnings:** {validation_warning_count}"
-    )
-
     runtime_errors = safe_get(preview_result, "errors", []) or []
     if runtime_errors:
         st.subheader("Runtime / Service Errors")
         for error in runtime_errors:
             st.error(str(error))
 
-    st.divider()
-    display_unresolved_identifiers(preview_result)
-    st.divider()
-    display_validation_result(combined_validation)
     st.divider()
     render_preview_sections(preview_result)
     st.divider()
