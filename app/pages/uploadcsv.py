@@ -87,6 +87,20 @@ def switch_to_page(page_path: str) -> None:
         switch_page(page_path)
 
 
+def hide_default_streamlit_sidebar_nav() -> None:
+    """Hide Streamlit's default multipage sidebar navigation list."""
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebarNav"] {
+            display: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_bottom_navigation(review_result: Any) -> None:
     """Render guided bottom navigation for workflow progression."""
     st.subheader("Navigation")
@@ -290,6 +304,7 @@ def render_uploaded_file_info(uploaded_file: Any) -> None:
 def main() -> None:
     """Render source upload/review page and persist results to session state."""
     st.set_page_config(page_title="Upload Later Export", page_icon="??", layout="wide")
+    hide_default_streamlit_sidebar_nav()
 
     render_page_header()
     st.divider()

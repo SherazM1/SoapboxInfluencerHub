@@ -38,6 +38,20 @@ def clear_workflow_session_state() -> None:
             del st.session_state[key]
 
 
+def hide_default_streamlit_sidebar_nav() -> None:
+    """Hide Streamlit's default multipage sidebar navigation list."""
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebarNav"] {
+            display: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_header() -> None:
     """Render module workspace header and orientation."""
     st.title("Workbook Automation")
@@ -114,6 +128,7 @@ def render_reset_action() -> None:
 def main() -> None:
     """Render workbook automation module workspace page."""
     st.set_page_config(page_title="Workbook Automation", page_icon="??", layout="wide")
+    hide_default_streamlit_sidebar_nav()
 
     render_header()
     st.divider()

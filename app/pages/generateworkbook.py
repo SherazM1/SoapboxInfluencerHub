@@ -78,6 +78,20 @@ def switch_to_page(page_path: str) -> None:
         switch_page(page_path)
 
 
+def hide_default_streamlit_sidebar_nav() -> None:
+    """Hide Streamlit's default multipage sidebar navigation list."""
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebarNav"] {
+            display: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def save_uploaded_template_file(uploaded_file: Any) -> Path | None:
     """Persist uploaded template workbook under templates workflow directory."""
     if uploaded_file is None:
@@ -304,6 +318,7 @@ def render_bottom_navigation(population_result: Any) -> None:
 def main() -> None:
     """Render final workbook generation page."""
     st.set_page_config(page_title="Generate Workbook", page_icon="??", layout="wide")
+    hide_default_streamlit_sidebar_nav()
 
     st.title("Generate Populated Campaign Workbook")
     st.markdown(
