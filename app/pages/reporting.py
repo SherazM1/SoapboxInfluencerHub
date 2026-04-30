@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import sys
 from datetime import date
+from pathlib import Path
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import streamlit as st
 
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from core.reporting_db import get_report, init_db, list_reports, save_report
 from core.reporting_template import render_client_report
-
 
 EMPTY_ITEM = {
     "platform": "",
