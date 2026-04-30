@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 import sys
+import uuid
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import urlencode, urlparse, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 import streamlit as st
 
@@ -11,23 +14,17 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from core.reporting_db import get_report, init_db, list_reports, save_report
+from core.reporting_db import generate_report_id, get_report, init_db, list_reports, save_report
 from core.reporting_template import render_client_report
 
+REPORT_IMAGE_DIR = ROOT_DIR / "data" / "report_images"
+PLATFORM_OPTIONS = ["Instagram", "TikTok", "Facebook", "YouTube", "Other"]
 EMPTY_ITEM = {
     "platform": "",
-    "creator_handle": "",
-    "content_title": "",
-    "content_description": "",
     "live_url": "",
     "image_url": "",
+    "image_path": "",
 }
-
-
-def switch_to_page(page_path: str) -> None:
-    switch_page = getattr(st, "switch_page", None)
-    if callable(switch_page):
-        switch_page(page_path)
 
 
 def hide_default_streamlit_sidebar_nav() -> None:
@@ -79,6 +76,8 @@ def normalize_item(item: dict | None = None) -> dict:
     normalized = EMPTY_ITEM.copy()
     if item:
         normalized.update({key: item.get(key) or "" for key in EMPTY_ITEM})
+    if not normalized["platform"] and normalized["live_url"]:
+        normalized["platform"] = detect_platform(normalized["live_url"])
     return normalized
 
 
@@ -96,6 +95,72 @@ def reset_editor(report: dict | None = None) -> None:
 def ensure_editor_state() -> None:
     if "reporting_content_items" not in st.session_state:
         reset_editor()
+
+
+def detect_platform(live_url: str) -> str:
+    host = urlparse((live_url or "").strip()).netloc.lower()
+    host = host[4:] if host.startswith("www.") else host
+    if "instagram.com" in host:
+        return "Instagram"
+    if "tiktok.com" in host:
+        return "TikTok"
+    if "facebook.com" in host or "fb.watch" in host:
+        return "Facebook"
+    if "youtube.com" in host or "youtu.be" in host:
+        return "YouTube"
+    return ""
+
+
+def is_http_url(value: str) -> bool:
+    parsed = urlparse((value or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_preview_image_url(live_url: str) -> str:
+    if not is_http_url(live_url):
+        return ""
+    try:
+        request = Request(
+            live_url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (compatible; SoapboxInfluencerHub/1.0; "
+                    "+https://soapboxretail.com)"
+                )
+            },
+        )
+        with urlopen(request, timeout=4) as response:
+            content_type = response.headers.get("content-type", "")
+            if "text/html" not in content_type:
+                return ""
+            html = response.read(500_000).decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+    patterns = [
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+        r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']twitter:image["\']',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html, flags=re.IGNORECASE)
+        if match:
+            image_url = match.group(1).strip()
+            return image_url if is_http_url(image_url) else ""
+    return ""
+
+
+def save_uploaded_image(report_id: str, row_index: int, uploaded_file) -> str:
+    if uploaded_file is None:
+        return ""
+    REPORT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(uploaded_file.name).suffix.lower() or ".png"
+    filename = f"{report_id}_{row_index}_{uuid.uuid4().hex[:8]}{suffix}"
+    path = REPORT_IMAGE_DIR / filename
+    path.write_bytes(uploaded_file.getbuffer())
+    return str(path.relative_to(ROOT_DIR))
 
 
 def render_view_mode(report_id: str | None) -> None:
@@ -121,7 +186,10 @@ def render_report_picker() -> None:
     left, right = st.columns([2, 1])
     with left:
         if reports:
-            options = {f"{r['client_name']} - {r['report_date']} ({r['report_id']})": r["report_id"] for r in reports}
+            options = {
+                f"{r['client_name']} - {r['report_date']} ({r['report_id']})": r["report_id"]
+                for r in reports
+            }
             selected_label = st.selectbox("Load Existing Report", list(options.keys()))
             if st.button("Load Selected Report", use_container_width=True):
                 report = get_report(options[selected_label])
@@ -204,20 +272,85 @@ def parse_report_date(value: str | None) -> date:
         return date.today()
 
 
-def sync_content_items_from_widgets() -> list[dict]:
+def image_ref_for_preview(item: dict, auto_image_url: str, uploaded_file) -> str:
+    if uploaded_file is not None:
+        return uploaded_file
+    return item.get("image_path") or item.get("image_url") or auto_image_url
+
+
+def render_image_preview(image_ref) -> None:
+    if image_ref:
+        if isinstance(image_ref, str) and image_ref.startswith("data/"):
+            image_ref = ROOT_DIR / image_ref
+        st.image(image_ref, use_container_width=True)
+    else:
+        st.markdown(
+            """
+            <div style="
+                align-items:center;
+                background:#effafb;
+                border:1px dashed #9bd7dc;
+                border-radius:14px;
+                color:#247f87;
+                display:flex;
+                font-weight:700;
+                height:148px;
+                justify-content:center;">
+                Image preview unavailable
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_platform_input(index: int, live_url: str, current_platform: str) -> str:
+    detected_platform = detect_platform(live_url)
+    default_platform = current_platform or detected_platform
+    selected_value = default_platform if default_platform in PLATFORM_OPTIONS else "Other"
+    select_key = f"content_platform_select_{index}"
+    if detected_platform and not current_platform and st.session_state.get(select_key) in {None, "", "Other"}:
+        st.session_state[select_key] = detected_platform
+    selected = st.selectbox(
+        "Platform",
+        PLATFORM_OPTIONS,
+        index=PLATFORM_OPTIONS.index(selected_value),
+        key=select_key,
+    )
+    if selected == "Other":
+        return st.text_input(
+            "Custom Platform",
+            value="" if default_platform in PLATFORM_OPTIONS else default_platform,
+            key=f"content_platform_custom_{index}",
+        )
+    return selected
+
+
+def sync_content_items_from_widgets(report_id: str | None = None) -> list[dict]:
     items = []
     for index, item in enumerate(st.session_state["reporting_content_items"]):
+        live_url = st.session_state.get(f"content_live_url_{index}", item["live_url"]).strip()
+        selected_platform = st.session_state.get(
+            f"content_platform_select_{index}",
+            item["platform"] or detect_platform(live_url),
+        )
+        if selected_platform == "Other":
+            platform = st.session_state.get(f"content_platform_custom_{index}", "").strip()
+        else:
+            platform = selected_platform
+        uploaded_file = st.session_state.get(f"content_image_upload_{index}")
+        image_path = item.get("image_path", "")
+        image_url = item.get("image_url", "")
+        if report_id and uploaded_file is not None:
+            image_path = save_uploaded_image(report_id, index, uploaded_file)
+            image_url = ""
+        elif not image_path and not image_url:
+            image_url = fetch_preview_image_url(live_url)
         items.append(
             {
-                "platform": st.session_state.get(f"content_platform_{index}", item["platform"]),
-                "creator_handle": st.session_state.get(f"content_creator_{index}", item["creator_handle"]),
-                "content_title": st.session_state.get(f"content_title_{index}", item["content_title"]),
-                "content_description": st.session_state.get(
-                    f"content_description_{index}",
-                    item["content_description"],
-                ),
-                "live_url": st.session_state.get(f"content_live_url_{index}", item["live_url"]),
-                "image_url": st.session_state.get(f"content_image_url_{index}", item["image_url"]),
+                "platform": platform.strip(),
+                "live_url": live_url,
+                "image_url": image_url.strip(),
+                "image_path": image_path.strip(),
             }
         )
     st.session_state["reporting_content_items"] = items
@@ -226,34 +359,50 @@ def sync_content_items_from_widgets() -> list[dict]:
 
 def render_content_editor() -> None:
     st.subheader("Featured Content Items")
-    st.caption("Add live posts as they become available. Empty rows are ignored on save.")
+    st.caption("Paste live post links. Platform and preview image are filled in when the URL provides enough metadata.")
 
     for index, item in enumerate(st.session_state["reporting_content_items"]):
         with st.expander(f"Content Item {index + 1}", expanded=index < 3):
-            top_cols = st.columns([1, 1, 1])
+            top_cols = st.columns([2, 1, 1])
             with top_cols[0]:
-                st.text_input("Platform", value=item["platform"], key=f"content_platform_{index}")
+                live_url = st.text_input(
+                    "Live URL",
+                    value=item["live_url"],
+                    key=f"content_live_url_{index}",
+                    placeholder="https://www.instagram.com/...",
+                )
             with top_cols[1]:
-                st.text_input("Creator Handle", value=item["creator_handle"], key=f"content_creator_{index}")
+                platform = render_platform_input(index, live_url, item["platform"])
             with top_cols[2]:
+                st.write("")
+                st.write("")
                 if st.button("Remove Row", key=f"remove_content_{index}", use_container_width=True):
                     sync_content_items_from_widgets()
                     st.session_state["reporting_content_items"].pop(index)
                     if not st.session_state["reporting_content_items"]:
                         st.session_state["reporting_content_items"].append(normalize_item())
                     st.rerun()
-            st.text_input("Content Title", value=item["content_title"], key=f"content_title_{index}")
-            st.text_area(
-                "Content Description",
-                value=item["content_description"],
-                key=f"content_description_{index}",
-                height=92,
-            )
-            link_cols = st.columns(2)
-            with link_cols[0]:
-                st.text_input("Live URL", value=item["live_url"], key=f"content_live_url_{index}")
-            with link_cols[1]:
-                st.text_input("Image URL (optional)", value=item["image_url"], key=f"content_image_url_{index}")
+
+            detected_platform = detect_platform(live_url)
+            if detected_platform and detected_platform == platform:
+                st.caption(f"Platform detected from URL: {detected_platform}")
+            elif not detected_platform and live_url:
+                st.caption("Platform could not be detected confidently. Choose one from the dropdown.")
+
+            auto_image_url = fetch_preview_image_url(live_url)
+            upload_cols = st.columns([1, 1])
+            with upload_cols[0]:
+                uploaded_file = st.file_uploader(
+                    "Image upload fallback",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key=f"content_image_upload_{index}",
+                )
+                if auto_image_url and not item.get("image_path") and not uploaded_file:
+                    st.caption("Preview image found from page metadata.")
+                elif live_url and not auto_image_url and not item.get("image_path") and not uploaded_file:
+                    st.caption("No preview image found. Upload an image or leave the placeholder.")
+            with upload_cols[1]:
+                render_image_preview(image_ref_for_preview(item, auto_image_url, uploaded_file))
 
     if st.button("Add Content Row", use_container_width=True):
         sync_content_items_from_widgets()
@@ -264,8 +413,9 @@ def render_content_editor() -> None:
 def clean_content_items(items: list[dict]) -> list[dict]:
     cleaned = []
     for item in items:
-        if any((item.get(key) or "").strip() for key in EMPTY_ITEM):
-            cleaned.append(normalize_item(item))
+        normalized = normalize_item(item)
+        if normalized["live_url"].strip():
+            cleaned.append(normalized)
     return cleaned
 
 
@@ -274,19 +424,10 @@ def validate_report(report: dict, content_items: list[dict]) -> list[str]:
     if not report["client_name"].strip():
         errors.append("Client Name is required.")
     for index, item in enumerate(content_items, start=1):
-        missing = [
-            label
-            for key, label in [
-                ("platform", "Platform"),
-                ("creator_handle", "Creator Handle"),
-                ("content_title", "Content Title"),
-                ("content_description", "Content Description"),
-                ("live_url", "Live URL"),
-            ]
-            if not item.get(key, "").strip()
-        ]
-        if missing:
-            errors.append(f"Content item {index} is missing: {', '.join(missing)}.")
+        if not item["live_url"].strip():
+            errors.append(f"Content item {index} needs a Live URL.")
+        if not item["platform"].strip():
+            errors.append(f"Content item {index} needs a Platform.")
     return errors
 
 
@@ -295,7 +436,9 @@ def render_save_controls(report: dict) -> None:
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("Save Report", type="primary", use_container_width=True):
-            content_items = clean_content_items(sync_content_items_from_widgets())
+            if not report.get("report_id"):
+                report["report_id"] = generate_report_id()
+            content_items = clean_content_items(sync_content_items_from_widgets(report["report_id"]))
             errors = validate_report(report, content_items)
             if errors:
                 for error in errors:

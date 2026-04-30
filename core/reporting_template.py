@@ -1,287 +1,453 @@
+# core/reporting_template.py
 from __future__ import annotations
 
 import base64
 import html
+import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
 
 import streamlit as st
 
 
+NAVY = "#10243d"
+TEAL = "#27aeb7"
+TEXT_MUTED = "#5f7185"
+BORDER = "#dcecee"
+SOFT_TEAL = "rgba(39, 174, 183, 0.105)"
+SOFT_NAVY = "rgba(16, 36, 61, 0.060)"
+
+
 def render_client_report(report: dict) -> None:
+    """Render the client-facing campaign report."""
     inject_report_css()
     st.markdown(build_report_html(report), unsafe_allow_html=True)
 
 
 def inject_report_css() -> None:
+    """Inject report-specific CSS."""
     st.markdown(
-        """
+        f"""
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800&display=swap');
-        .stApp {
+        @import url('https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800;900&display=swap');
+
+        .stApp {{
             background: #ffffff;
-        }
-        header, [data-testid="stToolbar"], [data-testid="stSidebar"], [data-testid="stSidebarNav"] {
-            display: none;
-        }
-        .block-container {
-            max-width: 1180px;
-            padding: 34px 42px 28px;
-        }
-        .soapbox-report, .soapbox-report * {
+        }}
+
+        header,
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarNav"] {{
+            display: none !important;
+        }}
+
+        .block-container {{
+            max-width: 1120px !important;
+            padding: 34px 36px 30px !important;
+        }}
+
+        .soapbox-report,
+        .soapbox-report * {{
             box-sizing: border-box;
             font-family: 'Raleway', sans-serif;
-            letter-spacing: 0;
-        }
-        .soapbox-report {
-            color: #10243d;
-        }
-        .report-shell {
-            border: 1px solid #dceef0;
-            border-radius: 28px;
-            padding: 34px;
-            background: linear-gradient(180deg, #ffffff 0%, #fbfefe 100%);
-            box-shadow: 0 18px 60px rgba(19, 55, 75, 0.08);
-        }
-        .report-header {
+        }}
+
+        .soapbox-report {{
+            width: 100%;
+            color: {NAVY};
+        }}
+
+        .report-page {{
+            width: 100%;
+            max-width: 1040px;
+            margin: 0 auto;
+            padding: 30px 34px 28px;
+            background:
+                radial-gradient(circle at top right, rgba(39, 174, 183, 0.055), transparent 32%),
+                linear-gradient(180deg, #ffffff 0%, #fbfefe 100%);
+            border: 1px solid #e3f0f2;
+            border-radius: 30px;
+            box-shadow: 0 18px 58px rgba(16, 36, 61, 0.075);
+        }}
+
+        .report-header {{
+            display: flex;
             align-items: flex-start;
-            display: flex;
-            gap: 24px;
             justify-content: space-between;
-            margin-bottom: 30px;
-        }
-        .brand-kicker {
-            color: #27aeb7;
-            font-size: 15px;
+            gap: 28px;
+            margin-bottom: 26px;
+        }}
+
+        .brand-name {{
+            color: {TEAL};
+            font-size: 21px;
             font-weight: 800;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-        }
-        .report-title {
-            color: #10243d;
+            line-height: 1.1;
+            margin: 0 0 7px;
+        }}
+
+        .report-title {{
+            color: {NAVY};
             font-size: 46px;
-            font-weight: 800;
-            line-height: 1.03;
-            margin: 0 0 10px;
-        }
-        .report-date {
-            color: #5b6d80;
-            font-size: 17px;
-            font-weight: 600;
-        }
-        .logo-wrap {
-            align-items: center;
-            background: #ffffff;
-            border: 1px solid #e5f1f3;
-            border-radius: 18px;
-            display: flex;
-            justify-content: center;
-            min-height: 82px;
-            min-width: 170px;
-            padding: 16px 20px;
-        }
-        .logo-wrap img {
-            max-height: 56px;
-            max-width: 150px;
-            object-fit: contain;
-        }
-        .kpi-grid {
-            display: grid;
-            gap: 16px;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            margin-bottom: 34px;
-        }
-        .kpi-card {
-            border-radius: 22px;
-            padding: 20px;
-            min-height: 142px;
-        }
-        .kpi-teal {
-            background: rgba(39, 174, 183, 0.12);
-            border: 1px solid rgba(39, 174, 183, 0.38);
-        }
-        .kpi-navy {
-            background: rgba(16, 36, 61, 0.07);
-            border: 1px solid rgba(16, 36, 61, 0.22);
-        }
-        .kpi-icon {
-            border-radius: 999px;
-            display: inline-flex;
-            height: 34px;
-            margin-bottom: 20px;
-            width: 34px;
-        }
-        .kpi-teal .kpi-icon {
-            background: #27aeb7;
-            box-shadow: inset 0 0 0 9px rgba(255, 255, 255, 0.38);
-        }
-        .kpi-navy .kpi-icon {
-            background: #10243d;
-            box-shadow: inset 0 0 0 9px rgba(255, 255, 255, 0.28);
-        }
-        .kpi-value {
-            color: #10243d;
-            font-size: 32px;
-            font-weight: 800;
-            line-height: 1;
-            margin-bottom: 9px;
-        }
-        .kpi-label {
-            color: #526579;
-            font-size: 14px;
+            font-weight: 900;
+            letter-spacing: -1.3px;
+            line-height: 1.02;
+            margin: 0 0 9px;
+        }}
+
+        .report-date {{
+            color: {TEXT_MUTED};
+            font-size: 16px;
             font-weight: 700;
-        }
-        .section-title-row {
-            align-items: center;
-            border-top: 1px solid #e6eff1;
+        }}
+
+        .logo-box {{
             display: flex;
-            justify-content: space-between;
-            margin: 4px 0 18px;
-            padding-top: 28px;
-        }
-        .section-title {
-            color: #10243d;
-            font-size: 29px;
-            font-weight: 800;
-            margin: 0;
-        }
-        .section-rule {
-            background: #27aeb7;
-            border-radius: 999px;
-            height: 5px;
-            width: 84px;
-        }
-        .content-list {
-            display: grid;
-            gap: 18px;
-        }
-        .content-card {
-            align-items: stretch;
-            background: #ffffff;
-            border: 1px solid #dfecee;
-            border-radius: 24px;
-            display: grid;
-            gap: 0;
-            grid-template-columns: 236px minmax(0, 1fr);
-            min-height: 188px;
-            overflow: hidden;
-            box-shadow: 0 12px 34px rgba(16, 36, 61, 0.06);
-        }
-        .content-image {
-            background-color: #e9f7f8;
-            background-position: center;
-            background-size: cover;
-            min-height: 188px;
-        }
-        .content-placeholder {
             align-items: center;
-            background: linear-gradient(135deg, #dff6f7 0%, #f4fbfc 100%);
-            color: #27aeb7;
-            display: flex;
-            font-size: 42px;
-            font-weight: 800;
             justify-content: center;
-            min-height: 188px;
-        }
-        .content-body {
-            padding: 22px 24px 20px;
-        }
-        .content-meta {
-            align-items: center;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
-        .creator {
-            color: #10243d;
-            font-size: 15px;
-            font-weight: 800;
-        }
-        .platform-pill {
-            background: rgba(39, 174, 183, 0.12);
-            border: 1px solid rgba(39, 174, 183, 0.30);
-            border-radius: 999px;
-            color: #178c95;
-            font-size: 12px;
-            font-weight: 800;
-            padding: 6px 10px;
+            min-width: 142px;
+            max-width: 190px;
+            padding-top: 2px;
+        }}
+
+        .logo-box img {{
+            display: block;
+            max-width: 176px;
+            max-height: 82px;
+            object-fit: contain;
+        }}
+
+        .logo-fallback {{
+            color: {NAVY};
+            font-size: 22px;
+            font-weight: 900;
+            line-height: 0.95;
+            text-align: right;
             text-transform: uppercase;
-        }
-        .content-title {
-            color: #10243d;
-            font-size: 23px;
+        }}
+
+        .logo-fallback span {{
+            display: block;
+            color: {TEAL};
+            font-size: 10px;
             font-weight: 800;
-            line-height: 1.18;
-            margin: 0 0 8px;
-        }
-        .content-description {
-            color: #607286;
-            font-size: 15px;
-            font-weight: 500;
-            line-height: 1.48;
-            margin: 0 0 18px;
-        }
-        .cta {
-            background: #10243d;
-            border-radius: 999px;
-            color: #ffffff !important;
+            letter-spacing: 1.4px;
+            line-height: 1.2;
+            margin-top: 7px;
+        }}
+
+        .kpi-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 15px;
+            margin: 0 0 30px;
+        }}
+
+        .kpi-card {{
+            position: relative;
+            min-height: 134px;
+            padding: 18px 17px 17px;
+            border-radius: 22px;
+            overflow: hidden;
+        }}
+
+        .kpi-card::after {{
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            border-radius: inherit;
+            background: linear-gradient(145deg, rgba(255,255,255,0.46), rgba(255,255,255,0));
+        }}
+
+        .kpi-teal {{
+            background: {SOFT_TEAL};
+            border: 1.5px solid rgba(39, 174, 183, 0.42);
+        }}
+
+        .kpi-navy {{
+            background: {SOFT_NAVY};
+            border: 1.5px solid rgba(16, 36, 61, 0.30);
+        }}
+
+        .kpi-icon {{
+            position: relative;
+            z-index: 1;
             display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            margin-bottom: 17px;
+            border-radius: 999px;
+            font-size: 17px;
+            font-weight: 900;
+        }}
+
+        .kpi-teal .kpi-icon {{
+            color: {TEAL};
+            background: rgba(39, 174, 183, 0.13);
+            border: 1px solid rgba(39, 174, 183, 0.20);
+        }}
+
+        .kpi-navy .kpi-icon {{
+            color: {NAVY};
+            background: rgba(16, 36, 61, 0.075);
+            border: 1px solid rgba(16, 36, 61, 0.13);
+        }}
+
+        .kpi-value {{
+            position: relative;
+            z-index: 1;
+            margin: 0 0 7px;
+            font-size: 31px;
+            font-weight: 900;
+            line-height: 1;
+            letter-spacing: -0.7px;
+        }}
+
+        .kpi-teal .kpi-value {{
+            color: {TEAL};
+        }}
+
+        .kpi-navy .kpi-value {{
+            color: {NAVY};
+        }}
+
+        .kpi-label {{
+            position: relative;
+            z-index: 1;
+            color: #52667a;
             font-size: 13px;
             font-weight: 800;
-            padding: 10px 16px;
+            line-height: 1.25;
+        }}
+
+        .section-heading {{
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            margin: 2px 0 18px;
+        }}
+
+        .section-heading h2 {{
+            flex: 0 0 auto;
+            color: {NAVY};
+            font-size: 29px;
+            font-weight: 900;
+            letter-spacing: -0.55px;
+            line-height: 1;
+            margin: 0;
+        }}
+
+        .section-line {{
+            flex: 1;
+            height: 2px;
+            min-width: 90px;
+            background-image: linear-gradient(to right, rgba(39, 174, 183, 0.55) 35%, rgba(39, 174, 183, 0) 0%);
+            background-position: center;
+            background-repeat: repeat-x;
+            background-size: 12px 2px;
+        }}
+
+        .content-list {{
+            display: grid;
+            gap: 16px;
+        }}
+
+        .content-card {{
+            display: grid;
+            grid-template-columns: 285px minmax(0, 1fr);
+            min-height: 178px;
+            overflow: hidden;
+            background: #ffffff;
+            border: 1px solid {BORDER};
+            border-radius: 23px;
+            box-shadow: 0 12px 32px rgba(16, 36, 61, 0.055);
+        }}
+
+        .content-media-link {{
+            display: block;
+            min-height: 178px;
+            color: inherit !important;
             text-decoration: none !important;
-        }
-        .cta-disabled {
-            background: #d8e3e6;
-            color: #667784 !important;
-        }
-        .empty-content {
-            border: 1px dashed #b9dfe3;
-            border-radius: 22px;
-            color: #607286;
+        }}
+
+        .content-image {{
+            display: block;
+            width: 100%;
+            height: 100%;
+            min-height: 178px;
+            object-fit: cover;
+            background: #eaf8f9;
+        }}
+
+        .content-placeholder {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            min-height: 178px;
+            background:
+                radial-gradient(circle at 20% 18%, rgba(255,255,255,0.9), transparent 30%),
+                linear-gradient(135deg, #dff7f8 0%, #f7fcfd 100%);
+            color: {TEAL};
+            font-size: 15px;
+            font-weight: 900;
+            letter-spacing: 1.2px;
+            text-transform: uppercase;
+        }}
+
+        .content-body {{
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 21px 24px 20px;
+        }}
+
+        .content-topline {{
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 13px;
+        }}
+
+        .platform-pill {{
+            display: inline-flex;
+            align-items: center;
+            width: fit-content;
+            max-width: 100%;
+            padding: 7px 11px;
+            border-radius: 999px;
+            background: rgba(39, 174, 183, 0.105);
+            border: 1px solid rgba(39, 174, 183, 0.22);
+            color: #178c95;
+            font-size: 12px;
+            font-weight: 900;
+            line-height: 1;
+            letter-spacing: 0.7px;
+            text-transform: uppercase;
+        }}
+
+        .content-title {{
+            color: {NAVY};
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: -0.3px;
+            line-height: 1.16;
+            margin: 0 0 9px;
+        }}
+
+        .content-copy {{
+            color: {TEXT_MUTED};
+            font-size: 14.5px;
             font-weight: 600;
-            padding: 28px;
+            line-height: 1.42;
+            margin: 0 0 16px;
+        }}
+
+        .cta {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: fit-content;
+            padding: 10px 16px;
+            border-radius: 999px;
+            background: {TEAL};
+            color: #ffffff !important;
+            font-size: 13px;
+            font-weight: 900;
+            line-height: 1;
+            text-decoration: none !important;
+            box-shadow: 0 8px 18px rgba(39, 174, 183, 0.22);
+        }}
+
+        .cta-disabled {{
+            background: #d7e3e6;
+            box-shadow: none;
+            color: #697b88 !important;
+        }}
+
+        .empty-content {{
+            padding: 30px;
+            border: 1.5px dashed #b7dfe4;
+            border-radius: 22px;
+            background: rgba(39, 174, 183, 0.055);
+            color: {TEXT_MUTED};
+            font-size: 15px;
+            font-weight: 700;
             text-align: center;
-        }
-        .report-footer {
+        }}
+
+        .report-footer {{
+            margin-top: 24px;
+            padding-top: 6px;
             color: #000000;
             font-size: 14px;
-            font-weight: 700;
-            padding-top: 26px;
+            font-weight: 800;
             text-align: center;
-        }
-        @media (max-width: 900px) {
-            .block-container {
-                padding: 18px;
-            }
-            .report-shell {
-                padding: 22px;
-                border-radius: 22px;
-            }
-            .report-header {
+        }}
+
+        @media (max-width: 900px) {{
+            .block-container {{
+                padding: 18px !important;
+            }}
+
+            .report-page {{
+                padding: 24px;
+                border-radius: 24px;
+            }}
+
+            .report-header {{
                 flex-direction: column;
-            }
-            .report-title {
-                font-size: 34px;
-            }
-            .kpi-grid {
+            }}
+
+            .report-title {{
+                font-size: 36px;
+            }}
+
+            .kpi-grid {{
                 grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-            .content-card {
+            }}
+
+            .content-card {{
                 grid-template-columns: 1fr;
-            }
-        }
-        @media (max-width: 560px) {
-            .kpi-grid {
+            }}
+
+            .content-media-link,
+            .content-image,
+            .content-placeholder {{
+                min-height: 240px;
+            }}
+        }}
+
+        @media (max-width: 560px) {{
+            .report-page {{
+                padding: 20px;
+            }}
+
+            .report-title {{
+                font-size: 31px;
+            }}
+
+            .kpi-grid {{
                 grid-template-columns: 1fr;
-            }
-            .section-title-row {
+            }}
+
+            .section-heading {{
                 align-items: flex-start;
                 flex-direction: column;
-                gap: 12px;
-            }
-        }
+                gap: 10px;
+            }}
+
+            .section-line {{
+                width: 100%;
+            }}
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -289,102 +455,263 @@ def inject_report_css() -> None:
 
 
 def build_report_html(report: dict) -> str:
+    """Build the complete report HTML."""
+    client_name = escape(report.get("client_name") or "Client")
+    report_date = escape(report.get("report_date") or "")
     logo_html = build_logo_html()
-    kpis = [
-        ("Organic Impressions", report.get("organic_impressions", 0), "teal"),
-        ("Paid Impressions", report.get("paid_impressions", 0), "navy"),
-        ("Organic Engagements", report.get("organic_engagements", 0), "teal"),
-        ("Paid Engagements", report.get("paid_engagements", 0), "navy"),
-    ]
-    kpi_html = "".join(
-        f"""
-        <div class="kpi-card kpi-{accent}">
-            <span class="kpi-icon"></span>
-            <div class="kpi-value">{format_number(value)}</div>
-            <div class="kpi-label">{escape(label)}</div>
-        </div>
-        """
-        for label, value, accent in kpis
-    )
-    content_items = report.get("content_items") or []
-    content_html = (
-        "".join(build_content_card(item) for item in content_items)
-        if content_items
-        else '<div class="empty-content">Featured content will appear here once live posts are added.</div>'
-    )
+
+    kpi_html = build_kpi_grid(report)
+    content_html = build_content_list(report.get("content_items") or [])
 
     return f"""
     <div class="soapbox-report">
-        <main class="report-shell">
-            <section class="report-header">
+        <main class="report-page" aria-label="Weekly Campaign Metrics Report">
+            <header class="report-header">
                 <div>
-                    <div class="brand-kicker">{escape(report.get("client_name", "Client"))}</div>
+                    <p class="brand-name">{client_name}</p>
                     <h1 class="report-title">Weekly Campaign Metrics</h1>
-                    <div class="report-date">{escape(report.get("report_date", ""))}</div>
+                    <div class="report-date">{report_date}</div>
                 </div>
-                <div class="logo-wrap">{logo_html}</div>
+                <div class="logo-box">
+                    {logo_html}
+                </div>
+            </header>
+
+            {kpi_html}
+
+            <section class="section-heading" aria-label="Featured Live Content">
+                <h2>Featured Live Content</h2>
+                <div class="section-line" aria-hidden="true"></div>
             </section>
-            <section class="kpi-grid">{kpi_html}</section>
-            <section class="section-title-row">
-                <h2 class="section-title">Featured Live Content</h2>
-                <span class="section-rule"></span>
-            </section>
-            <section class="content-list">{content_html}</section>
+
+            {content_html}
+
             <footer class="report-footer">Generated by Soapbox Retail</footer>
         </main>
     </div>
     """
 
 
-def build_content_card(item: dict) -> str:
-    image_html = build_image_html(item.get("image_url"))
-    live_url = (item.get("live_url") or "").strip()
+def build_kpi_grid(report: dict) -> str:
+    """Build KPI cards."""
+    kpis = [
+        {
+            "label": "Organic Impressions",
+            "value": report.get("organic_impressions", 0),
+            "accent": "teal",
+            "icon": "◉",
+        },
+        {
+            "label": "Paid Impressions",
+            "value": report.get("paid_impressions", 0),
+            "accent": "navy",
+            "icon": "↗",
+        },
+        {
+            "label": "Organic Engagements",
+            "value": report.get("organic_engagements", 0),
+            "accent": "teal",
+            "icon": "♡",
+        },
+        {
+            "label": "Paid Engagements",
+            "value": report.get("paid_engagements", 0),
+            "accent": "navy",
+            "icon": "…",
+        },
+    ]
+
+    cards = []
+    for kpi in kpis:
+        cards.append(
+            f"""
+            <article class="kpi-card kpi-{escape(kpi["accent"])}">
+                <div class="kpi-icon" aria-hidden="true">{escape(kpi["icon"])}</div>
+                <div class="kpi-value">{format_number(kpi["value"])}</div>
+                <div class="kpi-label">{escape(kpi["label"])}</div>
+            </article>
+            """
+        )
+
+    return f'<section class="kpi-grid" aria-label="Campaign metrics">{"".join(cards)}</section>'
+
+
+def build_content_list(content_items: list[dict]) -> str:
+    """Build content-card list."""
+    if not content_items:
+        return """
+        <section class="content-list">
+            <div class="empty-content">
+                Featured content will appear here once live posts are added.
+            </div>
+        </section>
+        """
+
+    cards = "".join(build_content_card(item, index) for index, item in enumerate(content_items, start=1))
+    return f'<section class="content-list" aria-label="Featured content cards">{cards}</section>'
+
+
+def build_content_card(item: dict, index: int = 1) -> str:
+    """Build one featured content card."""
+    live_url = clean_text(item.get("live_url"))
+    platform = clean_text(item.get("platform")) or infer_platform(live_url) or "Live Content"
+    image_ref = item.get("image_path") or item.get("image_url") or item.get("uploaded_image_path")
+    image_html = build_image_html(image_ref=image_ref, live_url=live_url, platform=platform, index=index)
+
+    platform_label = escape(platform)
+    content_title = f"{platform_label} Campaign Content"
+    content_copy = "Tap through to view the live campaign content."
+
     if is_valid_url(live_url):
-        cta = f'<a class="cta" href="{escape(live_url)}" target="_blank" rel="noopener noreferrer">View Live Post</a>'
+        cta = (
+            f'<a class="cta" href="{escape(live_url)}" target="_blank" '
+            f'rel="noopener noreferrer" aria-label="Open live {platform_label} post">'
+            "View Live Post</a>"
+        )
     else:
-        cta = '<span class="cta cta-disabled">View Live Post</span>'
+        cta = '<span class="cta cta-disabled" aria-disabled="true">View Live Post</span>'
+
     return f"""
     <article class="content-card">
         {image_html}
         <div class="content-body">
-            <div class="content-meta">
-                <span class="creator">{escape(item.get("creator_handle", ""))}</span>
-                <span class="platform-pill">{escape(item.get("platform", ""))}</span>
+            <div class="content-topline">
+                <span class="platform-pill">{platform_label}</span>
             </div>
-            <h3 class="content-title">{escape(item.get("content_title", ""))}</h3>
-            <p class="content-description">{escape(item.get("content_description", ""))}</p>
+            <h3 class="content-title">{content_title}</h3>
+            <p class="content-copy">{escape(content_copy)}</p>
             {cta}
         </div>
     </article>
     """
 
 
-def build_image_html(image_url: str | None) -> str:
-    if image_url and is_valid_url(image_url.strip()):
-        safe_url = escape(image_url.strip())
-        return f'<div class="content-image" style="background-image: url({safe_url});"></div>'
-    return '<div class="content-placeholder">SB</div>'
+def build_image_html(image_ref: str | None, live_url: str, platform: str, index: int = 1) -> str:
+    """Build clickable image or placeholder."""
+    image_src = resolve_image_src(image_ref)
+    alt_text = f"{platform} live content preview {index}"
+
+    if image_src:
+        media = f'<img class="content-image" src="{escape(image_src)}" alt="{escape(alt_text)}" loading="lazy" />'
+    else:
+        media = (
+            f'<div class="content-placeholder" role="img" aria-label="{escape(alt_text)}">'
+            f"{escape(platform)}</div>"
+        )
+
+    if not is_valid_url(live_url):
+        return f'<div class="content-media-link">{media}</div>'
+
+    return (
+        f'<a class="content-media-link" href="{escape(live_url)}" target="_blank" '
+        f'rel="noopener noreferrer" aria-label="Open live {escape(platform)} post">'
+        f"{media}</a>"
+    )
+
+
+def resolve_image_src(image_ref: str | None) -> str:
+    """Resolve URL, data URI, or local image path into a browser-ready source."""
+    if not image_ref:
+        return ""
+
+    value = str(image_ref).strip()
+    if not value:
+        return ""
+
+    if is_valid_url(value) or value.startswith("data:image/"):
+        return value
+
+    path = Path(value)
+    if not path.is_absolute():
+        root_dir = Path(__file__).resolve().parents[1]
+        path = root_dir / value
+
+    if not path.exists() or not path.is_file():
+        return ""
+
+    mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def build_logo_html() -> str:
-    logo_path = Path(__file__).resolve().parents[1] / "assets" / "logo.png"
-    if not logo_path.exists():
-        return "<strong>Soapbox Retail</strong>"
+    """Build logo image HTML from assets, with fallback text."""
+    logo_path = find_logo_path()
+    if not logo_path:
+        return """
+        <div class="logo-fallback">
+            SOAP<br />BOX
+            <span>Influence + Retail Media</span>
+        </div>
+        """
+
+    mime_type = mimetypes.guess_type(logo_path.name)[0] or "image/png"
     encoded = base64.b64encode(logo_path.read_bytes()).decode("ascii")
-    return f'<img src="data:image/png;base64,{encoded}" alt="Soapbox Retail logo" />'
+    return f'<img src="data:{mime_type};base64,{encoded}" alt="Soapbox Retail logo" />'
+
+
+def find_logo_path() -> Path | None:
+    """Find an existing logo asset without requiring a specific filename."""
+    root_dir = Path(__file__).resolve().parents[1]
+    candidates = [
+        root_dir / "assets" / "logo.png",
+        root_dir / "assets" / "logo.jpg",
+        root_dir / "assets" / "logo.jpeg",
+        root_dir / "assets" / "soapbox_logo.png",
+        root_dir / "assets" / "soapbox-logo.png",
+        root_dir / "app" / "assets" / "logo.png",
+        root_dir / "app" / "assets" / "soapbox_logo.png",
+    ]
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+
+    return None
+
+
+def infer_platform(live_url: str) -> str:
+    """Infer platform from URL domain."""
+    if not live_url:
+        return ""
+
+    parsed = urlparse(live_url)
+    domain = parsed.netloc.lower()
+
+    if "instagram.com" in domain:
+        return "Instagram"
+    if "tiktok.com" in domain:
+        return "TikTok"
+    if "facebook.com" in domain or "fb.watch" in domain:
+        return "Facebook"
+    if "youtube.com" in domain or "youtu.be" in domain:
+        return "YouTube"
+
+    return ""
 
 
 def is_valid_url(value: str) -> bool:
-    parsed = urlparse(value)
+    """Return whether a value is a valid HTTP(S) URL."""
+    if not value:
+        return False
+
+    parsed = urlparse(str(value).strip())
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
+def clean_text(value: object) -> str:
+    """Normalize optional text values."""
+    return str(value or "").strip()
+
+
 def escape(value: object) -> str:
+    """HTML-escape a value."""
     return html.escape(str(value or ""), quote=True)
 
 
 def format_number(value: object) -> str:
+    """Format numeric metrics with commas."""
     try:
-        return f"{int(value):,}"
+        return f"{int(float(value or 0)):,}"
     except (TypeError, ValueError):
         return "0"
