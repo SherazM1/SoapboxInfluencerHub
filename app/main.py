@@ -42,7 +42,7 @@ def render_header() -> None:
         st.title("Soapbox Influencer Hub")
         st.markdown(
             "Select a platform function below. Workbook Automation is active now, "
-            "and Reporting is planned next."
+            "and live campaign reporting is available for client-facing updates."
         )
 
 
@@ -63,10 +63,11 @@ def render_module_cards() -> None:
 
     with col2:
         st.markdown("### Reporting")
-        st.caption("Status: Coming Soon")
-        st.markdown("Reporting dashboards and exports will be added in a future release.")
+        st.caption("Status: Active")
+        st.markdown("Create persistent live campaign reports with stable client links.")
         if st.button("Open Reporting", use_container_width=True):
-            st.info("Reporting module coming soon. This flow will be added later.")
+            switch_to_page("pages/reporting.py")
+        st.page_link("pages/reporting.py", label="Go to Reporting Workspace")
 
 
 def main() -> None:
