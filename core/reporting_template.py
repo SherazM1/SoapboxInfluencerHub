@@ -11,9 +11,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 
-NAVY = "#10243D"
-TEAL = "#27AEB7"
-MUTED = "#5F7185"
+NAVY = "#002C47"
+TEAL = "#33B2C1"
+MUTED = "#536A7A"
 BORDER = "#DDEEEF"
 
 
@@ -45,7 +45,7 @@ def render_client_report(report: dict) -> None:
 
     html_doc = build_report_document(report)
     item_count = len(report.get("content_items") or [])
-    height = 1040 + max(0, item_count - 3) * 220
+    height = 980 + max(0, item_count - 3) * 220
     components.html(html_doc, height=height, scrolling=True)
 
 
@@ -59,9 +59,7 @@ def build_report_document(report: dict) -> str:
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+        {build_font_faces()}
         {build_css()}
     </head>
     <body>
@@ -69,6 +67,55 @@ def build_report_document(report: dict) -> str:
     </body>
     </html>
     """
+
+
+def build_font_faces() -> str:
+    """Embed local Raleway font files from assets when available."""
+    regular = encode_font_asset("Raleway-Regular.ttf")
+    bold = encode_font_asset("Raleway-Bold.ttf")
+
+    rules = ["<style>"]
+    if regular:
+        rules.append(
+            f"""
+            @font-face {{
+                font-family: "RalewayLocal";
+                src: url("data:font/ttf;base64,{regular}") format("truetype");
+                font-weight: 400 600;
+                font-style: normal;
+                font-display: swap;
+            }}
+            """
+        )
+    if bold:
+        rules.append(
+            f"""
+            @font-face {{
+                font-family: "RalewayLocal";
+                src: url("data:font/ttf;base64,{bold}") format("truetype");
+                font-weight: 700 900;
+                font-style: normal;
+                font-display: swap;
+            }}
+            """
+        )
+    rules.append("</style>")
+    return "\n".join(rules)
+
+
+def encode_font_asset(filename: str) -> str:
+    """Return a base64 encoded font asset if present."""
+    root_dir = Path(__file__).resolve().parents[1]
+    candidates = [
+        root_dir / "assets" / filename,
+        root_dir / "app" / "assets" / filename,
+    ]
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return base64.b64encode(candidate.read_bytes()).decode("ascii")
+
+    return ""
 
 
 def build_css() -> str:
@@ -80,6 +127,7 @@ def build_css() -> str:
         --teal: {TEAL};
         --muted: {MUTED};
         --border: {BORDER};
+        --font: "RalewayLocal", "Raleway", Arial, sans-serif;
     }}
 
     * {{
@@ -92,7 +140,7 @@ def build_css() -> str:
         padding: 0;
         background: #ffffff;
         color: var(--navy);
-        font-family: "Raleway", Arial, sans-serif;
+        font-family: var(--font);
     }}
 
     body {{
@@ -100,45 +148,45 @@ def build_css() -> str:
     }}
 
     .report-page {{
-        width: min(1080px, 100%);
+        width: min(940px, 100%);
         margin: 0 auto;
-        padding: 36px 38px 30px;
+        padding: 30px 34px 28px;
         border: 1px solid #e0eff1;
-        border-radius: 30px;
+        border-radius: 28px;
         background:
-            radial-gradient(circle at 93% 5%, rgba(39, 174, 183, 0.055), transparent 26%),
+            radial-gradient(circle at 90% 5%, rgba(0, 44, 71, 0.035), transparent 27%),
             linear-gradient(180deg, #ffffff 0%, #fbfefe 100%);
-        box-shadow: 0 18px 60px rgba(16, 36, 61, 0.08);
+        box-shadow: 0 18px 58px rgba(0, 44, 71, 0.075);
     }}
 
     .report-header {{
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 32px;
-        margin-bottom: 28px;
+        gap: 28px;
+        margin-bottom: 24px;
     }}
 
     .brand-name {{
-        margin: 0 0 8px;
+        margin: 0 0 5px;
         color: var(--teal);
-        font-size: 22px;
+        font-size: 24px;
         font-weight: 800;
-        line-height: 1.1;
+        line-height: 1.05;
     }}
 
     .report-title {{
-        margin: 0 0 10px;
+        margin: 0 0 8px;
         color: var(--navy);
-        font-size: 48px;
-        font-weight: 900;
-        letter-spacing: -1.4px;
-        line-height: 1.02;
+        font-size: 34px;
+        font-weight: 800;
+        letter-spacing: -0.85px;
+        line-height: 1.03;
     }}
 
     .report-date {{
         color: var(--muted);
-        font-size: 16px;
+        font-size: 15px;
         font-weight: 700;
     }}
 
@@ -146,20 +194,20 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: flex-end;
-        min-width: 178px;
-        padding-top: 2px;
+        min-width: 150px;
+        padding-top: 1px;
     }}
 
     .logo-box img {{
         display: block;
-        max-width: 174px;
-        max-height: 84px;
+        max-width: 145px;
+        max-height: 72px;
         object-fit: contain;
     }}
 
     .logo-fallback {{
         color: var(--navy);
-        font-size: 32px;
+        font-size: 29px;
         font-weight: 900;
         letter-spacing: -1px;
         line-height: 0.85;
@@ -168,28 +216,35 @@ def build_css() -> str:
 
     .logo-fallback small {{
         display: block;
-        margin-top: 8px;
+        margin-top: 7px;
         color: var(--teal);
-        font-size: 9px;
+        font-size: 8.5px;
         font-weight: 800;
-        letter-spacing: 1.3px;
-        line-height: 1.25;
+        letter-spacing: 1.2px;
+        line-height: 1.2;
         text-transform: uppercase;
     }}
 
     .kpi-grid {{
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 15px;
-        margin-bottom: 31px;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 13px;
+        width: 100%;
+        max-width: 785px;
+        margin: 0 0 28px;
     }}
 
     .kpi-card {{
-        min-height: 138px;
-        padding: 18px 17px 16px;
-        border-radius: 22px;
         position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 124px;
+        padding: 16px 12px 14px;
+        border-radius: 14px;
         overflow: hidden;
+        text-align: center;
     }}
 
     .kpi-card::after {{
@@ -197,7 +252,7 @@ def build_css() -> str:
         position: absolute;
         inset: 0;
         border-radius: inherit;
-        background: linear-gradient(145deg, rgba(255,255,255,0.55), rgba(255,255,255,0));
+        background: linear-gradient(145deg, rgba(255,255,255,0.47), rgba(255,255,255,0));
         pointer-events: none;
     }}
 
@@ -207,45 +262,46 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(39, 174, 183, 0.11);
-        border: 1.5px solid rgba(39, 174, 183, 0.42);
+        background: rgba(51, 178, 193, 0.105);
+        border: 1.35px solid rgba(51, 178, 193, 0.55);
     }}
 
     .kpi-navy {{
-        background: rgba(16, 36, 61, 0.06);
-        border: 1.5px solid rgba(16, 36, 61, 0.28);
+        background: rgba(0, 44, 71, 0.070);
+        border: 1.35px solid rgba(0, 44, 71, 0.48);
     }}
 
     .kpi-icon {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 37px;
-        height: 37px;
-        margin-bottom: 17px;
+        width: 38px;
+        height: 38px;
+        margin: 0 0 12px;
         border-radius: 999px;
-        font-size: 18px;
+        font-size: 17px;
         font-weight: 900;
+        line-height: 1;
     }}
 
     .kpi-teal .kpi-icon {{
         color: var(--teal);
-        background: rgba(39, 174, 183, 0.12);
-        border: 1px solid rgba(39, 174, 183, 0.22);
+        background: rgba(51, 178, 193, 0.13);
+        border: 1px solid rgba(51, 178, 193, 0.24);
     }}
 
     .kpi-navy .kpi-icon {{
         color: var(--navy);
-        background: rgba(16, 36, 61, 0.075);
-        border: 1px solid rgba(16, 36, 61, 0.14);
+        background: rgba(0, 44, 71, 0.085);
+        border: 1px solid rgba(0, 44, 71, 0.16);
     }}
 
     .kpi-value {{
-        margin-bottom: 8px;
-        font-size: 31px;
+        margin: 0 0 8px;
+        font-size: 30px;
         font-weight: 900;
         letter-spacing: -0.7px;
-        line-height: 1;
+        line-height: 0.95;
     }}
 
     .kpi-teal .kpi-value {{
@@ -257,10 +313,11 @@ def build_css() -> str:
     }}
 
     .kpi-label {{
-        color: #52667a;
-        font-size: 13px;
-        font-weight: 800;
-        line-height: 1.25;
+        color: var(--navy);
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.18;
+        opacity: 0.78;
     }}
 
     .section-heading {{
@@ -274,9 +331,9 @@ def build_css() -> str:
         flex: 0 0 auto;
         margin: 0;
         color: var(--navy);
-        font-size: 30px;
+        font-size: 27px;
         font-weight: 900;
-        letter-spacing: -0.65px;
+        letter-spacing: -0.55px;
         line-height: 1;
     }}
 
@@ -286,8 +343,8 @@ def build_css() -> str:
         min-width: 80px;
         background-image: linear-gradient(
             to right,
-            rgba(39, 174, 183, 0.52) 35%,
-            rgba(39, 174, 183, 0) 0%
+            rgba(51, 178, 193, 0.52) 35%,
+            rgba(51, 178, 193, 0) 0%
         );
         background-position: center;
         background-repeat: repeat-x;
@@ -307,7 +364,7 @@ def build_css() -> str:
         border: 1px solid var(--border);
         border-radius: 24px;
         background: #ffffff;
-        box-shadow: 0 12px 34px rgba(16, 36, 61, 0.055);
+        box-shadow: 0 12px 34px rgba(0, 44, 71, 0.055);
     }}
 
     .media-link {{
@@ -335,7 +392,7 @@ def build_css() -> str:
         min-height: 184px;
         background:
             radial-gradient(circle at 24% 18%, rgba(255,255,255,0.92), transparent 30%),
-            linear-gradient(135deg, #dff7f8 0%, #f8fcfd 100%);
+            linear-gradient(135deg, rgba(51, 178, 193, 0.15) 0%, #f8fcfd 100%);
         color: var(--teal);
         font-size: 16px;
         font-weight: 900;
@@ -355,9 +412,9 @@ def build_css() -> str:
         width: fit-content;
         margin-bottom: 13px;
         padding: 7px 11px;
-        border: 1px solid rgba(39, 174, 183, 0.22);
+        border: 1px solid rgba(51, 178, 193, 0.26);
         border-radius: 999px;
-        background: rgba(39, 174, 183, 0.105);
+        background: rgba(51, 178, 193, 0.11);
         color: #178c95;
         font-size: 12px;
         font-weight: 900;
@@ -396,7 +453,7 @@ def build_css() -> str:
         font-weight: 900;
         line-height: 1;
         text-decoration: none;
-        box-shadow: 0 8px 18px rgba(39, 174, 183, 0.22);
+        box-shadow: 0 8px 18px rgba(51, 178, 193, 0.22);
     }}
 
     .cta-disabled {{
@@ -407,9 +464,9 @@ def build_css() -> str:
 
     .empty-content {{
         padding: 32px;
-        border: 1.5px dashed #b7dfe4;
+        border: 1.5px dashed rgba(51, 178, 193, 0.38);
         border-radius: 22px;
-        background: rgba(39, 174, 183, 0.055);
+        background: rgba(51, 178, 193, 0.055);
         color: var(--muted);
         font-size: 15px;
         font-weight: 700;
@@ -440,7 +497,11 @@ def build_css() -> str:
         }}
 
         .report-title {{
-            font-size: 36px;
+            font-size: 31px;
+        }}
+
+        .brand-name {{
+            font-size: 22px;
         }}
 
         .logo-box {{
@@ -449,6 +510,7 @@ def build_css() -> str:
 
         .kpi-grid {{
             grid-template-columns: repeat(2, minmax(0, 1fr));
+            max-width: 100%;
         }}
 
         .content-card {{
@@ -464,7 +526,7 @@ def build_css() -> str:
 
     @media (max-width: 520px) {{
         .report-title {{
-            font-size: 31px;
+            font-size: 28px;
         }}
 
         .kpi-grid {{
