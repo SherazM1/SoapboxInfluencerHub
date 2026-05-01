@@ -747,6 +747,9 @@ def build_content_list(content_items: list[dict]) -> str:
 def build_content_card(item: dict, index: int) -> str:
     """Build a single content card."""
     live_url = clean_text(item.get("live_url"))
+    # Safety fallback: normalize the URL in case it came unnormalized from storage
+    live_url = ensure_normalized_url(live_url)
+    
     platform = normalize_platform(clean_text(item.get("platform")) or infer_platform(live_url) or "Live Content")
     creator_handle = clean_text(item.get("creator_handle"))
     title = clean_text(item.get("content_title")) or default_content_title(platform)
@@ -994,11 +997,16 @@ def icon_chat() -> str:
 
 
 def infer_platform(live_url: str) -> str:
-    """Infer platform from a live URL."""
+    """Infer platform from a live URL.
+    
+    Resilient to URLs with or without scheme, www prefix, mixed case, etc.
+    """
     if not live_url:
         return ""
 
-    domain = urlparse(live_url).netloc.lower()
+    # Normalize first for reliable domain extraction
+    normalized = ensure_normalized_url(live_url)
+    domain = urlparse(normalized).netloc.lower()
     if domain.startswith("www."):
         domain = domain[4:]
 
@@ -1012,6 +1020,28 @@ def infer_platform(live_url: str) -> str:
         return "YouTube"
 
     return ""
+
+
+def ensure_normalized_url(value: str) -> str:
+    """Ensure a URL is normalized with https:// scheme if it looks like a domain.
+    
+    Safety fallback for template rendering. This mirrors the normalization
+    done during save, in case some URLs need re-normalization.
+    """
+    value = clean_text(value)
+    if not value:
+        return ""
+    
+    # Already has a scheme
+    if value.startswith(("http://", "https://")):
+        return value
+    
+    # Check if it looks like a domain (has a dot in netloc)
+    parsed = urlparse(f"https://{value}")
+    if "." in parsed.netloc:
+        return f"https://{value}"
+    
+    return value
 
 
 def is_valid_url(value: str) -> bool:

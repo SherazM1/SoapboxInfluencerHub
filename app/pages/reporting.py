@@ -76,6 +76,9 @@ def normalize_item(item: dict | None = None) -> dict:
     normalized = EMPTY_ITEM.copy()
     if item:
         normalized.update({key: item.get(key) or "" for key in EMPTY_ITEM})
+    # Normalize the live_url in the item
+    normalized["live_url"] = normalize_live_url(normalized["live_url"])
+    # Auto-detect platform if not set
     if not normalized["platform"] and normalized["live_url"]:
         normalized["platform"] = detect_platform(normalized["live_url"])
     return normalized
@@ -97,8 +100,41 @@ def ensure_editor_state() -> None:
         reset_editor()
 
 
+def normalize_live_url(value: str) -> str:
+    """Normalize a live URL for storage and validation.
+    
+    - Strip whitespace
+    - Return empty string if empty
+    - Keep URLs that already have http(s):// scheme
+    - Prepend https:// to domain-like strings (with dots)
+    - Do not prepend to obvious garbage
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    
+    # Already has a scheme, keep it
+    if value.startswith(("http://", "https://")):
+        return value
+    
+    # Check if it looks like a domain/path (has a dot in the netloc)
+    # This works by trying to parse it as if https:// were prepended
+    parsed = urlparse(f"https://{value}")
+    if "." in parsed.netloc:
+        return f"https://{value}"
+    
+    # Otherwise, return as-is (don't auto-prepend to garbage)
+    return value
+
+
 def detect_platform(live_url: str) -> str:
-    host = urlparse((live_url or "").strip()).netloc.lower()
+    """Detect platform from a live URL.
+    
+    Resilient to URLs with or without scheme, www prefix, mixed case, etc.
+    """
+    # Normalize the URL first for detection
+    normalized = normalize_live_url(live_url)
+    host = urlparse((normalized or "").strip()).netloc.lower()
     host = host[4:] if host.startswith("www.") else host
     if "instagram.com" in host:
         return "Instagram"
@@ -328,7 +364,11 @@ def render_platform_input(index: int, live_url: str, current_platform: str) -> s
 def sync_content_items_from_widgets(report_id: str | None = None) -> list[dict]:
     items = []
     for index, item in enumerate(st.session_state["reporting_content_items"]):
-        live_url = st.session_state.get(f"content_live_url_{index}", item["live_url"]).strip()
+        # Read and normalize the live URL immediately
+        raw_live_url = st.session_state.get(f"content_live_url_{index}", item["live_url"])
+        live_url = normalize_live_url(raw_live_url)
+        
+        # Auto-detect platform from normalized URL if not explicitly set
         selected_platform = st.session_state.get(
             f"content_platform_select_{index}",
             item["platform"] or detect_platform(live_url),
@@ -337,6 +377,11 @@ def sync_content_items_from_widgets(report_id: str | None = None) -> list[dict]:
             platform = st.session_state.get(f"content_platform_custom_{index}", "").strip()
         else:
             platform = selected_platform
+        
+        # If platform is still blank after UI interaction, try again from normalized URL
+        if not platform:
+            platform = detect_platform(live_url)
+        
         uploaded_file = st.session_state.get(f"content_image_upload_{index}")
         image_path = item.get("image_path", "")
         image_url = item.get("image_url", "")
@@ -344,6 +389,7 @@ def sync_content_items_from_widgets(report_id: str | None = None) -> list[dict]:
             image_path = save_uploaded_image(report_id, index, uploaded_file)
             image_url = ""
         elif not image_path and not image_url:
+            # Use normalized URL for preview image fetching
             image_url = fetch_preview_image_url(live_url)
         items.append(
             {
@@ -424,10 +470,14 @@ def validate_report(report: dict, content_items: list[dict]) -> list[str]:
     if not report["client_name"].strip():
         errors.append("Client Name is required.")
     for index, item in enumerate(content_items, start=1):
-        if not item["live_url"].strip():
-            errors.append(f"Content item {index} needs a Live URL.")
-        if not item["platform"].strip():
-            errors.append(f"Content item {index} needs a Platform.")
+        # Normalize the URL and check if it's valid
+        live_url = normalize_live_url(item["live_url"])
+        if not live_url.strip():
+            errors.append(f"Content item {index} needs a valid Live URL.")
+        # Try to detect platform from normalized URL if not set
+        platform = item["platform"].strip() or detect_platform(live_url)
+        if not platform:
+            errors.append(f"Content item {index} needs a Platform (could not auto-detect from URL).")
     return errors
 
 
