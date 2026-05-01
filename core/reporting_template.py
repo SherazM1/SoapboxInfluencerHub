@@ -8,7 +8,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 NAVY = "#002C47"
@@ -18,55 +17,33 @@ BORDER = "#DDEEEF"
 
 
 def render_client_report(report: dict) -> None:
-    """Render the client-facing campaign report in an isolated HTML component."""
+    """Render the client-facing campaign report as the actual Streamlit page content."""
     st.markdown(
-        """
+        f"""
         <style>
         header,
         [data-testid="stToolbar"],
         [data-testid="stDecoration"],
         [data-testid="stSidebar"],
-        [data-testid="stSidebarNav"] {
+        [data-testid="stSidebarNav"] {{
             display: none !important;
-        }
+        }}
 
-        .block-container {
-            max-width: 1160px !important;
-            padding: 24px 24px 32px !important;
-        }
+        .stApp {{
+            background: #ffffff !important;
+        }}
 
-        .stApp {
-            background: #ffffff;
-        }
+        .block-container {{
+            max-width: 1040px !important;
+            padding: 22px 24px 34px !important;
+        }}
         </style>
+        {build_font_faces()}
+        {build_css()}
         """,
         unsafe_allow_html=True,
     )
-
-    html_doc = build_report_document(report)
-    item_count = len(report.get("content_items") or [])
-    height = 980 + max(0, item_count - 3) * 220
-    components.html(html_doc, height=height, scrolling=True)
-
-
-def build_report_document(report: dict) -> str:
-    """Build a full HTML document for the report."""
-    body = build_report_html(report)
-
-    return f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        {build_font_faces()}
-        {build_css()}
-    </head>
-    <body>
-        {body}
-    </body>
-    </html>
-    """
+    st.markdown(build_report_html(report), unsafe_allow_html=True)
 
 
 def build_font_faces() -> str:
@@ -75,6 +52,7 @@ def build_font_faces() -> str:
     bold = encode_font_asset("Raleway-Bold.ttf")
 
     rules = ["<style>"]
+
     if regular:
         rules.append(
             f"""
@@ -87,6 +65,7 @@ def build_font_faces() -> str:
             }}
             """
         )
+
     if bold:
         rules.append(
             f"""
@@ -99,6 +78,7 @@ def build_font_faces() -> str:
             }}
             """
         )
+
     rules.append("</style>")
     return "\n".join(rules)
 
@@ -119,44 +99,37 @@ def encode_font_asset(filename: str) -> str:
 
 
 def build_css() -> str:
-    """Build isolated report CSS."""
+    """Build report CSS."""
     return f"""
     <style>
     :root {{
-        --navy: {NAVY};
-        --teal: {TEAL};
-        --muted: {MUTED};
-        --border: {BORDER};
-        --font: "RalewayLocal", "Raleway", Arial, sans-serif;
+        --report-navy: {NAVY};
+        --report-teal: {TEAL};
+        --report-muted: {MUTED};
+        --report-border: {BORDER};
+        --report-font: "RalewayLocal", "Raleway", Arial, sans-serif;
     }}
 
-    * {{
+    .soapbox-report,
+    .soapbox-report * {{
         box-sizing: border-box;
+        font-family: var(--report-font);
     }}
 
-    html,
-    body {{
-        margin: 0;
-        padding: 0;
-        background: #ffffff;
-        color: var(--navy);
-        font-family: var(--font);
-    }}
-
-    body {{
-        padding: 14px;
+    .soapbox-report {{
+        width: 100%;
+        margin: 0 auto;
+        color: var(--report-navy);
     }}
 
     .report-page {{
-        width: min(940px, 100%);
+        width: 100%;
+        max-width: 940px;
         margin: 0 auto;
         padding: 30px 34px 28px;
-        border: 1px solid #e0eff1;
-        border-radius: 28px;
         background:
-            radial-gradient(circle at 90% 5%, rgba(0, 44, 71, 0.035), transparent 27%),
+            radial-gradient(circle at 90% 5%, rgba(0, 44, 71, 0.025), transparent 28%),
             linear-gradient(180deg, #ffffff 0%, #fbfefe 100%);
-        box-shadow: 0 18px 58px rgba(0, 44, 71, 0.075);
     }}
 
     .report-header {{
@@ -169,15 +142,15 @@ def build_css() -> str:
 
     .brand-name {{
         margin: 0 0 5px;
-        color: var(--teal);
-        font-size: 24px;
+        color: var(--report-teal);
+        font-size: 25px;
         font-weight: 800;
         line-height: 1.05;
     }}
 
     .report-title {{
         margin: 0 0 8px;
-        color: var(--navy);
+        color: var(--report-navy);
         font-size: 34px;
         font-weight: 800;
         letter-spacing: -0.85px;
@@ -185,7 +158,7 @@ def build_css() -> str:
     }}
 
     .report-date {{
-        color: var(--muted);
+        color: var(--report-muted);
         font-size: 15px;
         font-weight: 700;
     }}
@@ -195,7 +168,11 @@ def build_css() -> str:
         align-items: flex-start;
         justify-content: flex-end;
         min-width: 150px;
-        padding-top: 1px;
+        padding: 0;
+        margin: 0;
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
     }}
 
     .logo-box img {{
@@ -203,10 +180,13 @@ def build_css() -> str:
         max-width: 145px;
         max-height: 72px;
         object-fit: contain;
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
     }}
 
     .logo-fallback {{
-        color: var(--navy);
+        color: var(--report-navy);
         font-size: 29px;
         font-weight: 900;
         letter-spacing: -1px;
@@ -217,7 +197,7 @@ def build_css() -> str:
     .logo-fallback small {{
         display: block;
         margin-top: 7px;
-        color: var(--teal);
+        color: var(--report-teal);
         font-size: 8.5px;
         font-weight: 800;
         letter-spacing: 1.2px;
@@ -252,7 +232,7 @@ def build_css() -> str:
         position: absolute;
         inset: 0;
         border-radius: inherit;
-        background: linear-gradient(145deg, rgba(255,255,255,0.47), rgba(255,255,255,0));
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0));
         pointer-events: none;
     }}
 
@@ -267,7 +247,7 @@ def build_css() -> str:
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.070);
+        background: rgba(0, 44, 71, 0.075);
         border: 1.35px solid rgba(0, 44, 71, 0.48);
     }}
 
@@ -279,19 +259,23 @@ def build_css() -> str:
         height: 38px;
         margin: 0 0 12px;
         border-radius: 999px;
-        font-size: 17px;
-        font-weight: 900;
         line-height: 1;
     }}
 
+    .kpi-icon svg {{
+        display: block;
+        width: 20px;
+        height: 20px;
+    }}
+
     .kpi-teal .kpi-icon {{
-        color: var(--teal);
+        color: var(--report-teal);
         background: rgba(51, 178, 193, 0.13);
         border: 1px solid rgba(51, 178, 193, 0.24);
     }}
 
     .kpi-navy .kpi-icon {{
-        color: var(--navy);
+        color: var(--report-navy);
         background: rgba(0, 44, 71, 0.085);
         border: 1px solid rgba(0, 44, 71, 0.16);
     }}
@@ -305,15 +289,15 @@ def build_css() -> str:
     }}
 
     .kpi-teal .kpi-value {{
-        color: var(--teal);
+        color: var(--report-teal);
     }}
 
     .kpi-navy .kpi-value {{
-        color: var(--navy);
+        color: var(--report-navy);
     }}
 
     .kpi-label {{
-        color: var(--navy);
+        color: var(--report-navy);
         font-size: 11px;
         font-weight: 700;
         line-height: 1.18;
@@ -330,7 +314,7 @@ def build_css() -> str:
     .section-heading h2 {{
         flex: 0 0 auto;
         margin: 0;
-        color: var(--navy);
+        color: var(--report-navy);
         font-size: 27px;
         font-weight: 900;
         letter-spacing: -0.55px;
@@ -361,7 +345,7 @@ def build_css() -> str:
         grid-template-columns: 305px minmax(0, 1fr);
         min-height: 184px;
         overflow: hidden;
-        border: 1px solid var(--border);
+        border: 1px solid var(--report-border);
         border-radius: 24px;
         background: #ffffff;
         box-shadow: 0 12px 34px rgba(0, 44, 71, 0.055);
@@ -371,7 +355,7 @@ def build_css() -> str:
         display: block;
         min-height: 184px;
         color: inherit;
-        text-decoration: none;
+        text-decoration: none !important;
     }}
 
     .content-image {{
@@ -391,9 +375,9 @@ def build_css() -> str:
         height: 100%;
         min-height: 184px;
         background:
-            radial-gradient(circle at 24% 18%, rgba(255,255,255,0.92), transparent 30%),
+            radial-gradient(circle at 24% 18%, rgba(255, 255, 255, 0.92), transparent 30%),
             linear-gradient(135deg, rgba(51, 178, 193, 0.15) 0%, #f8fcfd 100%);
-        color: var(--teal);
+        color: var(--report-teal);
         font-size: 16px;
         font-weight: 900;
         letter-spacing: 1.3px;
@@ -425,7 +409,7 @@ def build_css() -> str:
 
     .content-title {{
         margin: 0 0 9px;
-        color: var(--navy);
+        color: var(--report-navy);
         font-size: 23px;
         font-weight: 900;
         letter-spacing: -0.35px;
@@ -434,7 +418,7 @@ def build_css() -> str:
 
     .content-copy {{
         margin: 0 0 17px;
-        color: var(--muted);
+        color: var(--report-muted);
         font-size: 14.5px;
         font-weight: 600;
         line-height: 1.45;
@@ -447,18 +431,18 @@ def build_css() -> str:
         width: fit-content;
         padding: 10px 16px;
         border-radius: 999px;
-        background: var(--teal);
-        color: #ffffff;
+        background: var(--report-teal);
+        color: #ffffff !important;
         font-size: 13px;
         font-weight: 900;
         line-height: 1;
-        text-decoration: none;
+        text-decoration: none !important;
         box-shadow: 0 8px 18px rgba(51, 178, 193, 0.22);
     }}
 
     .cta-disabled {{
         background: #d7e3e6;
-        color: #697b88;
+        color: #697b88 !important;
         box-shadow: none;
     }}
 
@@ -467,7 +451,7 @@ def build_css() -> str:
         border: 1.5px dashed rgba(51, 178, 193, 0.38);
         border-radius: 22px;
         background: rgba(51, 178, 193, 0.055);
-        color: var(--muted);
+        color: var(--report-muted);
         font-size: 15px;
         font-weight: 700;
         text-align: center;
@@ -482,13 +466,8 @@ def build_css() -> str:
     }}
 
     @media (max-width: 850px) {{
-        body {{
-            padding: 8px;
-        }}
-
         .report-page {{
             padding: 24px;
-            border-radius: 24px;
         }}
 
         .report-header {{
@@ -556,39 +535,41 @@ def build_report_html(report: dict) -> str:
     content_html = build_content_list(report.get("content_items") or [])
 
     return f"""
-    <main class="report-page" aria-label="Weekly Campaign Metrics Report">
-        <header class="report-header">
-            <div>
-                <p class="brand-name">{client_name}</p>
-                <h1 class="report-title">Weekly Campaign Metrics</h1>
-                <div class="report-date">{escape(report_date)}</div>
-            </div>
-            <div class="logo-box">
-                {logo_html}
-            </div>
-        </header>
+    <div class="soapbox-report">
+        <main class="report-page" aria-label="Weekly Campaign Metrics Report">
+            <header class="report-header">
+                <div>
+                    <p class="brand-name">{client_name}</p>
+                    <h1 class="report-title">Weekly Campaign Metrics</h1>
+                    <div class="report-date">{escape(report_date)}</div>
+                </div>
+                <div class="logo-box">
+                    {logo_html}
+                </div>
+            </header>
 
-        {kpi_html}
+            {kpi_html}
 
-        <section class="section-heading" aria-label="Featured Live Content">
-            <h2>Featured Live Content</h2>
-            <div class="section-line" aria-hidden="true"></div>
-        </section>
+            <section class="section-heading" aria-label="Featured Live Content">
+                <h2>Featured Live Content</h2>
+                <div class="section-line" aria-hidden="true"></div>
+            </section>
 
-        {content_html}
+            {content_html}
 
-        <footer class="report-footer">Generated by Soapbox Retail</footer>
-    </main>
+            <footer class="report-footer">Generated by Soapbox Retail</footer>
+        </main>
+    </div>
     """
 
 
 def build_kpi_grid(report: dict) -> str:
     """Build the four KPI cards."""
     kpis = [
-        ("Organic Impressions", report.get("organic_impressions", 0), "teal", "◉"),
-        ("Paid Impressions", report.get("paid_impressions", 0), "navy", "↗"),
-        ("Organic Engagements", report.get("organic_engagements", 0), "teal", "♡"),
-        ("Paid Engagements", report.get("paid_engagements", 0), "navy", "…"),
+        ("Organic Impressions", report.get("organic_impressions", 0), "teal", icon_eye()),
+        ("Paid Impressions", report.get("paid_impressions", 0), "navy", icon_megaphone()),
+        ("Organic Engagements", report.get("organic_engagements", 0), "teal", icon_heart()),
+        ("Paid Engagements", report.get("paid_engagements", 0), "navy", icon_chat()),
     ]
 
     cards = []
@@ -596,7 +577,7 @@ def build_kpi_grid(report: dict) -> str:
         cards.append(
             f"""
             <article class="kpi-card kpi-{escape(accent)}">
-                <div class="kpi-icon" aria-hidden="true">{escape(icon)}</div>
+                <div class="kpi-icon" aria-hidden="true">{icon}</div>
                 <div class="kpi-value">{format_number(value)}</div>
                 <div class="kpi-label">{escape(label)}</div>
             </article>
@@ -748,13 +729,16 @@ def find_logo_path() -> Path | None:
     root_dir = Path(__file__).resolve().parents[1]
 
     candidates = [
+        root_dir / "assets" / "logo-transparent.png",
+        root_dir / "assets" / "soapbox_logo_transparent.png",
+        root_dir / "assets" / "soapbox-logo-transparent.png",
         root_dir / "assets" / "logo.png",
-        root_dir / "assets" / "logo.jpg",
-        root_dir / "assets" / "logo.jpeg",
         root_dir / "assets" / "soapbox_logo.png",
         root_dir / "assets" / "soapbox-logo.png",
+        root_dir / "app" / "assets" / "logo-transparent.png",
+        root_dir / "app" / "assets" / "soapbox_logo_transparent.png",
+        root_dir / "app" / "assets" / "soapbox-logo-transparent.png",
         root_dir / "app" / "assets" / "logo.png",
-        root_dir / "app" / "assets" / "logo.jpg",
         root_dir / "app" / "assets" / "soapbox_logo.png",
         root_dir / "app" / "assets" / "soapbox-logo.png",
     ]
@@ -764,6 +748,50 @@ def find_logo_path() -> Path | None:
             return candidate
 
     return None
+
+
+def icon_eye() -> str:
+    return """
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"
+              stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        <circle cx="12" cy="12" r="3.1" stroke="currentColor" stroke-width="2"/>
+    </svg>
+    """
+
+
+def icon_megaphone() -> str:
+    return """
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 13.2h3.2l8.6 4.3V6.5L7.2 10.8H4v2.4Z"
+              fill="currentColor"/>
+        <path d="M7.2 13.2 8.6 19h2.5l-1.7-5.8"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M18.2 9.2c1 .7 1.6 1.7 1.6 2.8s-.6 2.1-1.6 2.8"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    """
+
+
+def icon_heart() -> str:
+    return """
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 20.2s-7.6-4.6-9.1-9.6C1.9 7.1 4 4.5 7.1 4.5c1.9 0 3.4 1 4.2 2.4.8-1.4 2.3-2.4 4.2-2.4 3.1 0 5.2 2.6 4.2 6.1-1.5 5-9.7 9.6-9.7 9.6Z"
+              fill="currentColor"/>
+    </svg>
+    """
+
+
+def icon_chat() -> str:
+    return """
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5 5.5h14a2 2 0 0 1 2 2v7.7a2 2 0 0 1-2 2H9.2L5 20.3v-3.1a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2Z"
+              fill="currentColor"/>
+        <circle cx="8.5" cy="11.3" r="1.1" fill="#ffffff"/>
+        <circle cx="12" cy="11.3" r="1.1" fill="#ffffff"/>
+        <circle cx="15.5" cy="11.3" r="1.1" fill="#ffffff"/>
+    </svg>
+    """
 
 
 def infer_platform(live_url: str) -> str:
