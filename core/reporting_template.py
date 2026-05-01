@@ -34,8 +34,8 @@ def render_client_report(report: dict) -> None:
         }}
 
         .block-container {{
-            max-width: 1040px !important;
-            padding: 22px 24px 34px !important;
+            max-width: 1060px !important;
+            padding: 18px 24px 34px !important;
         }}
         </style>
         {build_font_faces()}
@@ -126,10 +126,8 @@ def build_css() -> str:
         width: 100%;
         max-width: 940px;
         margin: 0 auto;
-        padding: 30px 34px 28px;
-        background:
-            radial-gradient(circle at 90% 5%, rgba(0, 44, 71, 0.025), transparent 28%),
-            linear-gradient(180deg, #ffffff 0%, #fbfefe 100%);
+        padding: 26px 30px 26px;
+        background: #ffffff;
     }}
 
     .report-header {{
