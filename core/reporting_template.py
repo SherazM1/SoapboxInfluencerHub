@@ -36,8 +36,8 @@ def render_client_report(report: dict) -> None:
         }
 
         .block-container {
-            max-width: 1160px !important;
-            padding: 18px 24px 34px !important;
+            max-width: 1240px !important;
+            padding: 10px 18px 34px !important;
         }
         </style>
         """,
@@ -46,7 +46,7 @@ def render_client_report(report: dict) -> None:
 
     content_items = report.get("content_items") or []
     visible_item_count = len([item for item in content_items if clean_text(item.get("live_url"))])
-    height = 850 + max(visible_item_count, 3) * 215
+    height = 940 + max(visible_item_count, 3) * 245
 
     components.html(
         build_report_document(report),
@@ -70,6 +70,14 @@ def build_report_document(report: dict) -> str:
     </head>
     <body>
         {build_report_html(report)}
+        <script>
+            window.addEventListener("load", function () {{
+                window.scrollTo(0, 0);
+                try {{
+                    window.parent.scrollTo(0, 0);
+                }} catch (error) {{}}
+            }});
+        </script>
     </body>
     </html>
     """
@@ -93,6 +101,7 @@ def build_css() -> str:
         margin: 0;
         padding: 0;
         background: #ffffff;
+        scroll-behavior: auto;
     }}
 
     body,
@@ -114,14 +123,14 @@ def build_css() -> str:
 
     .report-shell {{
         width: 100%;
-        max-width: 1040px;
+        max-width: 1120px;
         margin: 0 auto;
         padding: 0;
     }}
 
     .report-page {{
         width: 100%;
-        padding: 34px 40px 30px;
+        padding: 42px 44px 46px;
         background: #ffffff;
     }}
 
@@ -129,8 +138,8 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 28px;
-        margin-bottom: 27px;
+        gap: 36px;
+        margin-bottom: 36px;
     }}
 
     .report-heading {{
@@ -139,26 +148,26 @@ def build_css() -> str:
     }}
 
     .brand-name {{
-        margin: 0 0 4px;
+        margin: 0 0 8px;
         color: var(--teal);
-        font-size: 31px;
+        font-size: 34px;
         font-weight: 800;
-        letter-spacing: -0.55px;
-        line-height: 1.04;
+        letter-spacing: -0.7px;
+        line-height: 1.02;
     }}
 
     .report-title {{
-        margin: 0 0 9px;
+        margin: 0 0 12px;
         color: var(--navy);
-        font-size: 24px;
+        font-size: 42px;
         font-weight: 800;
-        letter-spacing: -0.45px;
-        line-height: 1.06;
+        letter-spacing: -1.15px;
+        line-height: 1.03;
     }}
 
     .report-date {{
         color: var(--muted);
-        font-size: 14px;
+        font-size: 18px;
         font-weight: 700;
         line-height: 1.2;
     }}
@@ -167,8 +176,8 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: flex-end;
-        min-width: 160px;
-        padding-top: 2px;
+        min-width: 190px;
+        padding-top: 0;
         background: transparent;
         border: 0;
         box-shadow: none;
@@ -176,8 +185,8 @@ def build_css() -> str:
 
     .logo-box img {{
         display: block;
-        max-width: 150px;
-        max-height: 76px;
+        max-width: 176px;
+        max-height: 92px;
         object-fit: contain;
         background: transparent;
         border: 0;
@@ -186,7 +195,7 @@ def build_css() -> str:
 
     .logo-fallback {{
         color: var(--navy);
-        font-size: 30px;
+        font-size: 34px;
         font-weight: 900;
         letter-spacing: -1.2px;
         line-height: 0.84;
@@ -197,7 +206,7 @@ def build_css() -> str:
         display: block;
         margin-top: 7px;
         color: var(--teal);
-        font-size: 8.5px;
+        font-size: 9px;
         font-weight: 800;
         letter-spacing: 1.2px;
         text-transform: uppercase;
@@ -206,9 +215,10 @@ def build_css() -> str:
     .kpi-grid {{
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 11px;
-        max-width: 810px;
-        margin: 0 0 24px;
+        gap: 18px;
+        width: 100%;
+        max-width: 980px;
+        margin: 0 auto 38px;
     }}
 
     .kpi-card {{
@@ -217,9 +227,9 @@ def build_css() -> str:
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 132px;
-        padding: 15px 12px 14px;
-        border-radius: 16px;
+        min-height: 174px;
+        padding: 22px 16px 20px;
+        border-radius: 18px;
         text-align: center;
         overflow: hidden;
     }}
@@ -228,7 +238,9 @@ def build_css() -> str:
         content: "";
         position: absolute;
         inset: 0;
-        background: linear-gradient(150deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0));
+        background:
+            radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.58), transparent 34%),
+            linear-gradient(150deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0));
         pointer-events: none;
     }}
 
@@ -238,49 +250,49 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(51, 178, 193, 0.09);
-        border: 1.35px solid rgba(51, 178, 193, 0.48);
+        background: rgba(51, 178, 193, 0.105);
+        border: 1.7px solid rgba(51, 178, 193, 0.58);
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.085);
-        border: 1.35px solid rgba(0, 44, 71, 0.42);
+        background: rgba(0, 44, 71, 0.13);
+        border: 1.7px solid rgba(0, 44, 71, 0.58);
     }}
 
     .kpi-icon {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 40px;
-        height: 40px;
-        margin-bottom: 12px;
+        width: 58px;
+        height: 58px;
+        margin-bottom: 20px;
         border-radius: 999px;
     }}
 
     .kpi-icon svg {{
-        width: 20px;
-        height: 20px;
+        width: 29px;
+        height: 29px;
         display: block;
     }}
 
     .kpi-teal .kpi-icon {{
         color: var(--teal);
-        background: rgba(51, 178, 193, 0.13);
-        border: 1px solid rgba(51, 178, 193, 0.25);
+        background: rgba(51, 178, 193, 0.16);
+        border: 1px solid rgba(51, 178, 193, 0.28);
     }}
 
     .kpi-navy .kpi-icon {{
         color: var(--navy);
-        background: rgba(0, 44, 71, 0.085);
-        border: 1px solid rgba(0, 44, 71, 0.16);
+        background: rgba(0, 44, 71, 0.10);
+        border: 1px solid rgba(0, 44, 71, 0.20);
     }}
 
     .kpi-value {{
-        margin: 0 0 8px;
-        font-size: 30px;
+        margin: 0 0 12px;
+        font-size: 43px;
         font-weight: 900;
-        letter-spacing: -0.75px;
-        line-height: 0.95;
+        letter-spacing: -1.1px;
+        line-height: 0.9;
     }}
 
     .kpi-teal .kpi-value {{
@@ -292,26 +304,26 @@ def build_css() -> str:
     }}
 
     .kpi-label {{
-        color: rgba(0, 44, 71, 0.78);
-        font-size: 11px;
+        color: rgba(0, 44, 71, 0.82);
+        font-size: 15px;
         font-weight: 700;
-        line-height: 1.2;
+        line-height: 1.18;
     }}
 
     .section-heading {{
         display: flex;
         align-items: center;
-        gap: 18px;
-        margin: 0 0 16px;
+        gap: 22px;
+        margin: 0 0 24px;
     }}
 
     .section-heading h2 {{
         flex: 0 0 auto;
         margin: 0;
         color: var(--navy);
-        font-size: 27px;
+        font-size: 34px;
         font-weight: 900;
-        letter-spacing: -0.55px;
+        letter-spacing: -0.75px;
         line-height: 1;
     }}
 
@@ -326,28 +338,28 @@ def build_css() -> str:
         );
         background-position: center;
         background-repeat: repeat-x;
-        background-size: 12px 2px;
+        background-size: 13px 2px;
     }}
 
     .content-list {{
         display: grid;
-        gap: 15px;
+        gap: 18px;
     }}
 
     .content-card {{
         display: grid;
-        grid-template-columns: 285px minmax(0, 1fr);
-        min-height: 178px;
+        grid-template-columns: 390px minmax(0, 1fr);
+        min-height: 230px;
         overflow: hidden;
         border: 1px solid var(--border);
-        border-radius: 22px;
+        border-radius: 24px;
         background: #ffffff;
-        box-shadow: 0 10px 26px rgba(0, 44, 71, 0.045);
+        box-shadow: 0 12px 32px rgba(0, 44, 71, 0.055);
     }}
 
     .media-link {{
         display: block;
-        min-height: 178px;
+        min-height: 230px;
         color: inherit;
         text-decoration: none;
         background: #f3fafc;
@@ -363,82 +375,95 @@ def build_css() -> str:
         display: block;
         width: 100%;
         height: 100%;
-        min-height: 178px;
+        min-height: 230px;
         object-fit: cover;
         object-position: center center;
         background: #e8f6f8;
     }}
 
     .placeholder {{
+        position: relative;
         display: flex;
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 178px;
-        padding: 18px;
+        min-height: 230px;
+        padding: 22px;
         background:
-            radial-gradient(circle at 22% 20%, rgba(255, 255, 255, 0.95), transparent 28%),
-            linear-gradient(135deg, rgba(51, 178, 193, 0.14) 0%, #f8fcfd 100%);
-        color: var(--teal);
-        font-size: 16px;
+            radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.95), transparent 24%),
+            radial-gradient(circle at 78% 86%, rgba(51, 178, 193, 0.16), transparent 30%),
+            linear-gradient(135deg, rgba(51, 178, 193, 0.11) 0%, rgba(247, 251, 253, 1) 100%);
+        color: rgba(51, 178, 193, 0.78);
+        font-size: 17px;
         font-weight: 900;
-        letter-spacing: 1.1px;
+        letter-spacing: 1.3px;
         text-align: center;
         text-transform: uppercase;
+    }}
+
+    .placeholder::before {{
+        content: "";
+        position: absolute;
+        width: 58px;
+        height: 58px;
+        border-radius: 999px;
+        background: rgba(51, 178, 193, 0.10);
+        border: 1px solid rgba(51, 178, 193, 0.18);
+        transform: translateY(-48px);
     }}
 
     .content-body {{
         display: flex;
         flex-direction: column;
         justify-content: center;
-        padding: 21px 24px;
+        padding: 30px 34px;
     }}
 
     .content-meta {{
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
         flex-wrap: wrap;
-        margin-bottom: 12px;
+        margin-bottom: 15px;
     }}
 
     .platform-pill {{
         display: inline-flex;
         width: fit-content;
-        padding: 7px 11px;
-        border: 1px solid rgba(51, 178, 193, 0.24);
+        padding: 8px 13px;
+        border: 1px solid rgba(51, 178, 193, 0.26);
         border-radius: 999px;
         background: rgba(51, 178, 193, 0.10);
         color: #178C95;
         font-size: 12px;
         font-weight: 900;
-        letter-spacing: 0.75px;
+        letter-spacing: 0.78px;
         line-height: 1;
         text-transform: uppercase;
     }}
 
     .content-handle {{
         color: var(--muted);
-        font-size: 13px;
+        font-size: 15px;
         font-weight: 700;
         line-height: 1.2;
     }}
 
     .content-title {{
-        margin: 0 0 8px;
+        margin: 0 0 10px;
         color: var(--navy);
-        font-size: 20px;
+        font-size: 25px;
         font-weight: 900;
-        letter-spacing: -0.25px;
-        line-height: 1.18;
+        letter-spacing: -0.35px;
+        line-height: 1.15;
     }}
 
     .content-copy {{
-        margin: 0 0 16px;
+        margin: 0 0 20px;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 16px;
         font-weight: 600;
-        line-height: 1.5;
+        line-height: 1.48;
     }}
 
     .content-actions {{
@@ -454,15 +479,15 @@ def build_css() -> str:
         justify-content: center;
         gap: 8px;
         width: fit-content;
-        padding: 10px 16px;
+        padding: 12px 18px;
         border-radius: 999px;
         background: var(--teal);
         color: #ffffff !important;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 900;
         line-height: 1;
         text-decoration: none;
-        box-shadow: 0 8px 18px rgba(51, 178, 193, 0.2);
+        box-shadow: 0 9px 20px rgba(51, 178, 193, 0.24);
     }}
 
     .cta::after {{
@@ -489,7 +514,7 @@ def build_css() -> str:
     }}
 
     .empty-content {{
-        padding: 34px 28px;
+        padding: 42px 30px;
         border: 1.5px dashed rgba(51, 178, 193, 0.34);
         border-radius: 22px;
         background: rgba(51, 178, 193, 0.05);
@@ -498,30 +523,31 @@ def build_css() -> str:
     }}
 
     .empty-content-title {{
-        margin: 0 0 6px;
+        margin: 0 0 8px;
         color: var(--navy);
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 800;
     }}
 
     .empty-content-copy {{
         margin: 0;
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 600;
         line-height: 1.5;
     }}
 
     .report-footer {{
-        margin-top: 24px;
+        margin-top: 38px;
+        padding-bottom: 18px;
         color: #000000;
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 800;
         text-align: center;
     }}
 
     @media (max-width: 920px) {{
         .report-page {{
-            padding: 28px 24px 24px;
+            padding: 30px 24px 34px;
         }}
 
         .report-header {{
@@ -545,21 +571,25 @@ def build_css() -> str:
         .media-link,
         .content-image,
         .placeholder {{
-            min-height: 230px;
+            min-height: 260px;
         }}
     }}
 
     @media (max-width: 560px) {{
         .report-page {{
-            padding: 24px 18px 22px;
+            padding: 24px 18px 30px;
         }}
 
         .brand-name {{
-            font-size: 25px;
+            font-size: 27px;
         }}
 
         .report-title {{
-            font-size: 22px;
+            font-size: 32px;
+        }}
+
+        .report-date {{
+            font-size: 16px;
         }}
 
         .kpi-grid {{
@@ -577,7 +607,7 @@ def build_css() -> str:
         }}
 
         .content-body {{
-            padding: 20px 18px;
+            padding: 24px 20px;
         }}
     }}
     </style>
@@ -984,6 +1014,7 @@ def format_number(value: object) -> str:
 def format_date(value: object) -> str:
     """Format ISO dates into m/d/yyyy."""
     raw = clean_text(value)
+    
     if not raw:
         return ""
 
