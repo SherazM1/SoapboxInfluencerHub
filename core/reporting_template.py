@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 NAVY = "#002C47"
@@ -18,89 +19,64 @@ SOFT_BG = "#F7FBFD"
 
 
 def render_client_report(report: dict) -> None:
-    """Render the client-facing campaign report directly in Streamlit."""
+    """Render the client-facing campaign report in an isolated HTML component."""
     st.markdown(
-        f"""
+        """
         <style>
         header,
         [data-testid="stToolbar"],
         [data-testid="stDecoration"],
         [data-testid="stSidebar"],
-        [data-testid="stSidebarNav"] {{
+        [data-testid="stSidebarNav"] {
             display: none !important;
-        }}
+        }
 
-        .stApp {{
+        .stApp {
             background: #ffffff !important;
-        }}
+        }
 
-        .block-container {{
-            max-width: 1140px !important;
-            padding: 18px 24px 40px !important;
-        }}
+        .block-container {
+            max-width: 1160px !important;
+            padding: 18px 24px 34px !important;
+        }
         </style>
-        {build_font_faces()}
-        {build_css()}
         """,
         unsafe_allow_html=True,
     )
-    st.markdown(build_report_html(report), unsafe_allow_html=True)
+
+    content_items = report.get("content_items") or []
+    visible_item_count = len([item for item in content_items if clean_text(item.get("live_url"))])
+    height = 850 + max(visible_item_count, 3) * 215
+
+    components.html(
+        build_report_document(report),
+        height=height,
+        scrolling=False,
+    )
 
 
-def build_font_faces() -> str:
-    """Embed local Raleway assets when present."""
-    regular = encode_font_asset("Raleway-Regular.ttf")
-    bold = encode_font_asset("Raleway-Bold.ttf")
-
-    rules = ["<style>"]
-
-    if regular:
-        rules.append(
-            f"""
-            @font-face {{
-                font-family: "RalewayLocal";
-                src: url("data:font/ttf;base64,{regular}") format("truetype");
-                font-weight: 400 600;
-                font-style: normal;
-                font-display: swap;
-            }}
-            """
-        )
-
-    if bold:
-        rules.append(
-            f"""
-            @font-face {{
-                font-family: "RalewayLocal";
-                src: url("data:font/ttf;base64,{bold}") format("truetype");
-                font-weight: 700 900;
-                font-style: normal;
-                font-display: swap;
-            }}
-            """
-        )
-
-    rules.append("</style>")
-    return "\n".join(rules)
-
-
-def encode_font_asset(filename: str) -> str:
-    """Return a base64 encoded font asset if available."""
-    root_dir = Path(__file__).resolve().parents[1]
-    candidates = [
-        root_dir / "assets" / filename,
-        root_dir / "app" / "assets" / filename,
-    ]
-
-    for candidate in candidates:
-        if candidate.exists() and candidate.is_file():
-            return base64.b64encode(candidate.read_bytes()).decode("ascii")
-
-    return ""
+def build_report_document(report: dict) -> str:
+    """Build the isolated HTML document."""
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+        {build_css()}
+    </head>
+    <body>
+        {build_report_html(report)}
+    </body>
+    </html>
+    """
 
 
 def build_css() -> str:
-    """Build the client report CSS."""
+    """Build isolated report CSS."""
     return f"""
     <style>
     :root {{
@@ -109,47 +85,44 @@ def build_css() -> str:
         --muted: {MUTED};
         --border: {BORDER};
         --soft-bg: {SOFT_BG};
-        --font: "RalewayLocal", "Raleway", Arial, sans-serif;
+        --font: "Raleway", Arial, sans-serif;
     }}
 
-    .soapbox-report,
-    .soapbox-report * {{
+    html,
+    body {{
+        margin: 0;
+        padding: 0;
+        background: #ffffff;
+    }}
+
+    body,
+    body * {{
         box-sizing: border-box;
         font-family: var(--font);
     }}
 
+    a {{
+        color: inherit;
+    }}
+
     .soapbox-report {{
         width: 100%;
+        padding: 0;
         color: var(--navy);
+        background: #ffffff;
     }}
 
     .report-shell {{
+        width: 100%;
         max-width: 1040px;
         margin: 0 auto;
         padding: 0;
     }}
 
     .report-page {{
-        position: relative;
         width: 100%;
-        padding: 36px 42px 30px;
-        border: 1px solid rgba(0, 44, 71, 0.08);
-        border-radius: 28px;
-        background:
-            radial-gradient(circle at top right, rgba(51, 178, 193, 0.06), transparent 24%),
-            linear-gradient(180deg, #ffffff 0%, #fcfeff 100%);
-        box-shadow: 0 18px 45px rgba(0, 44, 71, 0.045);
-        overflow: hidden;
-    }}
-
-    .report-page::before {{
-        content: "";
-        position: absolute;
-        inset: 0 auto auto 0;
-        width: 100%;
-        height: 6px;
-        background: linear-gradient(90deg, rgba(51, 178, 193, 0.16), rgba(0, 44, 71, 0.04));
-        opacity: 0.55;
+        padding: 34px 40px 30px;
+        background: #ffffff;
     }}
 
     .report-header {{
@@ -157,7 +130,7 @@ def build_css() -> str:
         align-items: flex-start;
         justify-content: space-between;
         gap: 28px;
-        margin-bottom: 28px;
+        margin-bottom: 27px;
     }}
 
     .report-heading {{
@@ -168,23 +141,24 @@ def build_css() -> str:
     .brand-name {{
         margin: 0 0 4px;
         color: var(--teal);
-        font-size: 28px;
+        font-size: 31px;
         font-weight: 800;
-        line-height: 1.05;
+        letter-spacing: -0.55px;
+        line-height: 1.04;
     }}
 
     .report-title {{
-        margin: 0 0 10px;
+        margin: 0 0 9px;
         color: var(--navy);
-        font-size: 31px;
+        font-size: 24px;
         font-weight: 800;
-        letter-spacing: -0.9px;
-        line-height: 1.04;
+        letter-spacing: -0.45px;
+        line-height: 1.06;
     }}
 
     .report-date {{
         color: var(--muted);
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 700;
         line-height: 1.2;
     }}
@@ -193,7 +167,7 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: flex-end;
-        min-width: 170px;
+        min-width: 160px;
         padding-top: 2px;
         background: transparent;
         border: 0;
@@ -232,9 +206,9 @@ def build_css() -> str:
     .kpi-grid {{
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 14px;
-        max-width: 840px;
-        margin: 0 0 30px;
+        gap: 11px;
+        max-width: 810px;
+        margin: 0 0 24px;
     }}
 
     .kpi-card {{
@@ -243,9 +217,9 @@ def build_css() -> str:
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 150px;
-        padding: 16px 14px 15px;
-        border-radius: 18px;
+        min-height: 132px;
+        padding: 15px 12px 14px;
+        border-radius: 16px;
         text-align: center;
         overflow: hidden;
     }}
@@ -254,7 +228,7 @@ def build_css() -> str:
         content: "";
         position: absolute;
         inset: 0;
-        background: linear-gradient(160deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0));
+        background: linear-gradient(150deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0));
         pointer-events: none;
     }}
 
@@ -264,48 +238,48 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(51, 178, 193, 0.08);
-        border: 1.4px solid rgba(51, 178, 193, 0.42);
+        background: rgba(51, 178, 193, 0.09);
+        border: 1.35px solid rgba(51, 178, 193, 0.48);
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.045);
-        border: 1.4px solid rgba(0, 44, 71, 0.32);
+        background: rgba(0, 44, 71, 0.085);
+        border: 1.35px solid rgba(0, 44, 71, 0.42);
     }}
 
     .kpi-icon {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 46px;
-        height: 46px;
-        margin-bottom: 14px;
+        width: 40px;
+        height: 40px;
+        margin-bottom: 12px;
         border-radius: 999px;
     }}
 
     .kpi-icon svg {{
-        width: 22px;
-        height: 22px;
+        width: 20px;
+        height: 20px;
         display: block;
     }}
 
     .kpi-teal .kpi-icon {{
         color: var(--teal);
-        background: rgba(51, 178, 193, 0.12);
-        border: 1px solid rgba(51, 178, 193, 0.24);
+        background: rgba(51, 178, 193, 0.13);
+        border: 1px solid rgba(51, 178, 193, 0.25);
     }}
 
     .kpi-navy .kpi-icon {{
         color: var(--navy);
-        background: rgba(0, 44, 71, 0.06);
-        border: 1px solid rgba(0, 44, 71, 0.12);
+        background: rgba(0, 44, 71, 0.085);
+        border: 1px solid rgba(0, 44, 71, 0.16);
     }}
 
     .kpi-value {{
         margin: 0 0 8px;
-        font-size: 31px;
+        font-size: 30px;
         font-weight: 900;
-        letter-spacing: -0.8px;
+        letter-spacing: -0.75px;
         line-height: 0.95;
     }}
 
@@ -319,9 +293,9 @@ def build_css() -> str:
 
     .kpi-label {{
         color: rgba(0, 44, 71, 0.78);
-        font-size: 11.5px;
+        font-size: 11px;
         font-weight: 700;
-        line-height: 1.25;
+        line-height: 1.2;
     }}
 
     .section-heading {{
@@ -335,7 +309,7 @@ def build_css() -> str:
         flex: 0 0 auto;
         margin: 0;
         color: var(--navy);
-        font-size: 28px;
+        font-size: 27px;
         font-weight: 900;
         letter-spacing: -0.55px;
         line-height: 1;
@@ -347,35 +321,35 @@ def build_css() -> str:
         min-width: 80px;
         background-image: linear-gradient(
             to right,
-            rgba(51, 178, 193, 0.55) 38%,
+            rgba(51, 178, 193, 0.52) 35%,
             rgba(51, 178, 193, 0) 0%
         );
         background-position: center;
         background-repeat: repeat-x;
-        background-size: 13px 2px;
+        background-size: 12px 2px;
     }}
 
     .content-list {{
         display: grid;
-        gap: 16px;
+        gap: 15px;
     }}
 
     .content-card {{
         display: grid;
         grid-template-columns: 285px minmax(0, 1fr);
-        min-height: 188px;
+        min-height: 178px;
         overflow: hidden;
         border: 1px solid var(--border);
-        border-radius: 24px;
+        border-radius: 22px;
         background: #ffffff;
-        box-shadow: 0 10px 28px rgba(0, 44, 71, 0.05);
+        box-shadow: 0 10px 26px rgba(0, 44, 71, 0.045);
     }}
 
     .media-link {{
         display: block;
-        min-height: 188px;
+        min-height: 178px;
         color: inherit;
-        text-decoration: none !important;
+        text-decoration: none;
         background: #f3fafc;
     }}
 
@@ -389,8 +363,9 @@ def build_css() -> str:
         display: block;
         width: 100%;
         height: 100%;
-        min-height: 188px;
+        min-height: 178px;
         object-fit: cover;
+        object-position: center center;
         background: #e8f6f8;
     }}
 
@@ -399,7 +374,7 @@ def build_css() -> str:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 188px;
+        min-height: 178px;
         padding: 18px;
         background:
             radial-gradient(circle at 22% 20%, rgba(255, 255, 255, 0.95), transparent 28%),
@@ -416,7 +391,7 @@ def build_css() -> str:
         display: flex;
         flex-direction: column;
         justify-content: center;
-        padding: 22px 24px 22px;
+        padding: 21px 24px;
     }}
 
     .content-meta {{
@@ -429,56 +404,17 @@ def build_css() -> str:
 
     .platform-pill {{
         display: inline-flex;
-        align-items: center;
-        gap: 7px;
         width: fit-content;
-        padding: 7px 12px;
+        padding: 7px 11px;
+        border: 1px solid rgba(51, 178, 193, 0.24);
         border-radius: 999px;
-        border: 1px solid rgba(51, 178, 193, 0.22);
-        font-size: 11.5px;
+        background: rgba(51, 178, 193, 0.10);
+        color: #178C95;
+        font-size: 12px;
         font-weight: 900;
-        letter-spacing: 0.8px;
+        letter-spacing: 0.75px;
         line-height: 1;
         text-transform: uppercase;
-    }}
-
-    .platform-pill::before {{
-        content: "";
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: currentColor;
-        opacity: 0.85;
-    }}
-
-    .platform-instagram {{
-        color: #C045A0;
-        background: rgba(192, 69, 160, 0.08);
-        border-color: rgba(192, 69, 160, 0.18);
-    }}
-
-    .platform-tiktok {{
-        color: #0B6E7D;
-        background: rgba(11, 110, 125, 0.08);
-        border-color: rgba(11, 110, 125, 0.18);
-    }}
-
-    .platform-facebook {{
-        color: #2C6DD8;
-        background: rgba(44, 109, 216, 0.08);
-        border-color: rgba(44, 109, 216, 0.18);
-    }}
-
-    .platform-youtube {{
-        color: #D33030;
-        background: rgba(211, 48, 48, 0.08);
-        border-color: rgba(211, 48, 48, 0.18);
-    }}
-
-    .platform-default {{
-        color: #178C95;
-        background: rgba(51, 178, 193, 0.09);
-        border-color: rgba(51, 178, 193, 0.18);
     }}
 
     .content-handle {{
@@ -491,7 +427,7 @@ def build_css() -> str:
     .content-title {{
         margin: 0 0 8px;
         color: var(--navy);
-        font-size: 19px;
+        font-size: 20px;
         font-weight: 900;
         letter-spacing: -0.25px;
         line-height: 1.18;
@@ -525,7 +461,7 @@ def build_css() -> str:
         font-size: 13px;
         font-weight: 900;
         line-height: 1;
-        text-decoration: none !important;
+        text-decoration: none;
         box-shadow: 0 8px 18px rgba(51, 178, 193, 0.2);
     }}
 
@@ -615,16 +551,15 @@ def build_css() -> str:
 
     @media (max-width: 560px) {{
         .report-page {{
-            border-radius: 22px;
             padding: 24px 18px 22px;
         }}
 
         .brand-name {{
-            font-size: 24px;
+            font-size: 25px;
         }}
 
         .report-title {{
-            font-size: 27px;
+            font-size: 22px;
         }}
 
         .kpi-grid {{
@@ -642,7 +577,7 @@ def build_css() -> str:
         }}
 
         .content-body {{
-            padding: 20px 18px 20px;
+            padding: 20px 18px;
         }}
     }}
     </style>
@@ -746,10 +681,7 @@ def build_content_list(content_items: list[dict]) -> str:
 
 def build_content_card(item: dict, index: int) -> str:
     """Build a single content card."""
-    live_url = clean_text(item.get("live_url"))
-    # Safety fallback: normalize the URL in case it came unnormalized from storage
-    live_url = ensure_normalized_url(live_url)
-    
+    live_url = ensure_normalized_url(clean_text(item.get("live_url")))
     platform = normalize_platform(clean_text(item.get("platform")) or infer_platform(live_url) or "Live Content")
     creator_handle = clean_text(item.get("creator_handle"))
     title = clean_text(item.get("content_title")) or default_content_title(platform)
@@ -769,7 +701,6 @@ def build_content_card(item: dict, index: int) -> str:
         index=index,
     )
 
-    platform_class = platform_class_name(platform)
     handle_html = (
         f'<span class="content-handle">{escape(creator_handle)}</span>'
         if creator_handle
@@ -792,7 +723,7 @@ def build_content_card(item: dict, index: int) -> str:
         {image_html}
         <div class="content-body">
             <div class="content-meta">
-                <span class="platform-pill {escape(platform_class)}">{escape(platform)}</span>
+                <span class="platform-pill">{escape(platform)}</span>
                 {handle_html}
             </div>
             <h3 class="content-title">{escape(title)}</h3>
@@ -838,8 +769,11 @@ def resolve_image_src(image_ref: str | None) -> str:
     if not value:
         return ""
 
-    if is_valid_url(value) or value.startswith("data:image/"):
+    if value.startswith("data:image/"):
         return value
+
+    if is_valid_url(value):
+        return ensure_normalized_url(value)
 
     path = Path(value)
     if not path.is_absolute():
@@ -917,18 +851,6 @@ def normalize_platform(platform: str) -> str:
     return mapping.get(value, clean_text(platform) or "Live Content")
 
 
-def platform_class_name(platform: str) -> str:
-    """Return a CSS class name for platform pill styling."""
-    value = normalize_platform(platform).lower()
-    mapping = {
-        "instagram": "platform-instagram",
-        "tiktok": "platform-tiktok",
-        "facebook": "platform-facebook",
-        "youtube": "platform-youtube",
-    }
-    return mapping.get(value, "platform-default")
-
-
 def default_content_title(platform: str) -> str:
     """Build a sensible fallback content title."""
     platform_name = normalize_platform(platform)
@@ -997,14 +919,10 @@ def icon_chat() -> str:
 
 
 def infer_platform(live_url: str) -> str:
-    """Infer platform from a live URL.
-    
-    Resilient to URLs with or without scheme, www prefix, mixed case, etc.
-    """
+    """Infer platform from a live URL."""
     if not live_url:
         return ""
 
-    # Normalize first for reliable domain extraction
     normalized = ensure_normalized_url(live_url)
     domain = urlparse(normalized).netloc.lower()
     if domain.startswith("www."):
@@ -1023,30 +941,25 @@ def infer_platform(live_url: str) -> str:
 
 
 def ensure_normalized_url(value: str) -> str:
-    """Ensure a URL is normalized with https:// scheme if it looks like a domain.
-    
-    Safety fallback for template rendering. This mirrors the normalization
-    done during save, in case some URLs need re-normalization.
-    """
+    """Ensure a URL is normalized with https:// scheme if it looks like a domain."""
     value = clean_text(value)
     if not value:
         return ""
-    
-    # Already has a scheme
+
     if value.startswith(("http://", "https://")):
         return value
-    
-    # Check if it looks like a domain (has a dot in netloc)
+
     parsed = urlparse(f"https://{value}")
     if "." in parsed.netloc:
         return f"https://{value}"
-    
+
     return value
 
 
 def is_valid_url(value: str) -> bool:
     """Check whether a value is a valid HTTP(S) URL."""
-    parsed = urlparse(clean_text(value))
+    normalized = ensure_normalized_url(value)
+    parsed = urlparse(normalized)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
