@@ -36,8 +36,8 @@ def render_client_report(report: dict) -> None:
         }
 
         .block-container {
-            max-width: 1240px !important;
-            padding: 10px 18px 34px !important;
+            max-width: 1120px !important;
+            padding: 4px 14px 18px !important;
         }
         </style>
         """,
@@ -46,7 +46,7 @@ def render_client_report(report: dict) -> None:
 
     content_items = report.get("content_items") or []
     visible_item_count = len([item for item in content_items if clean_text(item.get("live_url"))])
-    height = 940 + max(visible_item_count, 3) * 245
+    height = 560 + min(max(visible_item_count, 1), 3) * 105
 
     components.html(
         build_report_document(report),
@@ -123,14 +123,14 @@ def build_css() -> str:
 
     .report-shell {{
         width: 100%;
-        max-width: 1000px;
+        max-width: 960px;
         margin: 0 auto;
         padding: 0;
     }}
 
     .report-page {{
         width: 100%;
-        padding: 30px 36px 38px;
+        padding: 18px 28px 20px;
         background: #ffffff;
     }}
 
@@ -138,8 +138,8 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 30px;
-        margin-bottom: 28px;
+        gap: 24px;
+        margin-bottom: 18px;
     }}
 
     .report-heading {{
@@ -148,18 +148,18 @@ def build_css() -> str:
     }}
 
     .brand-name {{
-        margin: 0 0 6px;
+        margin: 0 0 4px;
         color: var(--teal);
-        font-size: 28px;
+        font-size: 24px;
         font-weight: 800;
         letter-spacing: -0.55px;
         line-height: 1.03;
     }}
 
     .report-title {{
-        margin: 0 0 9px;
+        margin: 0 0 6px;
         color: var(--navy);
-        font-size: 35px;
+        font-size: 28px;
         font-weight: 800;
         letter-spacing: -0.9px;
         line-height: 1.04;
@@ -167,7 +167,7 @@ def build_css() -> str:
 
     .report-date {{
         color: var(--muted);
-        font-size: 15px;
+        font-size: 13px;
         font-weight: 700;
         line-height: 1.2;
     }}
@@ -176,7 +176,7 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: flex-end;
-        min-width: 160px;
+        min-width: 130px;
         padding-top: 0;
         background: transparent;
         border: 0;
@@ -185,8 +185,8 @@ def build_css() -> str:
 
     .logo-box img {{
         display: block;
-        max-width: 150px;
-        max-height: 78px;
+        max-width: 128px;
+        max-height: 58px;
         object-fit: contain;
         background: transparent;
         border: 0;
@@ -215,10 +215,10 @@ def build_css() -> str:
     .kpi-grid {{
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 14px;
+        gap: 10px;
         width: 100%;
-        max-width: 860px;
-        margin: 0 auto 30px;
+        max-width: 820px;
+        margin: 0 auto 18px;
     }}
 
     .kpi-card {{
@@ -227,9 +227,9 @@ def build_css() -> str:
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 140px;
-        padding: 17px 14px 16px;
-        border-radius: 16px;
+        min-height: 104px;
+        padding: 11px 10px 10px;
+        border-radius: 14px;
         text-align: center;
         overflow: hidden;
     }}
@@ -250,28 +250,28 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(51, 178, 193, 0.095);
-        border: 1.5px solid rgba(51, 178, 193, 0.54);
+        background: rgba(51, 178, 193, 0.085);
+        border: 1.3px solid rgba(51, 178, 193, 0.50);
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.085);
-        border: 1.5px solid rgba(0, 44, 71, 0.55);
+        background: rgba(0, 44, 71, 0.075);
+        border: 1.3px solid rgba(0, 44, 71, 0.52);
     }}
 
     .kpi-icon {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 46px;
-        height: 46px;
-        margin-bottom: 14px;
+        width: 34px;
+        height: 34px;
+        margin-bottom: 8px;
         border-radius: 999px;
     }}
 
     .kpi-icon svg {{
-        width: 22px;
-        height: 22px;
+        width: 17px;
+        height: 17px;
         display: block;
     }}
 
@@ -288,8 +288,8 @@ def build_css() -> str:
     }}
 
     .kpi-value {{
-        margin: 0 0 9px;
-        font-size: 34px;
+        margin: 0 0 6px;
+        font-size: 27px;
         font-weight: 900;
         letter-spacing: -0.85px;
         line-height: 0.92;
@@ -305,23 +305,23 @@ def build_css() -> str:
 
     .kpi-label {{
         color: rgba(0, 44, 71, 0.82);
-        font-size: 12.5px;
+        font-size: 10.5px;
         font-weight: 700;
-        line-height: 1.18;
+        line-height: 1.12;
     }}
 
     .section-heading {{
         display: flex;
         align-items: center;
-        gap: 18px;
-        margin: 0 0 18px;
+        gap: 14px;
+        margin: 0 0 10px;
     }}
 
     .section-heading h2 {{
         flex: 0 0 auto;
         margin: 0;
         color: var(--navy);
-        font-size: 29px;
+        font-size: 23px;
         font-weight: 900;
         letter-spacing: -0.65px;
         line-height: 1;
@@ -343,23 +343,23 @@ def build_css() -> str:
 
     .content-list {{
         display: grid;
-        gap: 16px;
+        gap: 10px;
     }}
 
     .content-card {{
         display: grid;
-        grid-template-columns: 315px minmax(0, 1fr);
-        min-height: 190px;
+        grid-template-columns: 235px minmax(0, 1fr);
+        min-height: 112px;
         overflow: hidden;
         border: 1px solid var(--border);
-        border-radius: 22px;
+        border-radius: 18px;
         background: #ffffff;
         box-shadow: 0 10px 26px rgba(0, 44, 71, 0.05);
     }}
 
     .media-link {{
         display: block;
-        min-height: 190px;
+        min-height: 112px;
         color: inherit;
         text-decoration: none;
         background: #f3fafc;
@@ -375,7 +375,7 @@ def build_css() -> str:
         display: block;
         width: 100%;
         height: 100%;
-        min-height: 190px;
+        min-height: 112px;
         object-fit: cover;
         object-position: center center;
         background: #e8f6f8;
@@ -387,14 +387,14 @@ def build_css() -> str:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 190px;
-        padding: 20px;
+        min-height: 112px;
+        padding: 14px;
         background:
             radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.95), transparent 24%),
             radial-gradient(circle at 78% 86%, rgba(51, 178, 193, 0.14), transparent 30%),
             linear-gradient(135deg, rgba(51, 178, 193, 0.10) 0%, rgba(247, 251, 253, 1) 100%);
         color: rgba(51, 178, 193, 0.78);
-        font-size: 14.5px;
+        font-size: 12px;
         font-weight: 900;
         letter-spacing: 1.2px;
         text-align: center;
@@ -404,12 +404,12 @@ def build_css() -> str:
     .placeholder::before {{
         content: "";
         position: absolute;
-        width: 48px;
-        height: 48px;
+        width: 34px;
+        height: 34px;
         border-radius: 999px;
         background: rgba(51, 178, 193, 0.10);
         border: 1px solid rgba(51, 178, 193, 0.18);
-        transform: translateY(-42px);
+        transform: translateY(-30px);
     }}
 
     .placeholder-fallback {{
@@ -420,26 +420,26 @@ def build_css() -> str:
         display: flex;
         flex-direction: column;
         justify-content: center;
-        padding: 24px 28px;
+        padding: 14px 18px;
     }}
 
     .content-meta {{
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         flex-wrap: wrap;
-        margin-bottom: 12px;
+        margin-bottom: 7px;
     }}
 
     .platform-pill {{
         display: inline-flex;
         width: fit-content;
-        padding: 7px 11px;
+        padding: 5px 9px;
         border: 1px solid rgba(51, 178, 193, 0.26);
         border-radius: 999px;
         background: rgba(51, 178, 193, 0.10);
         color: #178C95;
-        font-size: 11.5px;
+        font-size: 10px;
         font-weight: 900;
         letter-spacing: 0.75px;
         line-height: 1;
@@ -448,26 +448,26 @@ def build_css() -> str:
 
     .content-handle {{
         color: var(--muted);
-        font-size: 13px;
+        font-size: 11px;
         font-weight: 700;
         line-height: 1.2;
     }}
 
     .content-title {{
-        margin: 0 0 8px;
+        margin: 0 0 5px;
         color: var(--navy);
-        font-size: 22px;
+        font-size: 16px;
         font-weight: 900;
         letter-spacing: -0.3px;
-        line-height: 1.16;
+        line-height: 1.12;
     }}
 
     .content-copy {{
-        margin: 0 0 16px;
+        margin: 0 0 9px;
         color: var(--muted);
-        font-size: 14.5px;
+        font-size: 12px;
         font-weight: 600;
-        line-height: 1.48;
+        line-height: 1.32;
     }}
 
     .content-actions {{
@@ -483,11 +483,11 @@ def build_css() -> str:
         justify-content: center;
         gap: 8px;
         width: fit-content;
-        padding: 10px 16px;
+        padding: 8px 12px;
         border-radius: 999px;
         background: var(--teal);
         color: #ffffff !important;
-        font-size: 13px;
+        font-size: 11.5px;
         font-weight: 900;
         line-height: 1;
         text-decoration: none;
@@ -541,17 +541,17 @@ def build_css() -> str:
     }}
 
     .report-footer {{
-        margin-top: 32px;
-        padding-bottom: 14px;
+        margin-top: 14px;
+        padding-bottom: 4px;
         color: #000000;
-        font-size: 14px;
+        font-size: 12px;
         font-weight: 800;
         text-align: center;
     }}
 
     @media (max-width: 920px) {{
         .report-page {{
-            padding: 28px 24px 32px;
+            padding: 18px 18px 20px;
         }}
 
         .report-header {{
@@ -575,7 +575,7 @@ def build_css() -> str:
         .media-link,
         .content-image,
         .placeholder {{
-            min-height: 230px;
+            min-height: 150px;
         }}
     }}
 
@@ -585,15 +585,15 @@ def build_css() -> str:
         }}
 
         .brand-name {{
-            font-size: 25px;
+            font-size: 22px;
         }}
 
         .report-title {{
-            font-size: 30px;
+            font-size: 25px;
         }}
 
         .report-date {{
-            font-size: 15px;
+            font-size: 13px;
         }}
 
         .kpi-grid {{
@@ -611,7 +611,7 @@ def build_css() -> str:
         }}
 
         .content-body {{
-            padding: 22px 20px;
+            padding: 14px 14px;
         }}
     }}
     </style>
