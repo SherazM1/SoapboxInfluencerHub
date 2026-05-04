@@ -207,6 +207,23 @@ def render_view_mode(report_id: str | None) -> None:
     if not report:
         st.error("Report not found. Check the report link and try again.")
         return
+    st.markdown(
+        """
+        <script>
+        window.scrollTo(0, 0);
+        requestAnimationFrame(function () {
+            window.scrollTo(0, 0);
+        });
+        setTimeout(function () {
+            window.scrollTo(0, 0);
+        }, 50);
+        setTimeout(function () {
+            window.scrollTo(0, 0);
+        }, 250);
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
     render_client_report(report)
 
 

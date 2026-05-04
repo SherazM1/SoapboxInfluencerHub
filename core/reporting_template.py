@@ -46,7 +46,11 @@ def render_client_report(report: dict) -> None:
 
     content_items = report.get("content_items") or []
     visible_item_count = len([item for item in content_items if clean_text(item.get("live_url"))])
-    height = 560 + min(max(visible_item_count, 1), 3) * 105
+    visible_item_count = min(max(visible_item_count, 1), 6)
+    if visible_item_count <= 3:
+        height = 720
+    else:
+        height = 720 + (visible_item_count - 3) * 118
 
     components.html(
         build_report_document(report),
@@ -100,6 +104,7 @@ def build_css() -> str:
     body {{
         margin: 0;
         padding: 0;
+        overflow: hidden;
         background: #ffffff;
         scroll-behavior: auto;
     }}
@@ -119,6 +124,7 @@ def build_css() -> str:
         padding: 0;
         color: var(--navy);
         background: #ffffff;
+        overflow: hidden;
     }}
 
     .report-shell {{
@@ -130,7 +136,7 @@ def build_css() -> str:
 
     .report-page {{
         width: 100%;
-        padding: 18px 28px 20px;
+        padding: 14px 28px 14px;
         background: #ffffff;
     }}
 
@@ -139,7 +145,7 @@ def build_css() -> str:
         align-items: flex-start;
         justify-content: space-between;
         gap: 24px;
-        margin-bottom: 18px;
+        margin-bottom: 14px;
     }}
 
     .report-heading {{
@@ -218,7 +224,7 @@ def build_css() -> str:
         gap: 10px;
         width: 100%;
         max-width: 820px;
-        margin: 0 auto 18px;
+        margin: 0 auto 14px;
     }}
 
     .kpi-card {{
@@ -227,8 +233,8 @@ def build_css() -> str:
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 104px;
-        padding: 11px 10px 10px;
+        min-height: 96px;
+        padding: 9px 10px 8px;
         border-radius: 14px;
         text-align: center;
         overflow: hidden;
@@ -263,15 +269,15 @@ def build_css() -> str:
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 34px;
-        height: 34px;
-        margin-bottom: 8px;
+        width: 30px;
+        height: 30px;
+        margin-bottom: 6px;
         border-radius: 999px;
     }}
 
     .kpi-icon svg {{
-        width: 17px;
-        height: 17px;
+        width: 15px;
+        height: 15px;
         display: block;
     }}
 
@@ -288,8 +294,8 @@ def build_css() -> str:
     }}
 
     .kpi-value {{
-        margin: 0 0 6px;
-        font-size: 27px;
+        margin: 0 0 4px;
+        font-size: 24px;
         font-weight: 900;
         letter-spacing: -0.85px;
         line-height: 0.92;
@@ -305,7 +311,7 @@ def build_css() -> str:
 
     .kpi-label {{
         color: rgba(0, 44, 71, 0.82);
-        font-size: 10.5px;
+        font-size: 10px;
         font-weight: 700;
         line-height: 1.12;
     }}
@@ -314,14 +320,14 @@ def build_css() -> str:
         display: flex;
         align-items: center;
         gap: 14px;
-        margin: 0 0 10px;
+        margin: 0 0 8px;
     }}
 
     .section-heading h2 {{
         flex: 0 0 auto;
         margin: 0;
         color: var(--navy);
-        font-size: 23px;
+        font-size: 22px;
         font-weight: 900;
         letter-spacing: -0.65px;
         line-height: 1;
@@ -343,23 +349,23 @@ def build_css() -> str:
 
     .content-list {{
         display: grid;
-        gap: 10px;
+        gap: 8px;
     }}
 
     .content-card {{
         display: grid;
         grid-template-columns: 235px minmax(0, 1fr);
-        min-height: 112px;
+        min-height: 102px;
         overflow: hidden;
         border: 1px solid var(--border);
-        border-radius: 18px;
+        border-radius: 16px;
         background: #ffffff;
         box-shadow: 0 10px 26px rgba(0, 44, 71, 0.05);
     }}
 
     .media-link {{
         display: block;
-        min-height: 112px;
+        min-height: 102px;
         color: inherit;
         text-decoration: none;
         background: #f3fafc;
@@ -375,7 +381,7 @@ def build_css() -> str:
         display: block;
         width: 100%;
         height: 100%;
-        min-height: 112px;
+        min-height: 102px;
         object-fit: cover;
         object-position: center center;
         background: #e8f6f8;
@@ -387,14 +393,14 @@ def build_css() -> str:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 112px;
+        min-height: 102px;
         padding: 14px;
         background:
             radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.95), transparent 24%),
             radial-gradient(circle at 78% 86%, rgba(51, 178, 193, 0.14), transparent 30%),
             linear-gradient(135deg, rgba(51, 178, 193, 0.10) 0%, rgba(247, 251, 253, 1) 100%);
         color: rgba(51, 178, 193, 0.78);
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 900;
         letter-spacing: 1.2px;
         text-align: center;
@@ -404,12 +410,12 @@ def build_css() -> str:
     .placeholder::before {{
         content: "";
         position: absolute;
-        width: 34px;
-        height: 34px;
+        width: 30px;
+        height: 30px;
         border-radius: 999px;
         background: rgba(51, 178, 193, 0.10);
         border: 1px solid rgba(51, 178, 193, 0.18);
-        transform: translateY(-30px);
+        transform: translateY(-26px);
     }}
 
     .placeholder-fallback {{
@@ -420,7 +426,7 @@ def build_css() -> str:
         display: flex;
         flex-direction: column;
         justify-content: center;
-        padding: 14px 18px;
+        padding: 12px 17px;
     }}
 
     .content-meta {{
@@ -428,18 +434,18 @@ def build_css() -> str:
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
-        margin-bottom: 7px;
+        margin-bottom: 5px;
     }}
 
     .platform-pill {{
         display: inline-flex;
         width: fit-content;
-        padding: 5px 9px;
+        padding: 4px 8px;
         border: 1px solid rgba(51, 178, 193, 0.26);
         border-radius: 999px;
         background: rgba(51, 178, 193, 0.10);
         color: #178C95;
-        font-size: 10px;
+        font-size: 9.5px;
         font-weight: 900;
         letter-spacing: 0.75px;
         line-height: 1;
@@ -454,20 +460,20 @@ def build_css() -> str:
     }}
 
     .content-title {{
-        margin: 0 0 5px;
+        margin: 0 0 4px;
         color: var(--navy);
-        font-size: 16px;
+        font-size: 15px;
         font-weight: 900;
         letter-spacing: -0.3px;
         line-height: 1.12;
     }}
 
     .content-copy {{
-        margin: 0 0 9px;
+        margin: 0 0 7px;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: 600;
-        line-height: 1.32;
+        line-height: 1.28;
     }}
 
     .content-actions {{
@@ -483,11 +489,11 @@ def build_css() -> str:
         justify-content: center;
         gap: 8px;
         width: fit-content;
-        padding: 8px 12px;
+        padding: 7px 11px;
         border-radius: 999px;
         background: var(--teal);
         color: #ffffff !important;
-        font-size: 11.5px;
+        font-size: 11px;
         font-weight: 900;
         line-height: 1;
         text-decoration: none;
@@ -541,10 +547,10 @@ def build_css() -> str:
     }}
 
     .report-footer {{
-        margin-top: 14px;
-        padding-bottom: 4px;
+        margin-top: 10px;
+        padding-bottom: 0;
         color: #000000;
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: 800;
         text-align: center;
     }}
