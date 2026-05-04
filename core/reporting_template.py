@@ -123,14 +123,14 @@ def build_css() -> str:
 
     .report-shell {{
         width: 100%;
-        max-width: 1120px;
+        max-width: 1000px;
         margin: 0 auto;
         padding: 0;
     }}
 
     .report-page {{
         width: 100%;
-        padding: 42px 44px 46px;
+        padding: 30px 36px 38px;
         background: #ffffff;
     }}
 
@@ -138,8 +138,8 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 36px;
-        margin-bottom: 36px;
+        gap: 30px;
+        margin-bottom: 28px;
     }}
 
     .report-heading {{
@@ -148,26 +148,26 @@ def build_css() -> str:
     }}
 
     .brand-name {{
-        margin: 0 0 8px;
+        margin: 0 0 6px;
         color: var(--teal);
-        font-size: 34px;
+        font-size: 28px;
         font-weight: 800;
-        letter-spacing: -0.7px;
-        line-height: 1.02;
+        letter-spacing: -0.55px;
+        line-height: 1.03;
     }}
 
     .report-title {{
-        margin: 0 0 12px;
+        margin: 0 0 9px;
         color: var(--navy);
-        font-size: 42px;
+        font-size: 35px;
         font-weight: 800;
-        letter-spacing: -1.15px;
-        line-height: 1.03;
+        letter-spacing: -0.9px;
+        line-height: 1.04;
     }}
 
     .report-date {{
         color: var(--muted);
-        font-size: 18px;
+        font-size: 15px;
         font-weight: 700;
         line-height: 1.2;
     }}
@@ -176,7 +176,7 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: flex-end;
-        min-width: 190px;
+        min-width: 160px;
         padding-top: 0;
         background: transparent;
         border: 0;
@@ -185,8 +185,8 @@ def build_css() -> str:
 
     .logo-box img {{
         display: block;
-        max-width: 176px;
-        max-height: 92px;
+        max-width: 150px;
+        max-height: 78px;
         object-fit: contain;
         background: transparent;
         border: 0;
@@ -195,7 +195,7 @@ def build_css() -> str:
 
     .logo-fallback {{
         color: var(--navy);
-        font-size: 34px;
+        font-size: 30px;
         font-weight: 900;
         letter-spacing: -1.2px;
         line-height: 0.84;
@@ -206,7 +206,7 @@ def build_css() -> str:
         display: block;
         margin-top: 7px;
         color: var(--teal);
-        font-size: 9px;
+        font-size: 8.5px;
         font-weight: 800;
         letter-spacing: 1.2px;
         text-transform: uppercase;
@@ -215,10 +215,10 @@ def build_css() -> str:
     .kpi-grid {{
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 18px;
+        gap: 14px;
         width: 100%;
-        max-width: 980px;
-        margin: 0 auto 38px;
+        max-width: 860px;
+        margin: 0 auto 30px;
     }}
 
     .kpi-card {{
@@ -227,9 +227,9 @@ def build_css() -> str:
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 174px;
-        padding: 22px 16px 20px;
-        border-radius: 18px;
+        min-height: 140px;
+        padding: 17px 14px 16px;
+        border-radius: 16px;
         text-align: center;
         overflow: hidden;
     }}
@@ -239,8 +239,8 @@ def build_css() -> str:
         position: absolute;
         inset: 0;
         background:
-            radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.58), transparent 34%),
-            linear-gradient(150deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0));
+            radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.52), transparent 34%),
+            linear-gradient(150deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0));
         pointer-events: none;
     }}
 
@@ -250,49 +250,49 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(51, 178, 193, 0.105);
-        border: 1.7px solid rgba(51, 178, 193, 0.58);
+        background: rgba(51, 178, 193, 0.095);
+        border: 1.5px solid rgba(51, 178, 193, 0.54);
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.13);
-        border: 1.7px solid rgba(0, 44, 71, 0.58);
+        background: rgba(0, 44, 71, 0.085);
+        border: 1.5px solid rgba(0, 44, 71, 0.55);
     }}
 
     .kpi-icon {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 58px;
-        height: 58px;
-        margin-bottom: 20px;
+        width: 46px;
+        height: 46px;
+        margin-bottom: 14px;
         border-radius: 999px;
     }}
 
     .kpi-icon svg {{
-        width: 29px;
-        height: 29px;
+        width: 22px;
+        height: 22px;
         display: block;
     }}
 
     .kpi-teal .kpi-icon {{
         color: var(--teal);
-        background: rgba(51, 178, 193, 0.16);
-        border: 1px solid rgba(51, 178, 193, 0.28);
+        background: rgba(51, 178, 193, 0.14);
+        border: 1px solid rgba(51, 178, 193, 0.26);
     }}
 
     .kpi-navy .kpi-icon {{
         color: var(--navy);
-        background: rgba(0, 44, 71, 0.10);
-        border: 1px solid rgba(0, 44, 71, 0.20);
+        background: rgba(0, 44, 71, 0.075);
+        border: 1px solid rgba(0, 44, 71, 0.18);
     }}
 
     .kpi-value {{
-        margin: 0 0 12px;
-        font-size: 43px;
+        margin: 0 0 9px;
+        font-size: 34px;
         font-weight: 900;
-        letter-spacing: -1.1px;
-        line-height: 0.9;
+        letter-spacing: -0.85px;
+        line-height: 0.92;
     }}
 
     .kpi-teal .kpi-value {{
@@ -305,7 +305,7 @@ def build_css() -> str:
 
     .kpi-label {{
         color: rgba(0, 44, 71, 0.82);
-        font-size: 15px;
+        font-size: 12.5px;
         font-weight: 700;
         line-height: 1.18;
     }}
@@ -313,17 +313,17 @@ def build_css() -> str:
     .section-heading {{
         display: flex;
         align-items: center;
-        gap: 22px;
-        margin: 0 0 24px;
+        gap: 18px;
+        margin: 0 0 18px;
     }}
 
     .section-heading h2 {{
         flex: 0 0 auto;
         margin: 0;
         color: var(--navy);
-        font-size: 34px;
+        font-size: 29px;
         font-weight: 900;
-        letter-spacing: -0.75px;
+        letter-spacing: -0.65px;
         line-height: 1;
     }}
 
@@ -343,23 +343,23 @@ def build_css() -> str:
 
     .content-list {{
         display: grid;
-        gap: 18px;
+        gap: 16px;
     }}
 
     .content-card {{
         display: grid;
-        grid-template-columns: 390px minmax(0, 1fr);
-        min-height: 230px;
+        grid-template-columns: 315px minmax(0, 1fr);
+        min-height: 190px;
         overflow: hidden;
         border: 1px solid var(--border);
-        border-radius: 24px;
+        border-radius: 22px;
         background: #ffffff;
-        box-shadow: 0 12px 32px rgba(0, 44, 71, 0.055);
+        box-shadow: 0 10px 26px rgba(0, 44, 71, 0.05);
     }}
 
     .media-link {{
         display: block;
-        min-height: 230px;
+        min-height: 190px;
         color: inherit;
         text-decoration: none;
         background: #f3fafc;
@@ -375,7 +375,7 @@ def build_css() -> str:
         display: block;
         width: 100%;
         height: 100%;
-        min-height: 230px;
+        min-height: 190px;
         object-fit: cover;
         object-position: center center;
         background: #e8f6f8;
@@ -387,16 +387,16 @@ def build_css() -> str:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 230px;
-        padding: 22px;
+        min-height: 190px;
+        padding: 20px;
         background:
             radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.95), transparent 24%),
-            radial-gradient(circle at 78% 86%, rgba(51, 178, 193, 0.16), transparent 30%),
-            linear-gradient(135deg, rgba(51, 178, 193, 0.11) 0%, rgba(247, 251, 253, 1) 100%);
+            radial-gradient(circle at 78% 86%, rgba(51, 178, 193, 0.14), transparent 30%),
+            linear-gradient(135deg, rgba(51, 178, 193, 0.10) 0%, rgba(247, 251, 253, 1) 100%);
         color: rgba(51, 178, 193, 0.78);
-        font-size: 17px;
+        font-size: 14.5px;
         font-weight: 900;
-        letter-spacing: 1.3px;
+        letter-spacing: 1.2px;
         text-align: center;
         text-transform: uppercase;
     }}
@@ -404,12 +404,12 @@ def build_css() -> str:
     .placeholder::before {{
         content: "";
         position: absolute;
-        width: 58px;
-        height: 58px;
+        width: 48px;
+        height: 48px;
         border-radius: 999px;
         background: rgba(51, 178, 193, 0.10);
         border: 1px solid rgba(51, 178, 193, 0.18);
-        transform: translateY(-48px);
+        transform: translateY(-42px);
     }}
 
     .placeholder-fallback {{
@@ -420,52 +420,52 @@ def build_css() -> str:
         display: flex;
         flex-direction: column;
         justify-content: center;
-        padding: 30px 34px;
+        padding: 24px 28px;
     }}
 
     .content-meta {{
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         flex-wrap: wrap;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
     }}
 
     .platform-pill {{
         display: inline-flex;
         width: fit-content;
-        padding: 8px 13px;
+        padding: 7px 11px;
         border: 1px solid rgba(51, 178, 193, 0.26);
         border-radius: 999px;
         background: rgba(51, 178, 193, 0.10);
         color: #178C95;
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: 900;
-        letter-spacing: 0.78px;
+        letter-spacing: 0.75px;
         line-height: 1;
         text-transform: uppercase;
     }}
 
     .content-handle {{
         color: var(--muted);
-        font-size: 15px;
+        font-size: 13px;
         font-weight: 700;
         line-height: 1.2;
     }}
 
     .content-title {{
-        margin: 0 0 10px;
+        margin: 0 0 8px;
         color: var(--navy);
-        font-size: 25px;
+        font-size: 22px;
         font-weight: 900;
-        letter-spacing: -0.35px;
-        line-height: 1.15;
+        letter-spacing: -0.3px;
+        line-height: 1.16;
     }}
 
     .content-copy {{
-        margin: 0 0 20px;
+        margin: 0 0 16px;
         color: var(--muted);
-        font-size: 16px;
+        font-size: 14.5px;
         font-weight: 600;
         line-height: 1.48;
     }}
@@ -483,15 +483,15 @@ def build_css() -> str:
         justify-content: center;
         gap: 8px;
         width: fit-content;
-        padding: 12px 18px;
+        padding: 10px 16px;
         border-radius: 999px;
         background: var(--teal);
         color: #ffffff !important;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 900;
         line-height: 1;
         text-decoration: none;
-        box-shadow: 0 9px 20px rgba(51, 178, 193, 0.24);
+        box-shadow: 0 8px 18px rgba(51, 178, 193, 0.22);
     }}
 
     .cta::after {{
@@ -518,7 +518,7 @@ def build_css() -> str:
     }}
 
     .empty-content {{
-        padding: 42px 30px;
+        padding: 34px 28px;
         border: 1.5px dashed rgba(51, 178, 193, 0.34);
         border-radius: 22px;
         background: rgba(51, 178, 193, 0.05);
@@ -529,29 +529,29 @@ def build_css() -> str:
     .empty-content-title {{
         margin: 0 0 8px;
         color: var(--navy);
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 800;
     }}
 
     .empty-content-copy {{
         margin: 0;
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 600;
         line-height: 1.5;
     }}
 
     .report-footer {{
-        margin-top: 38px;
-        padding-bottom: 18px;
+        margin-top: 32px;
+        padding-bottom: 14px;
         color: #000000;
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 800;
         text-align: center;
     }}
 
     @media (max-width: 920px) {{
         .report-page {{
-            padding: 30px 24px 34px;
+            padding: 28px 24px 32px;
         }}
 
         .report-header {{
@@ -575,7 +575,7 @@ def build_css() -> str:
         .media-link,
         .content-image,
         .placeholder {{
-            min-height: 260px;
+            min-height: 230px;
         }}
     }}
 
@@ -585,15 +585,15 @@ def build_css() -> str:
         }}
 
         .brand-name {{
-            font-size: 27px;
+            font-size: 25px;
         }}
 
         .report-title {{
-            font-size: 32px;
+            font-size: 30px;
         }}
 
         .report-date {{
-            font-size: 16px;
+            font-size: 15px;
         }}
 
         .kpi-grid {{
@@ -611,7 +611,7 @@ def build_css() -> str:
         }}
 
         .content-body {{
-            padding: 24px 20px;
+            padding: 22px 20px;
         }}
     }}
     </style>
