@@ -412,6 +412,10 @@ def build_css() -> str:
         transform: translateY(-48px);
     }}
 
+    .placeholder-fallback {{
+        display: none;
+    }}
+
     .content-body {{
         display: flex;
         flex-direction: column;
@@ -773,9 +777,17 @@ def build_image_html(image_ref: str | None, live_url: str, platform: str, index:
     alt_text = f"{platform} live content preview {index}"
 
     if image_src:
+        fallback_html = (
+            f'<div class="placeholder placeholder-fallback" role="img" '
+            f'aria-label="{escape(alt_text)}">{escape(platform)} Preview</div>'
+        )
         media_html = (
             f'<img class="content-image" src="{escape(image_src)}" '
-            f'alt="{escape(alt_text)}" loading="lazy" />'
+            f'alt="{escape(alt_text)}" loading="lazy" '
+            "onerror=\"this.style.display='none'; "
+            "var fallback=this.parentElement.querySelector('.placeholder-fallback'); "
+            "if (fallback) { fallback.style.display='flex'; }\" />"
+            f"{fallback_html}"
         )
     else:
         media_html = (
