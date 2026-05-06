@@ -39,6 +39,23 @@ def render_client_report(report: dict) -> None:
             max-width: 1120px !important;
             padding: 4px 14px 18px !important;
         }
+
+        iframe,
+        div[data-testid="stIFrame"],
+        div[data-testid="stIFrame"] iframe {
+            border: 0 !important;
+            box-shadow: none !important;
+            outline: 0 !important;
+        }
+
+        div[data-testid="stIFrame"] {
+            overflow: hidden !important;
+            background: #ffffff !important;
+        }
+
+        iframe[title="streamlit_component"] {
+            display: block !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -46,7 +63,7 @@ def render_client_report(report: dict) -> None:
 
     content_items = report.get("content_items") or []
     visible_item_count = len([item for item in content_items if clean_text(item.get("live_url"))])
-    visible_item_count = min(max(visible_item_count, 1), 6)
+    visible_item_count = max(visible_item_count, 1)
     if visible_item_count <= 3:
         height = 720
     else:
@@ -75,12 +92,16 @@ def build_report_document(report: dict) -> str:
     <body>
         {build_report_html(report)}
         <script>
-            window.addEventListener("load", function () {{
+            function resetReportScroll() {{
                 window.scrollTo(0, 0);
                 try {{
                     window.parent.scrollTo(0, 0);
                 }} catch (error) {{}}
-            }});
+            }}
+            resetReportScroll();
+            window.addEventListener("load", resetReportScroll);
+            window.requestAnimationFrame(resetReportScroll);
+            window.setTimeout(resetReportScroll, 75);
         </script>
     </body>
     </html>
@@ -160,7 +181,7 @@ def build_css() -> str:
     .brand-name {{
         margin: 0 0 4px;
         color: var(--teal);
-        font-size: 29px;
+        font-size: 30px;
         font-weight: 800;
         letter-spacing: 0;
         line-height: 1.03;
@@ -177,8 +198,16 @@ def build_css() -> str:
 
     .report-date {{
         color: var(--muted);
-        font-size: 15.5px;
+        font-size: 16px;
         font-weight: 600;
+        line-height: 1.2;
+    }}
+
+    .report-updated {{
+        margin-top: 3px;
+        color: rgba(93, 114, 130, 0.72);
+        font-size: 11.5px;
+        font-weight: 500;
         line-height: 1.2;
     }}
 
@@ -186,7 +215,7 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: flex-end;
-        min-width: 165px;
+        min-width: 170px;
         padding-top: 0;
         background: transparent;
         border: 0;
@@ -195,8 +224,8 @@ def build_css() -> str:
 
     .logo-box img {{
         display: block;
-        max-width: 160px;
-        max-height: 84px;
+        max-width: 166px;
+        max-height: 86px;
         object-fit: contain;
         background: transparent;
         border: 0;
@@ -227,7 +256,7 @@ def build_css() -> str:
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 13px;
         width: 100%;
-        max-width: 880px;
+        max-width: 860px;
         margin: 0 auto 17px;
     }}
 
@@ -237,9 +266,9 @@ def build_css() -> str:
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 122px;
-        padding: 13px 12px 12px;
-        border-radius: 22px;
+        min-height: 126px;
+        padding: 14px 12px 13px;
+        border-radius: 23px;
         text-align: center;
         overflow: hidden;
     }}
@@ -260,21 +289,21 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(51, 178, 193, 0.08);
-        border: 1.5px solid rgba(51, 178, 193, 0.58);
+        background: rgba(51, 178, 193, 0.075);
+        border: 1.5px solid rgba(51, 178, 193, 0.56);
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.055);
-        border: 1.5px solid rgba(0, 44, 71, 0.62);
+        background: rgba(0, 44, 71, 0.045);
+        border: 1.5px solid rgba(0, 44, 71, 0.58);
     }}
 
     .kpi-icon {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 42px;
-        height: 42px;
+        width: 43px;
+        height: 43px;
         margin-bottom: 10px;
         border-radius: 999px;
     }}
@@ -293,13 +322,13 @@ def build_css() -> str:
 
     .kpi-navy .kpi-icon {{
         color: var(--navy);
-        background: rgba(0, 44, 71, 0.07);
-        border: 1px solid rgba(0, 44, 71, 0.16);
+        background: rgba(0, 44, 71, 0.06);
+        border: 1px solid rgba(0, 44, 71, 0.14);
     }}
 
     .kpi-value {{
         margin: 0 0 6px;
-        font-size: 32px;
+        font-size: 33px;
         font-weight: 900;
         letter-spacing: 0;
         line-height: 0.95;
@@ -317,7 +346,7 @@ def build_css() -> str:
         color: rgba(0, 44, 71, 0.82);
         font-size: 12px;
         font-weight: 600;
-        line-height: 1.15;
+        line-height: 1.18;
     }}
 
     .section-heading {{
@@ -493,15 +522,15 @@ def build_css() -> str:
         justify-content: center;
         gap: 8px;
         width: fit-content;
-        padding: 7px 12px;
+        padding: 6.5px 12px;
         border-radius: 999px;
         background: var(--teal);
         color: #ffffff !important;
         font-size: 11.5px;
-        font-weight: 800;
+        font-weight: 700;
         line-height: 1;
         text-decoration: none;
-        box-shadow: 0 6px 14px rgba(51, 178, 193, 0.18);
+        box-shadow: 0 5px 12px rgba(51, 178, 193, 0.16);
     }}
 
     .cta::after {{
@@ -523,7 +552,7 @@ def build_css() -> str:
     .content-url-note {{
         color: rgba(93, 114, 130, 0.8);
         font-size: 12px;
-        font-weight: 700;
+        font-weight: 600;
         line-height: 1.3;
     }}
 
@@ -553,8 +582,8 @@ def build_css() -> str:
     .report-footer {{
         margin-top: 12px;
         padding-bottom: 0;
-        color: rgba(0, 44, 71, 0.88);
-        font-size: 12px;
+        color: rgba(0, 44, 71, 0.78);
+        font-size: 11.5px;
         font-weight: 600;
         text-align: center;
     }}
@@ -606,6 +635,10 @@ def build_css() -> str:
             font-size: 14px;
         }}
 
+        .report-updated {{
+            font-size: 11px;
+        }}
+
         .kpi-grid {{
             grid-template-columns: 1fr;
         }}
@@ -632,6 +665,12 @@ def build_report_html(report: dict) -> str:
     """Build the report HTML."""
     client_name = escape(report.get("client_name") or "Client")
     report_date = format_date(report.get("report_date") or "")
+    updated_date = format_updated_date(report.get("updated_at") or "")
+    updated_html = (
+        f'<div class="report-updated">Last updated {escape(updated_date)}</div>'
+        if updated_date
+        else ""
+    )
     logo_html = build_logo_html()
     kpi_html = build_kpi_grid(report)
     content_html = build_content_list(report.get("content_items") or [])
@@ -645,6 +684,7 @@ def build_report_html(report: dict) -> str:
                         <p class="brand-name">{client_name}</p>
                         <h1 class="report-title">Weekly Campaign Metrics</h1>
                         <div class="report-date">{escape(report_date)}</div>
+                        {updated_html}
                     </div>
                     <div class="logo-box">
                         {logo_html}
@@ -1037,7 +1077,7 @@ def format_number(value: object) -> str:
 def format_date(value: object) -> str:
     """Format ISO dates into m/d/yyyy."""
     raw = clean_text(value)
-    
+
     if not raw:
         return ""
 
@@ -1046,3 +1086,13 @@ def format_date(value: object) -> str:
         return f"{int(month)}/{int(day)}/{year}"
     except ValueError:
         return raw
+
+
+def format_updated_date(value: object) -> str:
+    """Format an existing ISO timestamp into m/d/yyyy."""
+    raw = clean_text(value)
+    if not raw:
+        return ""
+
+    date_part = raw.split("T", 1)[0].split(" ", 1)[0]
+    return format_date(date_part)
