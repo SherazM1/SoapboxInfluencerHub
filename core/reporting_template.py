@@ -408,10 +408,10 @@ def build_css() -> str:
 
     .media-link {{
         display: block;
-        width: 235px;
-        height: 112px;
-        min-height: 112px;
-        max-height: 112px;
+        width: 100%;
+        height: 100%;
+        min-height: inherit;
+        max-height: inherit;
         overflow: hidden;
         color: inherit;
         text-decoration: none;
@@ -428,22 +428,23 @@ def build_css() -> str:
         display: block;
         width: 100%;
         height: 100%;
-        min-height: 112px;
-        max-height: 112px;
+        min-height: 0;
+        max-height: 100%;
         object-fit: cover;
         object-position: center center;
         background: #e8f6f8;
     }}
 
-    .placeholder {{
+    .placeholder,
+    .placeholder-fallback {{
         position: relative;
         display: flex;
         align-items: center;
         justify-content: center;
         width: 100%;
-        height: 112px;
-        min-height: 112px;
-        max-height: 112px;
+        height: 100%;
+        min-height: 0;
+        max-height: 100%;
         overflow: hidden;
         padding: 14px;
         background:
@@ -631,13 +632,20 @@ def build_css() -> str:
             max-height: none;
         }}
 
-        .media-link,
-        .content-image,
-        .placeholder {{
+        .media-link {{
             width: 100%;
             height: 150px;
             min-height: 150px;
             max-height: 150px;
+        }}
+
+        .content-image,
+        .placeholder,
+        .placeholder-fallback {{
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+            max-height: 100%;
         }}
     }}
 
