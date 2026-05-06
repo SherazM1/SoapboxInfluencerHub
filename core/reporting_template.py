@@ -65,9 +65,9 @@ def render_client_report(report: dict) -> None:
     visible_item_count = len([item for item in content_items if clean_text(item.get("live_url"))])
     visible_item_count = max(visible_item_count, 1)
     if visible_item_count <= 3:
-        height = 720
+        height = 740
     else:
-        height = 720 + (visible_item_count - 3) * 118
+        height = 740 + (visible_item_count - 3) * 136
 
     components.html(
         build_report_document(report),
@@ -159,7 +159,7 @@ def build_css() -> str:
 
     .report-shell {{
         width: 100%;
-        max-width: 960px;
+        max-width: 980px;
         margin: 0 auto;
         padding: 0;
         border: 0;
@@ -167,7 +167,7 @@ def build_css() -> str:
 
     .report-page {{
         width: 100%;
-        padding: 18px 30px 18px;
+        padding: 22px 30px 18px;
         background: #ffffff;
         border: 0;
     }}
@@ -177,7 +177,7 @@ def build_css() -> str:
         align-items: flex-start;
         justify-content: space-between;
         gap: 24px;
-        margin-bottom: 17px;
+        margin-bottom: 20px;
     }}
 
     .report-heading {{
@@ -188,23 +188,23 @@ def build_css() -> str:
     .brand-name {{
         margin: 0 0 4px;
         color: var(--teal);
-        font-size: 31px;
+        font-size: 30px;
         font-weight: 800;
         letter-spacing: 0;
-        line-height: 1.03;
+        line-height: 1;
     }}
 
     .report-title {{
         margin: 0 0 6px;
         color: var(--navy);
-        font-size: 32px;
+        font-size: 35px;
         font-weight: 800;
         letter-spacing: 0;
-        line-height: 1.04;
+        line-height: 1.05;
     }}
 
     .report-date {{
-        color: var(--muted);
+        color: rgba(0, 44, 71, 0.72);
         font-size: 16px;
         font-weight: 700;
         line-height: 1.2;
@@ -212,8 +212,8 @@ def build_css() -> str:
 
     .report-updated {{
         margin-top: 3px;
-        color: rgba(93, 114, 130, 0.72);
-        font-size: 11.5px;
+        color: rgba(0, 44, 71, 0.46);
+        font-size: 13px;
         font-weight: 500;
         line-height: 1.2;
     }}
@@ -231,8 +231,8 @@ def build_css() -> str:
 
     .logo-box img {{
         display: block;
-        max-width: 170px;
-        max-height: 88px;
+        max-width: 165px;
+        max-height: 90px;
         object-fit: contain;
         background: transparent;
         border: 0;
@@ -261,10 +261,10 @@ def build_css() -> str:
     .kpi-grid {{
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 13px;
+        gap: 16px;
         width: 100%;
-        max-width: 860px;
-        margin: 0 auto 17px;
+        max-width: 980px;
+        margin: 0 auto 20px;
     }}
 
     .kpi-card {{
@@ -273,9 +273,9 @@ def build_css() -> str:
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 126px;
-        padding: 14px 12px 13px;
-        border-radius: 23px;
+        min-height: 128px;
+        padding: 15px 14px 13px;
+        border-radius: 22px;
         text-align: center;
         overflow: hidden;
         box-shadow: 0 5px 14px rgba(0, 44, 71, 0.035);
@@ -297,21 +297,21 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(51, 178, 193, 0.085);
-        border: 1.5px solid rgba(51, 178, 193, 0.60);
+        background: rgba(51, 178, 193, 0.075);
+        border: 1.5px solid rgba(51, 178, 193, 0.58);
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.06);
-        border: 1.5px solid rgba(0, 44, 71, 0.66);
+        background: rgba(0, 44, 71, 0.045);
+        border: 1.5px solid rgba(0, 44, 71, 0.62);
     }}
 
     .kpi-icon {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 43px;
-        height: 43px;
+        width: 44px;
+        height: 44px;
         margin-bottom: 10px;
         border-radius: 999px;
     }}
@@ -335,11 +335,13 @@ def build_css() -> str:
     }}
 
     .kpi-value {{
-        margin: 0 0 6px;
-        font-size: 33px;
+        margin: 0 0 7px;
+        font-size: clamp(28px, 3.4vw, 34px);
         font-weight: 900;
         letter-spacing: 0;
-        line-height: 0.95;
+        line-height: 1;
+        max-width: 100%;
+        overflow-wrap: anywhere;
     }}
 
     .kpi-teal .kpi-value {{
@@ -351,59 +353,52 @@ def build_css() -> str:
     }}
 
     .kpi-label {{
-        color: rgba(0, 44, 71, 0.82);
-        font-size: 12px;
+        color: rgba(0, 44, 71, 0.84);
+        font-size: 13px;
         font-weight: 600;
-        line-height: 1.18;
+        line-height: 1.12;
     }}
 
     .section-heading {{
         display: flex;
         align-items: center;
-        gap: 14px;
-        margin: 0 0 8px;
+        gap: 18px;
+        margin: 0 0 12px;
     }}
 
     .section-heading h2 {{
         flex: 0 0 auto;
         margin: 0;
         color: var(--navy);
-        font-size: 22px;
-        font-weight: 900;
+        font-size: 27px;
+        font-weight: 800;
         letter-spacing: 0;
         line-height: 1;
     }}
 
     .section-line {{
         flex: 1;
-        height: 2px;
+        border-top: 2px dashed rgba(51, 178, 193, 0.38);
+        height: 0;
         min-width: 80px;
-        background-image: linear-gradient(
-            to right,
-            rgba(51, 178, 193, 0.52) 35%,
-            rgba(51, 178, 193, 0) 0%
-        );
-        background-position: center;
-        background-repeat: repeat-x;
-        background-size: 13px 2px;
     }}
 
     .content-list {{
         display: grid;
-        gap: 8px;
+        gap: 10px;
     }}
 
     .content-card {{
         display: grid;
-        grid-template-columns: 235px minmax(0, 1fr);
-        height: 112px;
-        min-height: 112px;
-        max-height: 112px;
+        grid-template-columns: 285px minmax(0, 1fr);
+        height: 126px;
+        min-height: 126px;
+        max-height: 126px;
         overflow: hidden;
-        border: 1px solid var(--border);
-        border-radius: 19px;
+        border: 1px solid #DDECF2;
+        border-radius: 20px;
         background: #ffffff;
-        box-shadow: 0 8px 22px rgba(0, 44, 71, 0.045);
+        box-shadow: 0 12px 28px rgba(0, 44, 71, 0.045);
     }}
 
     .media-link {{
@@ -423,24 +418,34 @@ def build_css() -> str:
         height: 100%;
         min-height: inherit;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 8px;
         overflow: hidden;
         background:
-            radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.85), transparent 28%),
+            radial-gradient(circle at 23% 18%, rgba(255, 255, 255, 0.9), transparent 30%),
             linear-gradient(135deg, rgba(51, 178, 193, 0.12), rgba(247, 251, 253, 1));
     }}
 
     .platform-icon-img {{
-        width: 58px;
-        height: 58px;
+        width: 92px;
+        height: 92px;
         object-fit: contain;
         display: block;
+        border: 0;
+        outline: 0;
+        box-shadow: none;
+        background: transparent;
+        mix-blend-mode: normal;
+        filter: none;
+    }}
+
+    .platform-tile img {{
+        border: 0;
+        outline: 0;
     }}
 
     .platform-tile-label {{
+        display: none;
         color: #33B2C1;
         font-size: 11px;
         font-weight: 800;
@@ -450,7 +455,7 @@ def build_css() -> str:
 
     .platform-generic-mark {{
         color: #002C47;
-        font-size: 30px;
+        font-size: 34px;
         font-weight: 800;
     }}
 
@@ -518,7 +523,7 @@ def build_css() -> str:
         display: flex;
         flex-direction: column;
         justify-content: center;
-        padding: 12px 17px;
+        padding: 18px 22px;
     }}
 
     .content-meta {{
@@ -532,13 +537,13 @@ def build_css() -> str:
     .platform-pill {{
         display: inline-flex;
         width: fit-content;
-        padding: 4px 8px;
+        padding: 5px 10px;
         border: 1px solid rgba(51, 178, 193, 0.26);
         border-radius: 999px;
         background: rgba(51, 178, 193, 0.10);
         color: #178C95;
-        font-size: 9.5px;
-        font-weight: 700;
+        font-size: 10px;
+        font-weight: 800;
         letter-spacing: 0;
         line-height: 1;
         text-transform: uppercase;
@@ -552,20 +557,20 @@ def build_css() -> str:
     }}
 
     .content-title {{
-        margin: 0 0 4px;
+        margin: 0 0 5px;
         color: var(--navy);
-        font-size: 16px;
-        font-weight: 900;
+        font-size: 18px;
+        font-weight: 800;
         letter-spacing: 0;
-        line-height: 1.12;
+        line-height: 1.15;
     }}
 
     .content-copy {{
-        margin: 0 0 7px;
-        color: var(--muted);
-        font-size: 11.5px;
+        margin: 0 0 9px;
+        color: rgba(0, 44, 71, 0.68);
+        font-size: 13px;
         font-weight: 500;
-        line-height: 1.28;
+        line-height: 1.3;
     }}
 
     .content-actions {{
@@ -581,15 +586,15 @@ def build_css() -> str:
         justify-content: center;
         gap: 8px;
         width: fit-content;
-        padding: 6.5px 12px;
+        padding: 8px 14px;
         border-radius: 999px;
-        background: var(--teal);
+        background: #33B2C1;
         color: #ffffff !important;
-        font-size: 11.5px;
+        font-size: 12px;
         font-weight: 800;
         line-height: 1;
         text-decoration: none;
-        box-shadow: 0 4px 10px rgba(51, 178, 193, 0.15);
+        box-shadow: 0 7px 16px rgba(51, 178, 193, 0.18);
     }}
 
     .cta::after {{
@@ -639,11 +644,11 @@ def build_css() -> str:
     }}
 
     .report-footer {{
-        margin-top: 12px;
+        margin-top: 14px;
         padding-bottom: 0;
-        color: rgba(0, 44, 71, 0.72);
-        font-size: 11.5px;
-        font-weight: 600;
+        color: rgba(0, 44, 71, 0.68);
+        font-size: 13px;
+        font-weight: 500;
         text-align: center;
     }}
 
@@ -900,7 +905,6 @@ def build_image_html(live_url: str, platform: str, index: int) -> str:
             f'alt="{escape(platform_name)} icon" loading="lazy" '
             "onerror=\"this.style.display='none'; "
             "this.parentElement.classList.add('platform-icon-missing');\" />"
-            f'<span class="platform-tile-label">{escape(platform_name)}</span>'
             "</div>"
         )
     else:
@@ -908,7 +912,6 @@ def build_image_html(live_url: str, platform: str, index: int) -> str:
             f'<div class="platform-tile platform-tile-generic" role="img" '
             f'aria-label="{escape(alt_text)}">'
             '<span class="platform-generic-mark" aria-hidden="true">&#8599;</span>'
-            '<span class="platform-tile-label">Live Content</span>'
             "</div>"
         )
 
