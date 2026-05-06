@@ -107,6 +107,7 @@ def build_css() -> str:
         overflow: hidden;
         background: #ffffff;
         scroll-behavior: auto;
+        border: 0;
     }}
 
     body,
@@ -125,6 +126,7 @@ def build_css() -> str:
         color: var(--navy);
         background: #ffffff;
         overflow: hidden;
+        border: 0;
     }}
 
     .report-shell {{
@@ -132,12 +134,14 @@ def build_css() -> str:
         max-width: 960px;
         margin: 0 auto;
         padding: 0;
+        border: 0;
     }}
 
     .report-page {{
         width: 100%;
-        padding: 14px 28px 14px;
+        padding: 18px 30px 18px;
         background: #ffffff;
+        border: 0;
     }}
 
     .report-header {{
@@ -145,7 +149,7 @@ def build_css() -> str:
         align-items: flex-start;
         justify-content: space-between;
         gap: 24px;
-        margin-bottom: 14px;
+        margin-bottom: 17px;
     }}
 
     .report-heading {{
@@ -156,25 +160,25 @@ def build_css() -> str:
     .brand-name {{
         margin: 0 0 4px;
         color: var(--teal);
-        font-size: 24px;
+        font-size: 29px;
         font-weight: 800;
-        letter-spacing: -0.55px;
+        letter-spacing: 0;
         line-height: 1.03;
     }}
 
     .report-title {{
         margin: 0 0 6px;
         color: var(--navy);
-        font-size: 28px;
+        font-size: 33px;
         font-weight: 800;
-        letter-spacing: -0.9px;
+        letter-spacing: 0;
         line-height: 1.04;
     }}
 
     .report-date {{
         color: var(--muted);
-        font-size: 13px;
-        font-weight: 700;
+        font-size: 15.5px;
+        font-weight: 600;
         line-height: 1.2;
     }}
 
@@ -182,7 +186,7 @@ def build_css() -> str:
         display: flex;
         align-items: flex-start;
         justify-content: flex-end;
-        min-width: 130px;
+        min-width: 165px;
         padding-top: 0;
         background: transparent;
         border: 0;
@@ -191,8 +195,8 @@ def build_css() -> str:
 
     .logo-box img {{
         display: block;
-        max-width: 128px;
-        max-height: 58px;
+        max-width: 160px;
+        max-height: 84px;
         object-fit: contain;
         background: transparent;
         border: 0;
@@ -203,7 +207,7 @@ def build_css() -> str:
         color: var(--navy);
         font-size: 30px;
         font-weight: 900;
-        letter-spacing: -1.2px;
+        letter-spacing: 0;
         line-height: 0.84;
         text-align: right;
     }}
@@ -214,17 +218,17 @@ def build_css() -> str:
         color: var(--teal);
         font-size: 8.5px;
         font-weight: 800;
-        letter-spacing: 1.2px;
+        letter-spacing: 0;
         text-transform: uppercase;
     }}
 
     .kpi-grid {{
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
+        gap: 13px;
         width: 100%;
-        max-width: 820px;
-        margin: 0 auto 14px;
+        max-width: 880px;
+        margin: 0 auto 17px;
     }}
 
     .kpi-card {{
@@ -233,9 +237,9 @@ def build_css() -> str:
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        min-height: 96px;
-        padding: 9px 10px 8px;
-        border-radius: 14px;
+        min-height: 122px;
+        padding: 13px 12px 12px;
+        border-radius: 22px;
         text-align: center;
         overflow: hidden;
     }}
@@ -256,49 +260,49 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(51, 178, 193, 0.085);
-        border: 1.3px solid rgba(51, 178, 193, 0.50);
+        background: rgba(51, 178, 193, 0.08);
+        border: 1.5px solid rgba(51, 178, 193, 0.58);
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.075);
-        border: 1.3px solid rgba(0, 44, 71, 0.52);
+        background: rgba(0, 44, 71, 0.055);
+        border: 1.5px solid rgba(0, 44, 71, 0.62);
     }}
 
     .kpi-icon {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 30px;
-        height: 30px;
-        margin-bottom: 6px;
+        width: 42px;
+        height: 42px;
+        margin-bottom: 10px;
         border-radius: 999px;
     }}
 
     .kpi-icon svg {{
-        width: 15px;
-        height: 15px;
+        width: 21px;
+        height: 21px;
         display: block;
     }}
 
     .kpi-teal .kpi-icon {{
         color: var(--teal);
-        background: rgba(51, 178, 193, 0.14);
-        border: 1px solid rgba(51, 178, 193, 0.26);
+        background: rgba(51, 178, 193, 0.12);
+        border: 1px solid rgba(51, 178, 193, 0.24);
     }}
 
     .kpi-navy .kpi-icon {{
         color: var(--navy);
-        background: rgba(0, 44, 71, 0.075);
-        border: 1px solid rgba(0, 44, 71, 0.18);
+        background: rgba(0, 44, 71, 0.07);
+        border: 1px solid rgba(0, 44, 71, 0.16);
     }}
 
     .kpi-value {{
-        margin: 0 0 4px;
-        font-size: 24px;
+        margin: 0 0 6px;
+        font-size: 32px;
         font-weight: 900;
-        letter-spacing: -0.85px;
-        line-height: 0.92;
+        letter-spacing: 0;
+        line-height: 0.95;
     }}
 
     .kpi-teal .kpi-value {{
@@ -311,9 +315,9 @@ def build_css() -> str:
 
     .kpi-label {{
         color: rgba(0, 44, 71, 0.82);
-        font-size: 10px;
-        font-weight: 700;
-        line-height: 1.12;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.15;
     }}
 
     .section-heading {{
@@ -329,7 +333,7 @@ def build_css() -> str:
         color: var(--navy);
         font-size: 22px;
         font-weight: 900;
-        letter-spacing: -0.65px;
+        letter-spacing: 0;
         line-height: 1;
     }}
 
@@ -358,9 +362,9 @@ def build_css() -> str:
         min-height: 102px;
         overflow: hidden;
         border: 1px solid var(--border);
-        border-radius: 16px;
+        border-radius: 19px;
         background: #ffffff;
-        box-shadow: 0 10px 26px rgba(0, 44, 71, 0.05);
+        box-shadow: 0 8px 22px rgba(0, 44, 71, 0.045);
     }}
 
     .media-link {{
@@ -402,7 +406,7 @@ def build_css() -> str:
         color: rgba(51, 178, 193, 0.78);
         font-size: 11px;
         font-weight: 900;
-        letter-spacing: 1.2px;
+        letter-spacing: 0;
         text-align: center;
         text-transform: uppercase;
     }}
@@ -446,8 +450,8 @@ def build_css() -> str:
         background: rgba(51, 178, 193, 0.10);
         color: #178C95;
         font-size: 9.5px;
-        font-weight: 900;
-        letter-spacing: 0.75px;
+        font-weight: 800;
+        letter-spacing: 0;
         line-height: 1;
         text-transform: uppercase;
     }}
@@ -462,9 +466,9 @@ def build_css() -> str:
     .content-title {{
         margin: 0 0 4px;
         color: var(--navy);
-        font-size: 15px;
+        font-size: 16px;
         font-weight: 900;
-        letter-spacing: -0.3px;
+        letter-spacing: 0;
         line-height: 1.12;
     }}
 
@@ -472,7 +476,7 @@ def build_css() -> str:
         margin: 0 0 7px;
         color: var(--muted);
         font-size: 11.5px;
-        font-weight: 600;
+        font-weight: 500;
         line-height: 1.28;
     }}
 
@@ -489,19 +493,19 @@ def build_css() -> str:
         justify-content: center;
         gap: 8px;
         width: fit-content;
-        padding: 7px 11px;
+        padding: 7px 12px;
         border-radius: 999px;
         background: var(--teal);
         color: #ffffff !important;
-        font-size: 11px;
-        font-weight: 900;
+        font-size: 11.5px;
+        font-weight: 800;
         line-height: 1;
         text-decoration: none;
-        box-shadow: 0 8px 18px rgba(51, 178, 193, 0.22);
+        box-shadow: 0 6px 14px rgba(51, 178, 193, 0.18);
     }}
 
     .cta::after {{
-        content: "↗";
+        content: "\\2197";
         font-size: 12px;
         line-height: 1;
     }}
@@ -547,11 +551,11 @@ def build_css() -> str:
     }}
 
     .report-footer {{
-        margin-top: 10px;
+        margin-top: 12px;
         padding-bottom: 0;
-        color: #000000;
-        font-size: 11.5px;
-        font-weight: 800;
+        color: rgba(0, 44, 71, 0.88);
+        font-size: 12px;
+        font-weight: 600;
         text-align: center;
     }}
 
@@ -591,15 +595,15 @@ def build_css() -> str:
         }}
 
         .brand-name {{
-            font-size: 22px;
-        }}
-
-        .report-title {{
             font-size: 25px;
         }}
 
+        .report-title {{
+            font-size: 28px;
+        }}
+
         .report-date {{
-            font-size: 13px;
+            font-size: 14px;
         }}
 
         .kpi-grid {{
@@ -926,9 +930,9 @@ def default_content_description(platform: str) -> str:
 def icon_eye() -> str:
     return """
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
-              stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
-        <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.9"/>
+        <path d="M2.8 12s3.4-5.7 9.2-5.7 9.2 5.7 9.2 5.7-3.4 5.7-9.2 5.7S2.8 12 2.8 12Z"
+              stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="12" cy="12" r="2.8" stroke="currentColor" stroke-width="1.9"/>
     </svg>
     """
 
@@ -936,11 +940,12 @@ def icon_eye() -> str:
 def icon_megaphone() -> str:
     return """
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M4.5 13.2h3.2l8.1 4.1V6.7l-8.1 4.1H4.5v2.4Z" fill="currentColor"/>
-        <path d="M7.6 13.2 9.2 18.7h2.4L10 13.2"
-              stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M18.1 9.2c.95.7 1.5 1.66 1.5 2.8 0 1.13-.55 2.1-1.5 2.8"
-              stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M4.4 10.4h3.3l8.2-4v11.2l-8.2-4H4.4a1.4 1.4 0 0 1-1.4-1.4v-.4a1.4 1.4 0 0 1 1.4-1.4Z"
+              stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M8 13.6 9.4 18a1.2 1.2 0 0 0 1.2.8h1.2l-1.6-5.2"
+              stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M18.4 9.2c.9.7 1.4 1.65 1.4 2.8s-.5 2.1-1.4 2.8"
+              stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
     </svg>
     """
 
@@ -948,8 +953,8 @@ def icon_megaphone() -> str:
 def icon_heart() -> str:
     return """
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M12 20.1s-7.4-4.5-8.9-9.3c-1-3.3 1-5.9 4-5.9 1.9 0 3.4 1 4.2 2.4.8-1.4 2.3-2.4 4.2-2.4 3 0 5 2.6 4 5.9-1.5 4.8-8.9 9.3-8.9 9.3Z"
-              stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
+        <path d="M12 20s-7.3-4.35-8.65-9.05C2.45 7.8 4.35 5.2 7.25 5.2c1.95 0 3.45 1.1 4.2 2.45.75-1.35 2.25-2.45 4.2-2.45 2.9 0 4.8 2.6 3.9 5.75C18.2 15.65 12 20 12 20Z"
+              stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     """
 
@@ -957,11 +962,11 @@ def icon_heart() -> str:
 def icon_chat() -> str:
     return """
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M5.2 5.4h13.6a1.9 1.9 0 0 1 1.9 1.9v7.1a1.9 1.9 0 0 1-1.9 1.9H9.4L5.2 19v-2.7a1.9 1.9 0 0 1-1.9-1.9V7.3a1.9 1.9 0 0 1 1.9-1.9Z"
+        <path d="M5.4 5.4h13.2a2 2 0 0 1 2 2v6.8a2 2 0 0 1-2 2H9.5L5.2 19v-2.8a2 2 0 0 1-1.8-2V7.4a2 2 0 0 1 2-2Z"
               fill="currentColor"/>
-        <circle cx="9.1" cy="10.9" r="1.1" fill="#FFFFFF"/>
-        <circle cx="12" cy="10.9" r="1.1" fill="#FFFFFF"/>
-        <circle cx="14.9" cy="10.9" r="1.1" fill="#FFFFFF"/>
+        <circle cx="9.1" cy="10.9" r="1" fill="#FFFFFF"/>
+        <circle cx="12" cy="10.9" r="1" fill="#FFFFFF"/>
+        <circle cx="14.9" cy="10.9" r="1" fill="#FFFFFF"/>
     </svg>
     """
 
