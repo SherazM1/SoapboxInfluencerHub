@@ -418,6 +418,46 @@ def build_css() -> str:
         background: #f3fafc;
     }}
 
+    .platform-tile {{
+        width: 100%;
+        height: 100%;
+        min-height: inherit;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        overflow: hidden;
+        background:
+            radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.85), transparent 28%),
+            linear-gradient(135deg, rgba(51, 178, 193, 0.12), rgba(247, 251, 253, 1));
+    }}
+
+    .platform-icon-img {{
+        width: 58px;
+        height: 58px;
+        object-fit: contain;
+        display: block;
+    }}
+
+    .platform-tile-label {{
+        color: #33B2C1;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }}
+
+    .platform-generic-mark {{
+        color: #002C47;
+        font-size: 30px;
+        font-weight: 800;
+    }}
+
+    .platform-icon-missing .platform-icon-img {{
+        display: none;
+    }}
+
     .media-link:focus-visible,
     .cta:focus-visible {{
         outline: 2px solid rgba(51, 178, 193, 0.6);
@@ -641,7 +681,8 @@ def build_css() -> str:
 
         .content-image,
         .placeholder,
-        .placeholder-fallback {{
+        .placeholder-fallback,
+        .platform-tile {{
             width: 100%;
             height: 100%;
             min-height: 0;
@@ -802,15 +843,7 @@ def build_content_card(item: dict, index: int) -> str:
     title = clean_text(item.get("content_title")) or default_content_title(platform)
     description = clean_text(item.get("content_description")) or default_content_description(platform)
 
-    image_ref = (
-        item.get("image_path")
-        or item.get("image_url")
-        or item.get("uploaded_image_path")
-        or ""
-    )
-
     image_html = build_image_html(
-        image_ref=image_ref,
         live_url=live_url,
         platform=platform,
         index=index,
@@ -852,38 +885,69 @@ def build_content_card(item: dict, index: int) -> str:
     """
 
 
-def build_image_html(image_ref: str | None, live_url: str, platform: str, index: int) -> str:
-    """Build the clickable media area."""
-    image_src = resolve_image_src(image_ref)
-    alt_text = f"{platform} live content preview {index}"
+def build_image_html(live_url: str, platform: str, index: int) -> str:
+    """Build the clickable platform tile media area."""
+    platform_name = normalize_platform(platform)
+    icon_src = resolve_platform_icon_src(platform_name)
+    alt_text = f"{platform_name} live content {index}"
+    tile_class = platform_name.lower().replace(" ", "-")
 
-    if image_src:
-        fallback_html = (
-            f'<div class="placeholder placeholder-fallback" role="img" '
-            f'aria-label="{escape(alt_text)}">{escape(platform)} Preview</div>'
-        )
+    if icon_src:
         media_html = (
-            f'<img class="content-image" src="{escape(image_src)}" '
-            f'alt="{escape(alt_text)}" loading="lazy" '
+            f'<div class="platform-tile platform-tile-{escape(tile_class)}" role="img" '
+            f'aria-label="{escape(alt_text)}">'
+            f'<img class="platform-icon-img" src="{escape(icon_src)}" '
+            f'alt="{escape(platform_name)} icon" loading="lazy" '
             "onerror=\"this.style.display='none'; "
-            "var fallback=this.parentElement.querySelector('.placeholder-fallback'); "
-            "if (fallback) { fallback.style.display='flex'; }\" />"
-            f"{fallback_html}"
+            "this.parentElement.classList.add('platform-icon-missing');\" />"
+            f'<span class="platform-tile-label">{escape(platform_name)}</span>'
+            "</div>"
         )
     else:
         media_html = (
-            f'<div class="placeholder" role="img" aria-label="{escape(alt_text)}">'
-            f"{escape(platform)} Preview</div>"
+            f'<div class="platform-tile platform-tile-generic" role="img" '
+            f'aria-label="{escape(alt_text)}">'
+            '<span class="platform-generic-mark" aria-hidden="true">&#8599;</span>'
+            '<span class="platform-tile-label">Live Content</span>'
+            "</div>"
         )
 
     if not is_valid_url(live_url):
         return f'<div class="media-link">{media_html}</div>'
 
     return (
-        f'<a class="media-link" href="{escape(live_url)}" target="_blank" '
+        f'<a class="media-link platform-tile-link" href="{escape(live_url)}" target="_blank" '
         f'rel="noopener noreferrer" aria-label="Open live {escape(platform)} post">'
         f"{media_html}</a>"
     )
+
+
+def get_platform_icon_path(platform: str) -> str | None:
+    """Return the local platform icon asset path for supported platforms."""
+    normalized_platform = normalize_platform(platform).lower()
+    mapping = {
+        "instagram": "assets/platform_instagram.png",
+        "tiktok": "assets/platform_tiktok.png",
+        "facebook": "assets/platform_facebook.png",
+        "pinterest": "assets/platform_pinterest.png",
+    }
+    return mapping.get(normalized_platform)
+
+
+def resolve_platform_icon_src(platform: str) -> str:
+    """Resolve a platform icon asset to a data URI."""
+    icon_path = get_platform_icon_path(platform)
+    if not icon_path:
+        return ""
+
+    root_dir = Path(__file__).resolve().parents[1]
+    path = root_dir / icon_path
+    if not path.exists() or not path.is_file():
+        return ""
+
+    mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def resolve_image_src(image_ref: str | None) -> str:
@@ -968,6 +1032,8 @@ def normalize_platform(platform: str) -> str:
         "tik tok": "TikTok",
         "facebook": "Facebook",
         "fb": "Facebook",
+        "pinterest": "Pinterest",
+        "pin": "Pinterest",
         "youtube": "YouTube",
         "yt": "YouTube",
     }
@@ -981,6 +1047,7 @@ def default_content_title(platform: str) -> str:
         "Instagram": "Featured Instagram Content",
         "TikTok": "Featured TikTok Content",
         "Facebook": "Featured Facebook Content",
+        "Pinterest": "Featured Pinterest Content",
         "YouTube": "Featured YouTube Content",
     }
     return mapping.get(platform_name, f"{platform_name} Campaign Content")
@@ -993,6 +1060,7 @@ def default_content_description(platform: str) -> str:
         "Instagram": "Live campaign content currently featured on Instagram.",
         "TikTok": "Live campaign content currently featured on TikTok.",
         "Facebook": "Live campaign content currently featured on Facebook.",
+        "Pinterest": "Live campaign content currently featured on Pinterest.",
         "YouTube": "Live campaign content currently featured on YouTube.",
     }
     return mapping.get(platform_name, "Tap through to view the live campaign content.")
@@ -1058,6 +1126,8 @@ def infer_platform(live_url: str) -> str:
         return "TikTok"
     if "facebook.com" in domain or "fb.watch" in domain:
         return "Facebook"
+    if "pinterest.com" in domain or domain == "pin.it":
+        return "Pinterest"
     if "youtube.com" in domain or "youtu.be" in domain:
         return "YouTube"
 
