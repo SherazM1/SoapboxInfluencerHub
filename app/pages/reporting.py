@@ -24,6 +24,10 @@ EMPTY_ITEM = {
     "live_url": "",
     "image_url": "",
     "image_path": "",
+    "uploaded_image_path": "",
+    "creator_handle": "",
+    "content_title": "",
+    "content_description": "",
 }
 
 
@@ -328,7 +332,12 @@ def parse_report_date(value: str | None) -> date:
 def image_ref_for_preview(item: dict, auto_image_url: str, uploaded_file) -> str:
     if uploaded_file is not None:
         return uploaded_file
-    return item.get("image_path") or item.get("image_url") or auto_image_url
+    return (
+        item.get("image_path")
+        or item.get("uploaded_image_path")
+        or item.get("image_url")
+        or auto_image_url
+    )
 
 
 def render_image_preview(image_ref) -> None:
@@ -401,9 +410,11 @@ def sync_content_items_from_widgets(report_id: str | None = None) -> list[dict]:
         
         uploaded_file = st.session_state.get(f"content_image_upload_{index}")
         image_path = item.get("image_path", "")
+        uploaded_image_path = item.get("uploaded_image_path", "")
         image_url = item.get("image_url", "")
         if report_id and uploaded_file is not None:
             image_path = save_uploaded_image(report_id, index, uploaded_file)
+            uploaded_image_path = image_path
             image_url = ""
         elif not image_path and not image_url:
             # Use normalized URL for preview image fetching
@@ -414,6 +425,10 @@ def sync_content_items_from_widgets(report_id: str | None = None) -> list[dict]:
                 "live_url": live_url,
                 "image_url": image_url.strip(),
                 "image_path": image_path.strip(),
+                "uploaded_image_path": uploaded_image_path.strip(),
+                "creator_handle": (item.get("creator_handle") or "").strip(),
+                "content_title": (item.get("content_title") or "").strip(),
+                "content_description": (item.get("content_description") or "").strip(),
             }
         )
     st.session_state["reporting_content_items"] = items
@@ -540,7 +555,13 @@ def render_edit_mode(report_id: str | None) -> None:
     loaded_report = get_report(report_id) if report_id else None
     if report_id and not loaded_report:
         st.warning("That report_id was not found. Create a new report or load an existing one.")
-    if loaded_report and st.session_state.get("reporting_report_id") != report_id:
+    loaded_items = (loaded_report or {}).get("content_items") or []
+    state_items = st.session_state.get("reporting_content_items") or []
+    state_has_saved_rows = any((item.get("live_url") or "").strip() for item in state_items)
+    if loaded_report and (
+        st.session_state.get("reporting_report_id") != report_id
+        or (loaded_items and not state_has_saved_rows)
+    ):
         reset_editor(loaded_report)
         st.rerun()
 

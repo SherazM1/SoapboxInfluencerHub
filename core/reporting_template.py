@@ -388,7 +388,9 @@ def build_css() -> str:
     .content-card {{
         display: grid;
         grid-template-columns: 235px minmax(0, 1fr);
-        min-height: 102px;
+        height: 112px;
+        min-height: 112px;
+        max-height: 112px;
         overflow: hidden;
         border: 1px solid var(--border);
         border-radius: 19px;
@@ -398,7 +400,11 @@ def build_css() -> str:
 
     .media-link {{
         display: block;
-        min-height: 102px;
+        width: 235px;
+        height: 112px;
+        min-height: 112px;
+        max-height: 112px;
+        overflow: hidden;
         color: inherit;
         text-decoration: none;
         background: #f3fafc;
@@ -414,7 +420,8 @@ def build_css() -> str:
         display: block;
         width: 100%;
         height: 100%;
-        min-height: 102px;
+        min-height: 112px;
+        max-height: 112px;
         object-fit: cover;
         object-position: center center;
         background: #e8f6f8;
@@ -426,7 +433,10 @@ def build_css() -> str:
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 102px;
+        height: 112px;
+        min-height: 112px;
+        max-height: 112px;
+        overflow: hidden;
         padding: 14px;
         background:
             radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.95), transparent 24%),
@@ -609,12 +619,17 @@ def build_css() -> str:
 
         .content-card {{
             grid-template-columns: 1fr;
+            height: auto;
+            max-height: none;
         }}
 
         .media-link,
         .content-image,
         .placeholder {{
+            width: 100%;
+            height: 150px;
             min-height: 150px;
+            max-height: 150px;
         }}
     }}
 

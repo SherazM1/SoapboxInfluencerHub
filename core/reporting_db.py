@@ -65,8 +65,18 @@ def ensure_content_item_columns(conn: sqlite3.Connection) -> None:
         row["name"]: row
         for row in conn.execute("PRAGMA table_info(report_content_items)").fetchall()
     }
-    if "image_path" not in columns:
-        conn.execute("ALTER TABLE report_content_items ADD COLUMN image_path TEXT")
+    optional_columns = {
+        "creator_handle": "TEXT NOT NULL DEFAULT ''",
+        "content_title": "TEXT NOT NULL DEFAULT ''",
+        "content_description": "TEXT NOT NULL DEFAULT ''",
+        "image_path": "TEXT",
+        "uploaded_image_path": "TEXT",
+    }
+    for column_name, column_type in optional_columns.items():
+        if column_name not in columns:
+            conn.execute(
+                f"ALTER TABLE report_content_items ADD COLUMN {column_name} {column_type}"
+            )
 
 
 def generate_report_id() -> str:
@@ -97,7 +107,16 @@ def get_report(report_id: str) -> dict[str, Any] | None:
             return None
         items = conn.execute(
             """
-            SELECT platform, live_url, image_url, image_path, sort_order
+            SELECT
+                platform,
+                live_url,
+                image_url,
+                image_path,
+                uploaded_image_path,
+                creator_handle,
+                content_title,
+                content_description,
+                sort_order
             FROM report_content_items
             WHERE report_id = ?
             ORDER BY sort_order ASC, id ASC
@@ -155,19 +174,21 @@ def save_report(report: dict[str, Any], content_items: list[dict[str, Any]]) -> 
                 """
                 INSERT INTO report_content_items (
                     report_id, platform, creator_handle, content_title,
-                    content_description, live_url, image_url, image_path, sort_order
+                    content_description, live_url, image_url, image_path,
+                    uploaded_image_path, sort_order
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report_id,
                     (item.get("platform") or "").strip(),
-                    "",
-                    "",
-                    "",
+                    (item.get("creator_handle") or "").strip(),
+                    (item.get("content_title") or "").strip(),
+                    (item.get("content_description") or "").strip(),
                     item["live_url"].strip(),
                     (item.get("image_url") or "").strip() or None,
                     (item.get("image_path") or "").strip() or None,
+                    (item.get("uploaded_image_path") or "").strip() or None,
                     index,
                 ),
             )
