@@ -148,6 +148,13 @@ def build_css() -> str:
         background: #ffffff;
         overflow: hidden;
         border: 0;
+        caret-color: transparent;
+        cursor: default;
+        user-select: none;
+    }}
+
+    .soapbox-report a {{
+        cursor: pointer;
     }}
 
     .report-shell {{
@@ -181,7 +188,7 @@ def build_css() -> str:
     .brand-name {{
         margin: 0 0 4px;
         color: var(--teal);
-        font-size: 30px;
+        font-size: 31px;
         font-weight: 800;
         letter-spacing: 0;
         line-height: 1.03;
@@ -190,7 +197,7 @@ def build_css() -> str:
     .report-title {{
         margin: 0 0 6px;
         color: var(--navy);
-        font-size: 33px;
+        font-size: 32px;
         font-weight: 800;
         letter-spacing: 0;
         line-height: 1.04;
@@ -199,7 +206,7 @@ def build_css() -> str:
     .report-date {{
         color: var(--muted);
         font-size: 16px;
-        font-weight: 600;
+        font-weight: 700;
         line-height: 1.2;
     }}
 
@@ -224,8 +231,8 @@ def build_css() -> str:
 
     .logo-box img {{
         display: block;
-        max-width: 166px;
-        max-height: 86px;
+        max-width: 170px;
+        max-height: 88px;
         object-fit: contain;
         background: transparent;
         border: 0;
@@ -271,6 +278,7 @@ def build_css() -> str:
         border-radius: 23px;
         text-align: center;
         overflow: hidden;
+        box-shadow: 0 5px 14px rgba(0, 44, 71, 0.035);
     }}
 
     .kpi-card::after {{
@@ -289,13 +297,13 @@ def build_css() -> str:
     }}
 
     .kpi-teal {{
-        background: rgba(51, 178, 193, 0.075);
-        border: 1.5px solid rgba(51, 178, 193, 0.56);
+        background: rgba(51, 178, 193, 0.085);
+        border: 1.5px solid rgba(51, 178, 193, 0.60);
     }}
 
     .kpi-navy {{
-        background: rgba(0, 44, 71, 0.045);
-        border: 1.5px solid rgba(0, 44, 71, 0.58);
+        background: rgba(0, 44, 71, 0.06);
+        border: 1.5px solid rgba(0, 44, 71, 0.66);
     }}
 
     .kpi-icon {{
@@ -316,14 +324,14 @@ def build_css() -> str:
 
     .kpi-teal .kpi-icon {{
         color: var(--teal);
-        background: rgba(51, 178, 193, 0.12);
-        border: 1px solid rgba(51, 178, 193, 0.24);
+        background: rgba(51, 178, 193, 0.13);
+        border: 1px solid rgba(51, 178, 193, 0.26);
     }}
 
     .kpi-navy .kpi-icon {{
         color: var(--navy);
-        background: rgba(0, 44, 71, 0.06);
-        border: 1px solid rgba(0, 44, 71, 0.14);
+        background: rgba(0, 44, 71, 0.075);
+        border: 1px solid rgba(0, 44, 71, 0.18);
     }}
 
     .kpi-value {{
@@ -444,7 +452,7 @@ def build_css() -> str:
             linear-gradient(135deg, rgba(51, 178, 193, 0.10) 0%, rgba(247, 251, 253, 1) 100%);
         color: rgba(51, 178, 193, 0.78);
         font-size: 11px;
-        font-weight: 900;
+        font-weight: 800;
         letter-spacing: 0;
         text-align: center;
         text-transform: uppercase;
@@ -489,7 +497,7 @@ def build_css() -> str:
         background: rgba(51, 178, 193, 0.10);
         color: #178C95;
         font-size: 9.5px;
-        font-weight: 800;
+        font-weight: 700;
         letter-spacing: 0;
         line-height: 1;
         text-transform: uppercase;
@@ -498,7 +506,7 @@ def build_css() -> str:
     .content-handle {{
         color: var(--muted);
         font-size: 11px;
-        font-weight: 700;
+        font-weight: 600;
         line-height: 1.2;
     }}
 
@@ -537,10 +545,10 @@ def build_css() -> str:
         background: var(--teal);
         color: #ffffff !important;
         font-size: 11.5px;
-        font-weight: 700;
+        font-weight: 800;
         line-height: 1;
         text-decoration: none;
-        box-shadow: 0 5px 12px rgba(51, 178, 193, 0.16);
+        box-shadow: 0 4px 10px rgba(51, 178, 193, 0.15);
     }}
 
     .cta::after {{
@@ -592,7 +600,7 @@ def build_css() -> str:
     .report-footer {{
         margin-top: 12px;
         padding-bottom: 0;
-        color: rgba(0, 44, 71, 0.78);
+        color: rgba(0, 44, 71, 0.72);
         font-size: 11.5px;
         font-weight: 600;
         text-align: center;
