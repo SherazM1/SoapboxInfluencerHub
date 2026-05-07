@@ -4,6 +4,9 @@ from __future__ import annotations
 import base64
 import html
 import mimetypes
+from collections import deque
+from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -948,6 +951,109 @@ def resolve_platform_icon_src(platform: str) -> str:
     if not path.exists() or not path.is_file():
         return ""
 
+    cleaned_src = clean_platform_icon_background(str(path))
+    if cleaned_src:
+        return cleaned_src
+
+    return image_file_to_data_uri(path)
+
+
+def clean_platform_icon_background(image_path: str) -> str | None:
+    """Return a cleaned PNG data URI for a platform icon, falling back to raw data."""
+    cleaned_src = get_clean_platform_icon_data_uri(image_path)
+    if cleaned_src:
+        return cleaned_src
+
+    path = Path(image_path)
+    if not path.exists() or not path.is_file():
+        return None
+
+    return image_file_to_data_uri(path)
+
+
+@lru_cache(maxsize=16)
+def get_clean_platform_icon_data_uri(path: str) -> str | None:
+    """Remove only edge-connected light checker/background pixels from an icon."""
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+
+    try:
+        image_path = Path(path)
+        if not image_path.exists() or not image_path.is_file():
+            return None
+
+        image = Image.open(image_path).convert("RGBA")
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            return None
+
+        pixels = image.load()
+        visited: set[tuple[int, int]] = set()
+        background: set[tuple[int, int]] = set()
+        queue: deque[tuple[int, int]] = deque()
+
+        def is_removable_pixel(x: int, y: int) -> bool:
+            r, g, b, a = pixels[x, y]
+            if a == 0:
+                return True
+
+            brightness = max(r, g, b)
+            darkness = min(r, g, b)
+            saturation = brightness - darkness
+            return (
+                r >= 215
+                and g >= 215
+                and b >= 215
+            ) or (
+                brightness >= 205
+                and saturation <= 24
+            )
+
+        for x in range(width):
+            for y in (0, height - 1):
+                if (x, y) not in visited and is_removable_pixel(x, y):
+                    visited.add((x, y))
+                    queue.append((x, y))
+
+        for y in range(height):
+            for x in (0, width - 1):
+                if (x, y) not in visited and is_removable_pixel(x, y):
+                    visited.add((x, y))
+                    queue.append((x, y))
+
+        while queue:
+            x, y = queue.popleft()
+            background.add((x, y))
+
+            for nx, ny in (
+                (x - 1, y),
+                (x + 1, y),
+                (x, y - 1),
+                (x, y + 1),
+            ):
+                if nx < 0 or ny < 0 or nx >= width or ny >= height:
+                    continue
+                if (nx, ny) in visited or not is_removable_pixel(nx, ny):
+                    continue
+                visited.add((nx, ny))
+                queue.append((nx, ny))
+
+        for x, y in background:
+            r, g, b, _a = pixels[x, y]
+            pixels[x, y] = (r, g, b, 0)
+
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+    except Exception:
+        return None
+
+
+def image_file_to_data_uri(path: Path) -> str:
+    """Encode a local image file as a data URI."""
     mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
