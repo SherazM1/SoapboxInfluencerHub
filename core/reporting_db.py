@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import re
+import secrets
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +37,7 @@ def init_db() -> None:
             )
             """
         )
+        ensure_report_columns(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS report_content_items (
@@ -57,7 +60,22 @@ def init_db() -> None:
             ON report_content_items(report_id)
             """
         )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_slug
+            ON reports(slug)
+            WHERE slug IS NOT NULL
+            """
+        )
         ensure_content_item_columns(conn)
+
+
+def ensure_report_columns(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]: row for row in conn.execute("PRAGMA table_info(reports)").fetchall()
+    }
+    if "slug" not in columns:
+        conn.execute("ALTER TABLE reports ADD COLUMN slug TEXT")
 
 
 def ensure_content_item_columns(conn: sqlite3.Connection) -> None:
@@ -83,12 +101,37 @@ def generate_report_id() -> str:
     return f"rpt-{uuid.uuid4().hex[:10]}"
 
 
+def slug_base(client_name: str, report_date: str) -> str:
+    name = (client_name or "").lower()
+    name = re.sub(r"['`]", "", name)
+    name = re.sub(r"[^a-z0-9]+", "-", name)
+    name = re.sub(r"-+", "-", name).strip("-") or "report"
+    if report_date:
+        return f"{name}-{report_date}"
+    return name
+
+
+def generate_report_slug(
+    conn: sqlite3.Connection, client_name: str, report_date: str
+) -> str:
+    base = slug_base(client_name, report_date)
+    for _ in range(20):
+        slug = f"{base}-{secrets.token_hex(2)}"
+        exists = conn.execute(
+            "SELECT 1 FROM reports WHERE slug = ?",
+            (slug,),
+        ).fetchone()
+        if not exists:
+            return slug
+    return f"{base}-{secrets.token_hex(3)}"
+
+
 def list_reports() -> list[dict[str, Any]]:
     init_db()
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT report_id, client_name, report_date, updated_at
+            SELECT report_id, slug, client_name, report_date, updated_at
             FROM reports
             ORDER BY updated_at DESC
             """
@@ -97,11 +140,23 @@ def list_reports() -> list[dict[str, Any]]:
 
 
 def get_report(report_id: str) -> dict[str, Any] | None:
+    return get_report_by_column("report_id", report_id)
+
+
+def get_report_by_slug(slug: str) -> dict[str, Any] | None:
+    return get_report_by_column("slug", slug)
+
+
+def get_report_by_column(column_name: str, value: str) -> dict[str, Any] | None:
+    if column_name not in {"report_id", "slug"}:
+        raise ValueError("Unsupported report lookup column.")
+    if not value:
+        return None
     init_db()
     with get_connection() as conn:
         report = conn.execute(
-            "SELECT * FROM reports WHERE report_id = ?",
-            (report_id,),
+            f"SELECT * FROM reports WHERE {column_name} = ?",
+            (value,),
         ).fetchone()
         if report is None:
             return None
@@ -121,7 +176,7 @@ def get_report(report_id: str) -> dict[str, Any] | None:
             WHERE report_id = ?
             ORDER BY sort_order ASC, id ASC
             """,
-            (report_id,),
+            (report["report_id"],),
         ).fetchall()
     data = dict(report)
     data["content_items"] = [dict(item) for item in items]
@@ -135,19 +190,25 @@ def save_report(report: dict[str, Any], content_items: list[dict[str, Any]]) -> 
 
     with get_connection() as conn:
         existing = conn.execute(
-            "SELECT created_at FROM reports WHERE report_id = ?",
+            "SELECT created_at, slug FROM reports WHERE report_id = ?",
             (report_id,),
         ).fetchone()
         created_at = existing["created_at"] if existing else now
+        slug = existing["slug"] if existing and existing["slug"] else None
+        if not slug:
+            slug = generate_report_slug(
+                conn, report.get("client_name", ""), report.get("report_date", "")
+            )
         conn.execute(
             """
             INSERT INTO reports (
-                report_id, client_name, report_date, organic_impressions,
+                report_id, slug, client_name, report_date, organic_impressions,
                 paid_impressions, organic_engagements, paid_engagements,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(report_id) DO UPDATE SET
+                slug = COALESCE(reports.slug, excluded.slug),
                 client_name = excluded.client_name,
                 report_date = excluded.report_date,
                 organic_impressions = excluded.organic_impressions,
@@ -158,6 +219,7 @@ def save_report(report: dict[str, Any], content_items: list[dict[str, Any]]) -> 
             """,
             (
                 report_id,
+                slug,
                 report["client_name"].strip(),
                 report["report_date"],
                 int(report["organic_impressions"]),
@@ -193,3 +255,10 @@ def save_report(report: dict[str, Any], content_items: list[dict[str, Any]]) -> 
                 ),
             )
     return report_id
+
+
+def delete_report(report_id: str) -> None:
+    init_db()
+    with get_connection() as conn:
+        conn.execute("DELETE FROM report_content_items WHERE report_id = ?", (report_id,))
+        conn.execute("DELETE FROM reports WHERE report_id = ?", (report_id,))
