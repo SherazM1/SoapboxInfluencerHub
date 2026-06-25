@@ -42,14 +42,15 @@ def render_header() -> None:
         st.title("Soapbox Influencer Hub")
         st.markdown(
             "Select a platform function below. Workbook Automation is active now, "
-            "and live campaign reporting is available for client-facing updates."
+            "live campaign reporting is available for client-facing updates, and "
+            "Influencer Pricing is available as a foundation preview."
         )
 
 
 def render_module_cards() -> None:
     """Render top-level app module sections for navigation."""
     st.subheader("Select a Function")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.markdown("### Workbook Automation")
@@ -68,6 +69,19 @@ def render_module_cards() -> None:
         if st.button("Open Reporting", use_container_width=True):
             switch_to_page("pages/reporting.py")
         st.page_link("pages/reporting.py", label="Go to Reporting Workspace")
+
+    with col3:
+        st.markdown("### Influencer Pricing")
+        st.caption("Status: Foundation / Preview")
+        st.markdown(
+            "Build campaign pricing, estimate metrics, and organize historical campaign data."
+        )
+        if st.button("Open Influencer Pricing", use_container_width=True):
+            switch_to_page("pages/influencer_pricing.py")
+        st.page_link(
+            "pages/influencer_pricing.py",
+            label="Go to Influencer Pricing Workspace",
+        )
 
 
 def main() -> None:
