@@ -437,13 +437,19 @@ def render_metrics() -> None:
 
     if using_pricing_values:
         st.session_state["metrics_total_influencers"] = int(
-            pricing_state["outputs"].get("total_influencers", 0) or 0
+            pricing_state["outputs"].get(
+                "total_influencers", pricing_state.get("total_influencers", 0)
+            )
+            or 0
         )
-        st.session_state["metrics_paid_impressions_spend"] = float(
-            pricing_state["inputs"].get("paid_media_spend", 0) or 0
+        st.session_state["metrics_total_paid_media_spend"] = float(
+            pricing_state["inputs"].get(
+                "paid_media_spend", pricing_state.get("paid_media_spend", 0)
+            )
+            or 0
         )
 
-    input_cols = st.columns(4)
+    input_cols = st.columns(2)
     with input_cols[0]:
         total_influencers = st.number_input(
             "Total Influencers",
@@ -454,30 +460,58 @@ def render_metrics() -> None:
             disabled=using_pricing_values,
         )
     with input_cols[1]:
-        paid_impressions_spend = st.number_input(
-            "Paid Impression Spend",
+        total_paid_media_spend = st.number_input(
+            "Total Paid Media Spend",
             min_value=0.0,
             value=0.0,
             step=1000.0,
-            key="metrics_paid_impressions_spend",
+            key="metrics_total_paid_media_spend",
             disabled=using_pricing_values,
         )
-    with input_cols[2]:
-        paid_clicks_spend = st.number_input(
-            "Paid Click Spend",
-            min_value=0.0,
-            value=0.0,
-            step=1000.0,
-            key="metrics_paid_clicks_spend",
+
+    st.markdown("#### Paid Spend Distribution")
+    distribution_cols = st.columns(3)
+    with distribution_cols[0]:
+        paid_impressions_percent = st.number_input(
+            "Paid Impressions %",
+            min_value=0,
+            max_value=100,
+            value=50,
+            step=5,
+            key="metrics_paid_impressions_percent",
         )
-    with input_cols[3]:
-        paid_engagements_spend = st.number_input(
-            "Paid Engagement Spend",
-            min_value=0.0,
-            value=0.0,
-            step=1000.0,
-            key="metrics_paid_engagements_spend",
+    with distribution_cols[1]:
+        paid_clicks_percent = st.number_input(
+            "Paid Clicks %",
+            min_value=0,
+            max_value=100,
+            value=25,
+            step=5,
+            key="metrics_paid_clicks_percent",
         )
+    with distribution_cols[2]:
+        paid_engagements_percent = st.number_input(
+            "Paid Engagements %",
+            min_value=0,
+            max_value=100,
+            value=25,
+            step=5,
+            key="metrics_paid_engagements_percent",
+        )
+
+    distribution_total = (
+        paid_impressions_percent + paid_clicks_percent + paid_engagements_percent
+    )
+    if distribution_total != 100:
+        st.warning("Paid media distribution should total 100%.")
+
+    paid_impressions_spend = total_paid_media_spend * (
+        paid_impressions_percent / 100
+    )
+    paid_clicks_spend = total_paid_media_spend * (paid_clicks_percent / 100)
+    paid_engagements_spend = total_paid_media_spend * (
+        paid_engagements_percent / 100
+    )
 
     inputs = {
         "total_influencers": total_influencers,
@@ -490,13 +524,18 @@ def render_metrics() -> None:
     st.caption(
         "Using Pricing Tool values" if using_pricing_values else "Using manual values"
     )
-    summary_cols = st.columns(4)
+    summary_cols = st.columns(5)
     summary_cols[0].metric("Total Influencers", format_number(total_influencers))
     summary_cols[1].metric(
+        "Total Paid Media Spend", format_currency(total_paid_media_spend)
+    )
+    summary_cols[2].metric(
         "Paid Impression Spend", format_currency(paid_impressions_spend)
     )
-    summary_cols[2].metric("Paid Click Spend", format_currency(paid_clicks_spend))
     summary_cols[3].metric(
+        "Paid Click Spend", format_currency(paid_clicks_spend)
+    )
+    summary_cols[4].metric(
         "Paid Engagement Spend", format_currency(paid_engagements_spend)
     )
 
