@@ -43,39 +43,47 @@ def render_influencer_mix_inputs() -> dict[str, float | int]:
     st.markdown("#### Influencer Mix")
     count_col, rate_col = st.columns(2)
     with count_col:
-        home_gatherings_count = st.number_input(
-            "Home Gatherings Count", min_value=0, value=0, step=1
+        brand_ambassadors_count = st.number_input(
+            "Brand Ambassadors Count", min_value=0, value=0, step=1
         )
         video_creators_count = st.number_input(
             "Video Creators Count", min_value=0, value=0, step=1
         )
         social_stories_count = st.number_input(
-            "Social Stories Count", min_value=0, value=0, step=1
+            "Social + Stories Count", min_value=0, value=0, step=1
+        )
+        social_story_video_count = st.number_input(
+            "Social + Story + Video Count", min_value=0, value=0, step=1
         )
         macro_influencers_count = st.number_input(
             "Macro Influencers Count", min_value=0, value=0, step=1
         )
     with rate_col:
-        home_gatherings_rate = st.number_input(
-            "Home Gatherings Rate", min_value=0.0, value=2000.0, step=100.0
+        brand_ambassadors_rate = st.number_input(
+            "Brand Ambassadors Rate", min_value=0.0, value=2000.0, step=100.0
         )
         video_creators_rate = st.number_input(
             "Video Creators Rate", min_value=0.0, value=1000.0, step=100.0
         )
         social_stories_rate = st.number_input(
-            "Social Stories Rate", min_value=0.0, value=600.0, step=100.0
+            "Social + Stories Rate", min_value=0.0, value=600.0, step=100.0
+        )
+        social_story_video_rate = st.number_input(
+            "Social + Story + Video Rate", min_value=0.0, value=1600.0, step=100.0
         )
         macro_influencers_rate = st.number_input(
             "Macro Influencers Rate", min_value=0.0, value=10000.0, step=500.0
         )
 
     return {
-        "home_gatherings_count": home_gatherings_count,
-        "home_gatherings_rate": home_gatherings_rate,
+        "brand_ambassadors_count": brand_ambassadors_count,
+        "brand_ambassadors_rate": brand_ambassadors_rate,
         "video_creators_count": video_creators_count,
         "video_creators_rate": video_creators_rate,
         "social_stories_count": social_stories_count,
         "social_stories_rate": social_stories_rate,
+        "social_story_video_count": social_story_video_count,
+        "social_story_video_rate": social_story_video_rate,
         "macro_influencers_count": macro_influencers_count,
         "macro_influencers_rate": macro_influencers_rate,
     }
@@ -227,6 +235,20 @@ def render_pricing_tool() -> None:
     st.session_state["influencer_pricing_current"] = {
         "inputs": inputs,
         "outputs": outputs,
+        "total_influencers": outputs["total_influencers"],
+        "paid_media_spend": inputs["paid_media_spend"],
+        "program_total": outputs["program_total"],
+        "raw_subtotal": outputs["raw_subtotal"],
+        "brand_ambassadors_count": inputs["brand_ambassadors_count"],
+        "brand_ambassadors_rate": inputs["brand_ambassadors_rate"],
+        "video_creators_count": inputs["video_creators_count"],
+        "video_creators_rate": inputs["video_creators_rate"],
+        "social_stories_count": inputs["social_stories_count"],
+        "social_stories_rate": inputs["social_stories_rate"],
+        "social_story_video_count": inputs["social_story_video_count"],
+        "social_story_video_rate": inputs["social_story_video_rate"],
+        "macro_influencers_count": inputs["macro_influencers_count"],
+        "macro_influencers_rate": inputs["macro_influencers_rate"],
     }
 
     with summary_col:

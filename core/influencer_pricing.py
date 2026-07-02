@@ -32,22 +32,31 @@ def _number(inputs: dict[str, Any], key: str) -> float:
     return float(inputs.get(key, 0) or 0)
 
 
+def _brand_ambassador_number(inputs: dict[str, Any], key: str) -> float:
+    """Read renamed Brand Ambassador fields with older session fallback."""
+    legacy_key = key.replace("brand_ambassadors", "home_gatherings")
+    return float(inputs.get(key, inputs.get(legacy_key, 0)) or 0)
+
+
 def calculate_pricing(inputs: dict[str, Any]) -> dict[str, float]:
     """Calculate the main Influencer Pricing estimate."""
     total_influencers = (
-        _number(inputs, "home_gatherings_count")
+        _brand_ambassador_number(inputs, "brand_ambassadors_count")
         + _number(inputs, "video_creators_count")
         + _number(inputs, "social_stories_count")
+        + _number(inputs, "social_story_video_count")
         + _number(inputs, "macro_influencers_count")
     )
 
     compensation_total = (
-        _number(inputs, "home_gatherings_count")
-        * _number(inputs, "home_gatherings_rate")
+        _brand_ambassador_number(inputs, "brand_ambassadors_count")
+        * _brand_ambassador_number(inputs, "brand_ambassadors_rate")
         + _number(inputs, "video_creators_count")
         * _number(inputs, "video_creators_rate")
         + _number(inputs, "social_stories_count")
         * _number(inputs, "social_stories_rate")
+        + _number(inputs, "social_story_video_count")
+        * _number(inputs, "social_story_video_rate")
         + _number(inputs, "macro_influencers_count")
         * _number(inputs, "macro_influencers_rate")
     )
