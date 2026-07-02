@@ -38,41 +38,130 @@ def format_number(value: float) -> str:
     return f"{value:,.2f}"
 
 
+BRAND_AMBASSADORS_HELP = (
+    "Typically includes an influencer hosting an event with other influencers "
+    "or friends in the specific niche. The gathering is centered around "
+    "featured products/brand and includes several posts during and after the "
+    "gathering/event. Rates typically range from $2,000-$4,000 depending on "
+    "deliverables/posts included."
+)
+VIDEO_CREATORS_HELP = (
+    "Typically posts a TikTok or IG Reel and 2 stories. Rates typically range "
+    "from $800-$2,000."
+)
+SOCIAL_STORIES_HELP = (
+    "IG carousel post and 3 stories. Rates typically range from $500-$1,000."
+)
+SOCIAL_STORY_VIDEO_HELP = (
+    "Combined deliverable package using social/story/video content. Default "
+    "planning rate is $1,600."
+)
+MACRO_INFLUENCERS_HELP = (
+    "Typically posts an IG Reel or TikTok and has over 500K followers. "
+    "$10,000 is a planning default and can be adjusted based on follower "
+    "size/classification."
+)
+CLICK_2_CART_HELP = (
+    "Click2Cart links start at $4,500 for one link and up to 6 items for a "
+    "6-week campaign. Additional links, more than 6 items, or additional "
+    "flight time may require additional cost."
+)
+PAID_MEDIA_SPEND_HELP = (
+    "Paid media spend can fluctuate based on overall goals and total spend."
+)
+PRODUCT_COST_HELP = (
+    "Product cost is only included when needed in the overall budget, "
+    "typically for higher-end items or if influencers need compensation to "
+    "purchase the product."
+)
+SHIPPING_COST_HELP = (
+    "Shipping cost is used if Soapbox ships products to influencers. This "
+    "usually is not needed if influencers purchase in-store."
+)
+ANALYTICS_SOFTWARE_HELP = "Does not change; included to cover agency fees."
+COMMUNITY_COST_HELP = "Does not change; included to cover agency fees."
+HIRING_LEEWAY_HELP = (
+    "Included to negotiate with influencers on compensation, usage rights, "
+    "and performance incentives."
+)
+HOURLY_INTERNAL_RATE_HELP = "Does not change unless approved."
+
+
 def render_influencer_mix_inputs() -> dict[str, float | int]:
     """Render influencer count and rate inputs."""
     st.markdown("#### Influencer Mix")
     count_col, rate_col = st.columns(2)
     with count_col:
         brand_ambassadors_count = st.number_input(
-            "Brand Ambassadors Count", min_value=0, value=0, step=1
+            "Brand Ambassadors Count",
+            min_value=0,
+            value=0,
+            step=1,
+            help=BRAND_AMBASSADORS_HELP,
         )
         video_creators_count = st.number_input(
-            "Video Creators Count", min_value=0, value=0, step=1
+            "Video Creators Count",
+            min_value=0,
+            value=0,
+            step=1,
+            help=VIDEO_CREATORS_HELP,
         )
         social_stories_count = st.number_input(
-            "Social + Stories Count", min_value=0, value=0, step=1
+            "Social + Stories Count",
+            min_value=0,
+            value=0,
+            step=1,
+            help=SOCIAL_STORIES_HELP,
         )
         social_story_video_count = st.number_input(
-            "Social + Story + Video Count", min_value=0, value=0, step=1
+            "Social + Story + Video Count",
+            min_value=0,
+            value=0,
+            step=1,
+            help=SOCIAL_STORY_VIDEO_HELP,
         )
         macro_influencers_count = st.number_input(
-            "Macro Influencers Count", min_value=0, value=0, step=1
+            "Macro Influencers Count",
+            min_value=0,
+            value=0,
+            step=1,
+            help=MACRO_INFLUENCERS_HELP,
         )
     with rate_col:
         brand_ambassadors_rate = st.number_input(
-            "Brand Ambassadors Rate", min_value=0.0, value=2000.0, step=100.0
+            "Brand Ambassadors Rate",
+            min_value=0.0,
+            value=2000.0,
+            step=100.0,
+            help=BRAND_AMBASSADORS_HELP,
         )
         video_creators_rate = st.number_input(
-            "Video Creators Rate", min_value=0.0, value=1000.0, step=100.0
+            "Video Creators Rate",
+            min_value=0.0,
+            value=1000.0,
+            step=100.0,
+            help=VIDEO_CREATORS_HELP,
         )
         social_stories_rate = st.number_input(
-            "Social + Stories Rate", min_value=0.0, value=600.0, step=100.0
+            "Social + Stories Rate",
+            min_value=0.0,
+            value=600.0,
+            step=100.0,
+            help=SOCIAL_STORIES_HELP,
         )
         social_story_video_rate = st.number_input(
-            "Social + Story + Video Rate", min_value=0.0, value=1600.0, step=100.0
+            "Social + Story + Video Rate",
+            min_value=0.0,
+            value=1600.0,
+            step=100.0,
+            help=SOCIAL_STORY_VIDEO_HELP,
         )
         macro_influencers_rate = st.number_input(
-            "Macro Influencers Rate", min_value=0.0, value=10000.0, step=500.0
+            "Macro Influencers Rate",
+            min_value=0.0,
+            value=10000.0,
+            step=500.0,
+            help=MACRO_INFLUENCERS_HELP,
         )
 
     return {
@@ -93,16 +182,32 @@ def render_advanced_assumptions() -> dict[str, float]:
     """Render advanced pricing assumptions."""
     with st.expander("Advanced Assumptions"):
         analytics_software_cost = st.number_input(
-            "Analytics Software Cost", min_value=0.0, value=1000.0, step=100.0
+            "Analytics Software Cost",
+            min_value=0.0,
+            value=1000.0,
+            step=100.0,
+            help=ANALYTICS_SOFTWARE_HELP,
         )
         community_cost = st.number_input(
-            "Community Cost", min_value=0.0, value=500.0, step=100.0
+            "Community Cost",
+            min_value=0.0,
+            value=500.0,
+            step=100.0,
+            help=COMMUNITY_COST_HELP,
         )
         hiring_leeway_cost = st.number_input(
-            "Hiring Leeway Cost", min_value=0.0, value=500.0, step=100.0
+            "Hiring Leeway Cost",
+            min_value=0.0,
+            value=500.0,
+            step=100.0,
+            help=HIRING_LEEWAY_HELP,
         )
         hourly_internal_rate = st.number_input(
-            "Hourly Internal Rate", min_value=0.0, value=250.0, step=25.0
+            "Hourly Internal Rate",
+            min_value=0.0,
+            value=250.0,
+            step=25.0,
+            help=HOURLY_INTERNAL_RATE_HELP,
         )
 
         hours_col1, hours_col2, hours_col3 = st.columns(3)
@@ -120,7 +225,7 @@ def render_advanced_assumptions() -> dict[str, float]:
             )
 
         markup_multiplier = st.number_input(
-            "Markup Multiplier", min_value=0.0, value=2.0, step=0.1
+            "Markup Multiplier", min_value=0.0, value=1.8, step=0.1
         )
         withholding_rate = st.number_input(
             "Withholding Rate (decimal)",
@@ -160,7 +265,7 @@ def render_pricing_summary(
     st.divider()
     st.metric("Running Raw Subtotal", format_currency(outputs["raw_subtotal"]))
 
-    markup_label = f"{inputs['markup_multiplier']:g}x Markup Total"
+    markup_label = f"Cost with {inputs['markup_multiplier']:g}x Markup"
     withholding_percent = inputs["withholding_rate"] * 100
     withholding_label = f"Withholding {withholding_percent:g}%"
     st.metric(markup_label, format_currency(outputs["subtotal_after_markup"]))
@@ -210,16 +315,32 @@ def render_pricing_tool() -> None:
 
         st.markdown("#### Media + Product Costs")
         click_2_cart_cost = st.number_input(
-            "Click-2-Cart Cost", min_value=0.0, value=4500.0, step=100.0
+            "Click-2-Cart Cost",
+            min_value=0.0,
+            value=4500.0,
+            step=100.0,
+            help=CLICK_2_CART_HELP,
         )
         paid_media_spend = st.number_input(
-            "Paid Media Spend", min_value=0.0, value=0.0, step=1000.0
+            "Paid Media Spend",
+            min_value=0.0,
+            value=0.0,
+            step=1000.0,
+            help=PAID_MEDIA_SPEND_HELP,
         )
         product_cost_per_influencer = st.number_input(
-            "Product Cost per Influencer", min_value=0.0, value=0.0, step=10.0
+            "Product Cost per Influencer",
+            min_value=0.0,
+            value=0.0,
+            step=10.0,
+            help=PRODUCT_COST_HELP,
         )
         shipping_cost_per_influencer = st.number_input(
-            "Shipping Cost per Influencer", min_value=0.0, value=0.0, step=10.0
+            "Shipping Cost per Influencer",
+            min_value=0.0,
+            value=0.0,
+            step=10.0,
+            help=SHIPPING_COST_HELP,
         )
         inputs.update(
             {
