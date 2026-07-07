@@ -414,7 +414,61 @@ def render_metric_calculator_card(
     with st.container(border=True):
         st.markdown(f"##### {title}")
         st.metric("Estimate", format_whole_number(estimate))
-        st.dataframe(rows, width="stretch", hide_index=True)
+        st.dataframe(
+            rows,
+            width="stretch",
+            height=35 * (len(rows) + 1),
+            hide_index=True,
+        )
+
+
+def initialize_metrics_snapshots() -> dict[str, dict[str, float] | None]:
+    """Ensure A/B/C metrics snapshots exist in session state."""
+    if "metrics_snapshots" not in st.session_state:
+        st.session_state["metrics_snapshots"] = {"A": None, "B": None, "C": None}
+    return st.session_state["metrics_snapshots"]
+
+
+def save_metrics_snapshot(bucket: str, estimates: dict[str, float]) -> None:
+    """Save the current rollup outputs into one snapshot bucket."""
+    snapshots = initialize_metrics_snapshots()
+    snapshots[bucket] = {
+        "organic_paid_impressions": estimates["total_impressions"],
+        "organic_paid_engagements_clicks": estimates["total_engagement_actions"],
+    }
+
+
+def clear_metrics_snapshots() -> None:
+    """Clear all A/B/C metrics snapshots."""
+    st.session_state["metrics_snapshots"] = {"A": None, "B": None, "C": None}
+
+
+def render_metrics_snapshot_table() -> None:
+    """Render saved A/B/C rollup snapshots as a compact comparison table."""
+    snapshots = initialize_metrics_snapshots()
+    rows = []
+    row_specs = [
+        ("Organic + Paid Impressions", "organic_paid_impressions"),
+        ("Organic + Paid Engagements/Clicks", "organic_paid_engagements_clicks"),
+    ]
+    for label, key in row_specs:
+        row = {"Metric": label}
+        for bucket in ("A", "B", "C"):
+            snapshot = snapshots.get(bucket)
+            row[bucket] = (
+                format_whole_number(snapshot[key])
+                if isinstance(snapshot, dict) and key in snapshot
+                else "-"
+            )
+        rows.append(row)
+
+    st.dataframe(
+        rows,
+        width="stretch",
+        height=112,
+        hide_index=True,
+        column_order=["Metric", "A", "B", "C"],
+    )
 
 
 def render_metric_calculator_cards(
@@ -435,25 +489,34 @@ def render_metric_calculator_cards(
         ("Paid Clicks", "paid_clicks", True),
         ("Paid Engagements", "paid_engagements", True),
     ]
-    for row_start in range(0, len(cards), 2):
-        cols = st.columns(2)
-        for col, (title, key, per_1k) in zip(cols, cards[row_start : row_start + 2]):
-            with col:
-                render_metric_calculator_card(
-                    title,
-                    summaries[key],
-                    estimates[key],
-                    per_1k=per_1k,
-                )
+    cols = st.columns(5)
+    for col, (title, key, per_1k) in zip(cols, cards):
+        with col:
+            render_metric_calculator_card(
+                title,
+                summaries[key],
+                estimates[key],
+                per_1k=per_1k,
+            )
 
     rollup_cols = st.columns(2)
     rollup_cols[0].metric(
-        "Total Impressions", format_whole_number(estimates["total_impressions"])
+        "Organic + Paid Impressions",
+        format_whole_number(estimates["total_impressions"]),
     )
     rollup_cols[1].metric(
-        "Total Engagement Actions",
+        "Organic + Paid Engagements/Clicks",
         format_whole_number(estimates["total_engagement_actions"]),
     )
+
+    action_cols = st.columns(4)
+    for col, bucket in zip(action_cols[:3], ("A", "B", "C")):
+        if col.button(f"Save as {bucket}", use_container_width=True):
+            save_metrics_snapshot(bucket, estimates)
+    if action_cols[3].button("Clear All", use_container_width=True):
+        clear_metrics_snapshots()
+
+    render_metrics_snapshot_table()
 
 
 def render_metrics() -> None:
