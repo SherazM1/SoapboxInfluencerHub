@@ -2,6 +2,8 @@ from __future__ import annotations
 from statistics import mean, median
 from typing import Any
 
+from core.historical_data import load_historical_benchmarks_from_db
+
 METRICS_BENCHMARKS = {
     "Good": {
         "organic_impressions_per_influencer": 113771,
@@ -287,13 +289,13 @@ def load_historical_benchmarks(
                 level_benchmarks["engagements_per_influencer"]
             )
             benchmark_values["paid_impressions"].append(
-                level_benchmarks["paid_impressions_per_1k"] / 1000
+                level_benchmarks["paid_impressions_per_1k"]
             )
             benchmark_values["paid_clicks"].append(
-                level_benchmarks["paid_clicks_per_1k"] / 1000
+                level_benchmarks["paid_clicks_per_1k"]
             )
             benchmark_values["paid_engagements"].append(
-                level_benchmarks["paid_engagements_per_1k"] / 1000
+                level_benchmarks["paid_engagements_per_1k"]
             )
 
     return {
@@ -320,6 +322,9 @@ def calculate_metric_estimates(
     benchmarks: dict[str, list[float]] | None = None,
 ) -> dict[str, Any]:
     """Calculate Excel-style Metrics estimates from current inputs."""
+    if benchmarks is None:
+        benchmarks = load_historical_benchmarks_from_db()
+
     if benchmarks is None:
         summaries = {
             metric_key: {

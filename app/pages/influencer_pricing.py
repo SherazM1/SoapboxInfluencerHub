@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from core.influencer_pricing import calculate_metric_estimates, calculate_pricing
+from core.historical_data import fetch_historical_campaign_view
 
 
 def hide_default_streamlit_sidebar_nav() -> None:
@@ -651,49 +652,28 @@ def render_historical_data() -> None:
     st.subheader("Historical Data")
     st.markdown("Historical campaigns will eventually power the Metrics benchmarks.")
 
-    sample_rows = [
-        {
-            "Program": "Spring Refresh",
-            "Date": "2025-03-15",
-            "Influencers": 12,
-            "Organic Impressions": 1450000,
-            "Engagements": 118000,
-            "Paid Impressions": 820000,
-            "Paid Spend": 7500,
-            "Paid Clicks": 6200,
-        },
-        {
-            "Program": "Summer Entertaining",
-            "Date": "2025-06-20",
-            "Influencers": 18,
-            "Organic Impressions": 2380000,
-            "Engagements": 205000,
-            "Paid Impressions": 1250000,
-            "Paid Spend": 12000,
-            "Paid Clicks": 10100,
-        },
-        {
-            "Program": "Back to School",
-            "Date": "2025-08-10",
-            "Influencers": 24,
-            "Organic Impressions": 3150000,
-            "Engagements": 286000,
-            "Paid Impressions": 1900000,
-            "Paid Spend": 18000,
-            "Paid Clicks": 15800,
-        },
-        {
-            "Program": "Holiday Hosting",
-            "Date": "2025-11-05",
-            "Influencers": 30,
-            "Organic Impressions": 4720000,
-            "Engagements": 410000,
-            "Paid Impressions": 2650000,
-            "Paid Spend": 25000,
-            "Paid Clicks": 22400,
-        },
-    ]
-    st.dataframe(sample_rows, width="stretch", hide_index=True)
+    historical_rows = fetch_historical_campaign_view()
+    view_mode = st.radio(
+        "View",
+        ["Full View", "Baseline View by Year"],
+        horizontal=True,
+        key="historical_data_view_mode",
+    )
+
+    if historical_rows:
+        display_rows = historical_rows
+        if view_mode == "Baseline View by Year":
+            display_rows = sorted(
+                historical_rows,
+                key=lambda row: (row["Year"], row["Date"], row["Program"]),
+                reverse=True,
+            )
+        st.dataframe(display_rows, width="stretch", hide_index=True)
+    else:
+        st.info(
+            "No historical campaign rows are available yet. Configure DATABASE_URL "
+            "and load campaigns to power this view and Metrics benchmarks."
+        )
 
     st.markdown("#### Future supported fields")
     st.markdown(
