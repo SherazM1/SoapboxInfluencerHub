@@ -344,12 +344,12 @@ def calculate_metric_estimates(
     paid_engagements_spend = _number(inputs, "paid_engagements_spend")
 
     estimated_organic_impressions = (
-        total_influencers * summaries["organic_impressions"]["average"]
+        total_influencers * summaries["organic_impressions"]["median"]
     )
     estimated_paid_impressions = (
         paid_impressions_spend * (summaries["paid_impressions"]["average"] / 1000)
     )
-    estimated_engagements = total_influencers * summaries["engagements"]["average"]
+    estimated_engagements = total_influencers * summaries["engagements"]["median"]
     estimated_paid_clicks = paid_clicks_spend * (
         summaries["paid_clicks"]["average"] / 1000
     )
