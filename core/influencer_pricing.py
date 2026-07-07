@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from statistics import mean, median
 from typing import Any
 
 METRICS_BENCHMARKS = {
@@ -150,3 +151,176 @@ def calculate_metrics(
         }
 
     return results
+
+
+def _valid_benchmark_values(values: list[Any]) -> list[float]:
+    """Return finite, non-negative benchmark values."""
+    cleaned: list[float] = []
+    for value in values:
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if numeric_value >= 0 and numeric_value not in (float("inf"), float("-inf")):
+            cleaned.append(numeric_value)
+    return cleaned
+
+
+def _row_number(row: dict[str, Any], *keys: str) -> float | None:
+    """Read the first usable numeric value from a row."""
+    for key in keys:
+        if key not in row:
+            continue
+        try:
+            return float(row[key])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
+    """Calculate a ratio only when the divisor is valid."""
+    if numerator is None or denominator is None or denominator == 0:
+        return None
+    return numerator / denominator
+
+
+def load_historical_benchmarks(
+    rows: list[dict[str, Any]] | None = None,
+) -> dict[str, list[float]]:
+    """Load benchmark columns using a shape that can later map to Data rows."""
+    benchmark_values: dict[str, list[float]] = {
+        "organic_impressions": [],
+        "engagements": [],
+        "paid_impressions": [],
+        "paid_clicks": [],
+        "paid_engagements": [],
+    }
+
+    if rows:
+        for row in rows:
+            organic_impressions = _row_number(
+                row, "F", "organic_impressions_benchmark"
+            )
+            if organic_impressions is None:
+                organic_impressions = _safe_ratio(
+                    _row_number(row, "E", "organic_impressions"),
+                    _row_number(row, "C", "influencer_count"),
+                )
+
+            engagements = _row_number(row, "G", "engagements_benchmark")
+            if engagements is None:
+                engagements = _safe_ratio(
+                    _row_number(row, "D", "engagements"),
+                    _row_number(row, "C", "influencer_count"),
+                )
+
+            paid_impressions = _row_number(row, "J", "paid_impressions_benchmark")
+            if paid_impressions is None:
+                paid_impressions = _safe_ratio(
+                    _row_number(row, "H", "paid_impressions"),
+                    _row_number(row, "I", "paid_impressions_spend"),
+                )
+
+            paid_engagements = _row_number(row, "M", "paid_engagements_benchmark")
+            if paid_engagements is None:
+                paid_engagements = _safe_ratio(
+                    _row_number(row, "K", "paid_engagements"),
+                    _row_number(row, "L", "paid_engagements_spend"),
+                )
+
+            paid_clicks = _row_number(row, "P", "paid_clicks_benchmark")
+            if paid_clicks is None:
+                paid_clicks = _safe_ratio(
+                    _row_number(row, "N", "paid_clicks"),
+                    _row_number(row, "O", "paid_clicks_spend"),
+                )
+
+            benchmark_values["organic_impressions"].append(organic_impressions)
+            benchmark_values["engagements"].append(engagements)
+            benchmark_values["paid_impressions"].append(paid_impressions)
+            benchmark_values["paid_clicks"].append(paid_clicks)
+            benchmark_values["paid_engagements"].append(paid_engagements)
+    else:
+        for level_benchmarks in METRICS_BENCHMARKS.values():
+            benchmark_values["organic_impressions"].append(
+                level_benchmarks["organic_impressions_per_influencer"]
+            )
+            benchmark_values["engagements"].append(
+                level_benchmarks["engagements_per_influencer"]
+            )
+            benchmark_values["paid_impressions"].append(
+                level_benchmarks["paid_impressions_per_1k"] / 1000
+            )
+            benchmark_values["paid_clicks"].append(
+                level_benchmarks["paid_clicks_per_1k"] / 1000
+            )
+            benchmark_values["paid_engagements"].append(
+                level_benchmarks["paid_engagements_per_1k"] / 1000
+            )
+
+    return {
+        metric_key: _valid_benchmark_values(values)
+        for metric_key, values in benchmark_values.items()
+    }
+
+
+def calculate_benchmark_summary(values: list[float]) -> dict[str, float] | None:
+    """Calculate min, max, average, and median for one benchmark series."""
+    cleaned = _valid_benchmark_values(values)
+    if not cleaned:
+        return None
+    return {
+        "min": min(cleaned),
+        "max": max(cleaned),
+        "average": mean(cleaned),
+        "median": median(cleaned),
+    }
+
+
+def calculate_metric_estimates(
+    inputs: dict[str, Any],
+    benchmarks: dict[str, list[float]] | None = None,
+) -> dict[str, Any]:
+    """Calculate Excel-style Metrics estimates from current inputs."""
+    benchmark_values = benchmarks or load_historical_benchmarks()
+    summaries = {
+        metric_key: calculate_benchmark_summary(values)
+        for metric_key, values in benchmark_values.items()
+    }
+    if any(summary is None for summary in summaries.values()):
+        return {"summaries": summaries, "estimates": None}
+
+    total_influencers = _number(inputs, "total_influencers")
+    paid_impressions_spend = _number(inputs, "paid_impressions_spend")
+    paid_clicks_spend = _number(inputs, "paid_clicks_spend")
+    paid_engagements_spend = _number(inputs, "paid_engagements_spend")
+
+    estimated_organic_impressions = (
+        total_influencers * summaries["organic_impressions"]["average"]
+    )
+    estimated_paid_impressions = (
+        paid_impressions_spend * summaries["paid_impressions"]["average"]
+    )
+    estimated_engagements = total_influencers * summaries["engagements"]["average"]
+    estimated_paid_clicks = paid_clicks_spend * summaries["paid_clicks"]["average"]
+    estimated_paid_engagements = (
+        paid_engagements_spend * summaries["paid_engagements"]["average"]
+    )
+
+    estimates = {
+        "organic_impressions": estimated_organic_impressions,
+        "paid_impressions": estimated_paid_impressions,
+        "engagements": estimated_engagements,
+        "paid_clicks": estimated_paid_clicks,
+        "paid_engagements": estimated_paid_engagements,
+        "total_impressions": (
+            estimated_organic_impressions + estimated_paid_impressions
+        ),
+        "total_engagement_actions": (
+            estimated_engagements
+            + estimated_paid_clicks
+            + estimated_paid_engagements
+        ),
+    }
+    return {"summaries": summaries, "estimates": estimates}

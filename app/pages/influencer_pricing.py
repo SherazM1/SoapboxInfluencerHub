@@ -9,7 +9,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from core.influencer_pricing import calculate_metrics, calculate_pricing
+from core.influencer_pricing import calculate_metric_estimates, calculate_pricing
 
 
 def hide_default_streamlit_sidebar_nav() -> None:
@@ -382,36 +382,70 @@ def render_pricing_tool() -> None:
         st.markdown("Coming later — reserved for alternate pricing route.")
 
 
-def render_metrics_results(results: dict[str, dict[str, float]]) -> None:
-    """Render Good, Better, and Best metrics in a formatted table."""
-    metric_rows = [
-        ("Organic Impressions", "organic_impressions"),
-        ("Organic Engagements", "organic_engagements"),
-        ("Paid Impressions", "paid_impressions"),
-        ("Paid Clicks", "paid_clicks"),
-        ("Paid Engagements", "paid_engagements"),
-        ("Organic + Paid Impressions", "organic_paid_impressions"),
-        (
-            "Organic Engagements + Paid Clicks + Paid Engagements",
-            "organic_engagements_paid_clicks_paid_engagements",
-        ),
+def render_metric_calculator_card(
+    title: str,
+    summary: dict[str, float],
+    estimate: float,
+    per_1k: bool = False,
+) -> None:
+    """Render one compact calculator result block."""
+    multiplier = 1000 if per_1k else 1
+    labels = {
+        "min": "Min Per $1k" if per_1k else "Min",
+        "max": "Max Per $1k" if per_1k else "Max",
+        "average": "Average Per $1k" if per_1k else "Average",
+        "median": "Median Per $1k" if per_1k else "Median",
+    }
+    rows = [
+        {
+            "Benchmark": labels[key],
+            "Value": format_number(summary[key] * multiplier),
+        }
+        for key in ("min", "max", "average", "median")
     ]
-    table_rows = []
-    for label, key in metric_rows:
-        table_rows.append(
-            {
-                "Metric": label,
-                "Good": format_number(round(results["Good"][key])),
-                "Better": format_number(round(results["Better"][key])),
-                "Best": format_number(round(results["Best"][key])),
-            }
-        )
 
-    st.dataframe(
-        table_rows,
-        width="stretch",
-        hide_index=True,
-        column_order=["Metric", "Good", "Better", "Best"],
+    with st.container(border=True):
+        st.markdown(f"##### {title}")
+        st.metric("Estimate", format_number(round(estimate)))
+        st.dataframe(rows, width="stretch", hide_index=True)
+
+
+def render_metric_calculator_cards(
+    calculator_results: dict[str, object],
+) -> None:
+    """Render compact Excel-style metric calculator outputs."""
+    summaries = calculator_results["summaries"]
+    estimates = calculator_results["estimates"]
+    if estimates is None:
+        st.info("Metric benchmark data is not available yet.")
+        return
+
+    st.markdown("#### Metric Calculators")
+    cards = [
+        ("Organic Impressions", "organic_impressions", False),
+        ("Paid Impressions", "paid_impressions", True),
+        ("Engagements", "engagements", False),
+        ("Paid Clicks", "paid_clicks", True),
+        ("Paid Engagements", "paid_engagements", True),
+    ]
+    for row_start in range(0, len(cards), 2):
+        cols = st.columns(2)
+        for col, (title, key, per_1k) in zip(cols, cards[row_start : row_start + 2]):
+            with col:
+                render_metric_calculator_card(
+                    title,
+                    summaries[key],
+                    estimates[key],
+                    per_1k=per_1k,
+                )
+
+    rollup_cols = st.columns(2)
+    rollup_cols[0].metric(
+        "Total Impressions", format_number(round(estimates["total_impressions"]))
+    )
+    rollup_cols[1].metric(
+        "Total Engagement Actions",
+        format_number(round(estimates["total_engagement_actions"])),
     )
 
 
@@ -519,7 +553,7 @@ def render_metrics() -> None:
         "paid_clicks_spend": paid_clicks_spend,
         "paid_engagements_spend": paid_engagements_spend,
     }
-    results = calculate_metrics(inputs)
+    calculator_results = calculate_metric_estimates(inputs)
 
     st.caption(
         "Using Pricing Tool values" if using_pricing_values else "Using manual values"
@@ -539,8 +573,7 @@ def render_metrics() -> None:
         "Paid Engagement Spend", format_currency(paid_engagements_spend)
     )
 
-    st.markdown("#### Good / Better / Best Results")
-    render_metrics_results(results)
+    render_metric_calculator_cards(calculator_results)
 
 
 def render_historical_data() -> None:
