@@ -26,6 +26,38 @@ METRICS_BENCHMARKS = {
     },
 }
 
+METRIC_CALCULATOR_BENCHMARKS = {
+    "organic_impressions": {
+        "max": 2320675,
+        "average": 173300,
+        "median": 113771,
+    },
+    "engagements": {
+        "min": 157,
+        "max": 2176232,
+        "average": 62706,
+        "median": 9149,
+    },
+    "paid_impressions": {
+        "max": 3460092,
+        "average": 1039225,
+        "median": 991389,
+        "per_1k": True,
+    },
+    "paid_clicks": {
+        "max": 34368,
+        "average": 8399,
+        "median": 7679,
+        "per_1k": True,
+    },
+    "paid_engagements": {
+        "max": 1929983,
+        "average": 230065,
+        "median": 196961,
+        "per_1k": True,
+    },
+}
+
 
 def _number(inputs: dict[str, Any], key: str) -> float:
     """Read a numeric pricing input as a float."""
@@ -237,9 +269,15 @@ def load_historical_benchmarks(
 
             benchmark_values["organic_impressions"].append(organic_impressions)
             benchmark_values["engagements"].append(engagements)
-            benchmark_values["paid_impressions"].append(paid_impressions)
-            benchmark_values["paid_clicks"].append(paid_clicks)
-            benchmark_values["paid_engagements"].append(paid_engagements)
+            benchmark_values["paid_impressions"].append(
+                paid_impressions * 1000 if paid_impressions is not None else None
+            )
+            benchmark_values["paid_clicks"].append(
+                paid_clicks * 1000 if paid_clicks is not None else None
+            )
+            benchmark_values["paid_engagements"].append(
+                paid_engagements * 1000 if paid_engagements is not None else None
+            )
     else:
         for level_benchmarks in METRICS_BENCHMARKS.values():
             benchmark_values["organic_impressions"].append(
@@ -282,11 +320,21 @@ def calculate_metric_estimates(
     benchmarks: dict[str, list[float]] | None = None,
 ) -> dict[str, Any]:
     """Calculate Excel-style Metrics estimates from current inputs."""
-    benchmark_values = benchmarks or load_historical_benchmarks()
-    summaries = {
-        metric_key: calculate_benchmark_summary(values)
-        for metric_key, values in benchmark_values.items()
-    }
+    if benchmarks is None:
+        summaries = {
+            metric_key: {
+                summary_key: float(summary_value)
+                for summary_key, summary_value in summary.items()
+                if summary_key != "per_1k"
+            }
+            for metric_key, summary in METRIC_CALCULATOR_BENCHMARKS.items()
+        }
+    else:
+        benchmark_values = benchmarks
+        summaries = {
+            metric_key: calculate_benchmark_summary(values)
+            for metric_key, values in benchmark_values.items()
+        }
     if any(summary is None for summary in summaries.values()):
         return {"summaries": summaries, "estimates": None}
 
@@ -299,12 +347,14 @@ def calculate_metric_estimates(
         total_influencers * summaries["organic_impressions"]["average"]
     )
     estimated_paid_impressions = (
-        paid_impressions_spend * summaries["paid_impressions"]["average"]
+        paid_impressions_spend * (summaries["paid_impressions"]["average"] / 1000)
     )
     estimated_engagements = total_influencers * summaries["engagements"]["average"]
-    estimated_paid_clicks = paid_clicks_spend * summaries["paid_clicks"]["average"]
+    estimated_paid_clicks = paid_clicks_spend * (
+        summaries["paid_clicks"]["average"] / 1000
+    )
     estimated_paid_engagements = (
-        paid_engagements_spend * summaries["paid_engagements"]["average"]
+        paid_engagements_spend * (summaries["paid_engagements"]["average"] / 1000)
     )
 
     estimates = {

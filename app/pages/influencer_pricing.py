@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 import streamlit as st
@@ -36,6 +37,12 @@ def format_number(value: float) -> str:
     if float(value).is_integer():
         return f"{int(value):,}"
     return f"{value:,.2f}"
+
+
+def format_whole_number(value: float) -> str:
+    """Format a numeric value as a rounded whole number."""
+    rounded = Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return f"{int(rounded):,}"
 
 
 BRAND_AMBASSADORS_HELP = (
@@ -389,7 +396,6 @@ def render_metric_calculator_card(
     per_1k: bool = False,
 ) -> None:
     """Render one compact calculator result block."""
-    multiplier = 1000 if per_1k else 1
     labels = {
         "min": "Min Per $1k" if per_1k else "Min",
         "max": "Max Per $1k" if per_1k else "Max",
@@ -399,14 +405,15 @@ def render_metric_calculator_card(
     rows = [
         {
             "Benchmark": labels[key],
-            "Value": format_number(summary[key] * multiplier),
+            "Value": format_whole_number(summary[key]),
         }
         for key in ("min", "max", "average", "median")
+        if key in summary
     ]
 
     with st.container(border=True):
         st.markdown(f"##### {title}")
-        st.metric("Estimate", format_number(round(estimate)))
+        st.metric("Estimate", format_whole_number(estimate))
         st.dataframe(rows, width="stretch", hide_index=True)
 
 
@@ -441,11 +448,11 @@ def render_metric_calculator_cards(
 
     rollup_cols = st.columns(2)
     rollup_cols[0].metric(
-        "Total Impressions", format_number(round(estimates["total_impressions"]))
+        "Total Impressions", format_whole_number(estimates["total_impressions"])
     )
     rollup_cols[1].metric(
         "Total Engagement Actions",
-        format_number(round(estimates["total_engagement_actions"])),
+        format_whole_number(estimates["total_engagement_actions"]),
     )
 
 
