@@ -26,7 +26,14 @@ EXCEL_DATA_COLUMNS = [
 
 __all__ = [
     "EXCEL_DATA_COLUMNS",
+    "archive_campaign",
+    "fetch_active_campaign_rows",
+    "fetch_campaign_by_id",
+    "fetch_campaign_years",
     "fetch_historical_campaign_view",
+    "format_historical_campaign_rows",
+    "insert_campaign_with_metrics",
+    "update_campaign_with_metrics",
 ]
 
 
