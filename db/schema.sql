@@ -37,6 +37,9 @@ create index if not exists idx_campaigns_active_date
 create index if not exists idx_campaigns_year
     on campaigns (campaign_year);
 
+create unique index if not exists idx_campaigns_program_name_campaign_date
+    on campaigns (program_name, campaign_date);
+
 create index if not exists idx_campaign_metrics_campaign_id
     on campaign_metrics (campaign_id);
 
