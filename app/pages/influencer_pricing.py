@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import uuid
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -12,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from core.influencer_pricing import calculate_metric_estimates, calculate_pricing
+from core.proposal_ppt import build_proposal_payload, generate_powerpoint_proposal
 from core.db import get_database_status
 from core.historical_data import (
     EXCEL_DATA_COLUMNS,
@@ -22,6 +24,10 @@ from core.historical_data import (
     format_historical_campaign_rows,
     insert_campaign_with_metrics,
     update_campaign_with_metrics,
+)
+
+PROPOSAL_TEMPLATE_PATH = (
+    ROOT_DIR / "Soapbox 2026 Influencer Campaign Test and Learn Proposal Template.pptx"
 )
 
 
@@ -302,6 +308,65 @@ def render_pricing_summary(
             st.success(f"This plan is within budget by {format_currency(difference)}.")
 
 
+def build_proposal_filename(pricing_state: dict[str, object] | None) -> str:
+    inputs = pricing_state.get("inputs", {}) if isinstance(pricing_state, dict) else {}
+    brand = str(inputs.get("brand") or "Influencer Proposal")
+    safe_brand = "".join(
+        char if char.isalnum() or char in {" ", "-", "_"} else "" for char in brand
+    ).strip()
+    safe_brand = safe_brand or "Influencer Proposal"
+    return f"{safe_brand} Proposal.pptx"
+
+
+def render_powerpoint_proposal_export() -> None:
+    pricing_state = st.session_state.get("influencer_pricing_current")
+    scenario_snapshots = st.session_state.get("metrics_snapshots")
+
+    if st.button("Generate PowerPoint Proposal", type="primary"):
+        if not PROPOSAL_TEMPLATE_PATH.exists():
+            st.error(f"Proposal template was not found: {PROPOSAL_TEMPLATE_PATH}")
+            return
+        payload = build_proposal_payload(pricing_state, scenario_snapshots)
+        output_path = (
+            ROOT_DIR
+            / "outputs"
+            / "proposals"
+            / f"proposal_{uuid.uuid4().hex[:10]}.pptx"
+        )
+        try:
+            result = generate_powerpoint_proposal(
+                PROPOSAL_TEMPLATE_PATH,
+                payload,
+                output_path,
+            )
+        except Exception as exc:
+            st.error(f"PowerPoint proposal could not be generated: {exc}")
+            return
+        st.session_state["proposal_pptx_bytes"] = result.pptx_bytes
+        st.session_state["proposal_pptx_filename"] = build_proposal_filename(
+            pricing_state
+        )
+        st.session_state["proposal_pptx_warnings"] = result.warnings
+        st.success("PowerPoint proposal generated.")
+
+    pptx_bytes = st.session_state.get("proposal_pptx_bytes")
+    if pptx_bytes:
+        warnings = st.session_state.get("proposal_pptx_warnings") or []
+        for warning in warnings:
+            st.warning(warning)
+        st.download_button(
+            "Download PowerPoint Proposal",
+            data=pptx_bytes,
+            file_name=st.session_state.get(
+                "proposal_pptx_filename", "Influencer Proposal.pptx"
+            ),
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "presentationml.presentation"
+            ),
+        )
+
+
 def render_pricing_tool() -> None:
     """Render the main Pricing Tool calculator."""
     st.subheader("Pricing Tool")
@@ -316,8 +381,10 @@ def render_pricing_tool() -> None:
     input_col, summary_col = st.columns([3, 2], gap="large")
     with input_col:
         st.markdown("#### Campaign Setup")
-        client_name = st.text_input("Client Name")
+        brand = st.text_input("Brand")
+        retailer = st.text_input("Retailer")
         campaign_name = st.text_input("Campaign Name")
+        campaign_flight = st.text_input("Campaign Flight", value="6 - 8 weeks")
         budget = 0.0
         if pricing_mode == "Budget Planner":
             budget = st.number_input(
@@ -326,8 +393,11 @@ def render_pricing_tool() -> None:
 
         inputs: dict[str, str | float | int] = {
             "pricing_mode": pricing_mode,
-            "client_name": client_name,
+            "brand": brand,
+            "client_name": brand,
+            "retailer": retailer,
             "campaign_name": campaign_name,
+            "campaign_flight": campaign_flight,
             "budget": budget,
         }
         inputs.update(render_influencer_mix_inputs())
@@ -400,6 +470,9 @@ def render_pricing_tool() -> None:
     with st.expander("Pricing Option 3"):
         st.markdown("Coming later — reserved for alternate pricing route.")
 
+    st.divider()
+    render_powerpoint_proposal_export()
+
 
 def render_metric_calculator_card(
     title: str,
@@ -444,9 +517,37 @@ def initialize_metrics_snapshots() -> dict[str, dict[str, float] | None]:
 def save_metrics_snapshot(bucket: str, estimates: dict[str, float]) -> None:
     """Save the current rollup outputs into one snapshot bucket."""
     snapshots = initialize_metrics_snapshots()
+    pricing_state = st.session_state.get("influencer_pricing_current")
+    pricing_inputs = (
+        pricing_state.get("inputs", {})
+        if isinstance(pricing_state, dict)
+        and isinstance(pricing_state.get("inputs"), dict)
+        else {}
+    )
+    pricing_outputs = (
+        pricing_state.get("outputs", {})
+        if isinstance(pricing_state, dict)
+        and isinstance(pricing_state.get("outputs"), dict)
+        else {}
+    )
     snapshots[bucket] = {
         "organic_paid_impressions": estimates["total_impressions"],
         "organic_paid_engagements_clicks": estimates["total_engagement_actions"],
+        "campaign_flight": pricing_inputs.get("campaign_flight", ""),
+        "total_influencers": pricing_outputs.get(
+            "total_influencers", pricing_state.get("total_influencers", 0)
+            if isinstance(pricing_state, dict)
+            else 0
+        ),
+        "social_stories_count": pricing_inputs.get("social_stories_count", 0),
+        "video_creators_count": pricing_inputs.get("video_creators_count", 0),
+        "click_2_cart_cost": pricing_inputs.get("click_2_cart_cost", 0),
+        "paid_media_spend": pricing_inputs.get("paid_media_spend", 0),
+        "program_total": pricing_outputs.get(
+            "program_total", pricing_state.get("program_total", 0)
+            if isinstance(pricing_state, dict)
+            else 0
+        ),
     }
 
 

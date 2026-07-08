@@ -4,3 +4,4 @@ openpyxl
 Pillow
 psycopg[binary]
 python-dotenv
+python-pptx
