@@ -12,7 +12,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from core.influencer_pricing import calculate_metric_estimates, calculate_pricing
 from core.db import get_database_status
-from core.historical_data import fetch_historical_campaign_view
+from core.historical_data import EXCEL_DATA_COLUMNS, fetch_historical_campaign_view
 
 
 def hide_default_streamlit_sidebar_nav() -> None:
@@ -673,17 +673,22 @@ def render_historical_data() -> None:
         if view_mode == "Baseline View by Year":
             display_rows = sorted(
                 historical_rows,
-                key=lambda row: (row["Year"], row["Date"], row["Program"]),
+                key=lambda row: (row["Date"], row["Program"]),
                 reverse=True,
             )
-        st.dataframe(display_rows, width="stretch", hide_index=True)
+        st.dataframe(
+            display_rows,
+            width="stretch",
+            hide_index=True,
+            column_order=EXCEL_DATA_COLUMNS,
+        )
     else:
         st.info(
             "No historical campaign rows are available yet. Configure DATABASE_URL "
             "and load campaigns to power this view and Metrics benchmarks."
         )
 
-    st.markdown("#### Future supported fields")
+    st.markdown("#### Mapped source fields")
     st.markdown(
         """
 - program_name
@@ -699,6 +704,10 @@ def render_historical_data() -> None:
 - paid_clicks_spend
 - notes
         """
+    )
+    st.caption(
+        "Excel derived columns are computed from raw fields for display and "
+        "benchmarks; they are not stored as editable source-of-truth values."
     )
     st.info(
         "Database-backed add/edit/delete and Excel import will be added in a later phase."

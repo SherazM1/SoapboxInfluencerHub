@@ -5,6 +5,29 @@ from typing import Any
 
 from core.db import get_db_connection, maybe_init_database
 
+EXCEL_DATA_COLUMNS = [
+    "Program",
+    "Date",
+    "# of Influencers",
+    "Engagements",
+    "Organic Impressions",
+    "Impressions Per Influencer",
+    "Engagements Per Influencer",
+    "Paid Impressions",
+    "Paid Spend (Impressions)",
+    "Impressions per $1 Spend",
+    "Paid Engagement",
+    "Paid Spend (Engagement)",
+    "Engagements per $1",
+    "Paid Clicks",
+    "Paid Spend (Clicks)",
+    "Clicks per $1",
+]
+
+
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
 
 def _number(value: Any) -> float:
     try:
@@ -13,9 +36,20 @@ def _number(value: Any) -> float:
         return 0.0
 
 
+def _optional_number(value: Any) -> float | None:
+    if _is_blank(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
-    numerator_value = _number(numerator)
-    denominator_value = _number(denominator)
+    numerator_value = _optional_number(numerator)
+    denominator_value = _optional_number(denominator)
+    if numerator_value is None or denominator_value is None:
+        return None
     if denominator_value <= 0:
         return None
     return numerator_value / denominator_value
@@ -27,6 +61,34 @@ def _format_date(value: Any) -> str:
     return str(value or "")
 
 
+def _first_present(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in row and not _is_blank(row[key]):
+            return row[key]
+    return None
+
+
+def derive_campaign_metrics(row: dict[str, Any]) -> dict[str, float | None]:
+    """Compute Excel Data-sheet derived columns from raw source fields."""
+    return {
+        "impressions_per_influencer": _safe_ratio(
+            row.get("organic_impressions"), row.get("influencer_count")
+        ),
+        "engagements_per_influencer": _safe_ratio(
+            row.get("engagements"), row.get("influencer_count")
+        ),
+        "impressions_per_dollar": _safe_ratio(
+            row.get("paid_impressions"), row.get("paid_spend_impressions")
+        ),
+        "engagements_per_dollar": _safe_ratio(
+            row.get("paid_engagements"), row.get("paid_spend_engagements")
+        ),
+        "clicks_per_dollar": _safe_ratio(
+            row.get("paid_clicks"), row.get("paid_spend_clicks")
+        ),
+    }
+
+
 def fetch_active_campaign_rows() -> list[dict[str, Any]]:
     """Fetch all active historical campaigns for benchmark calculations."""
     maybe_init_database()
@@ -36,7 +98,6 @@ def fetch_active_campaign_rows() -> list[dict[str, Any]]:
             c.program_name,
             c.campaign_date,
             c.campaign_year,
-            c.client_name,
             c.notes,
             m.influencer_count,
             m.engagements,
@@ -64,26 +125,36 @@ def fetch_active_campaign_rows() -> list[dict[str, Any]]:
 
 
 def fetch_historical_campaign_view() -> list[dict[str, Any]]:
-    """Fetch historical campaign rows formatted for the Streamlit table."""
+    """Fetch historical campaign rows formatted like the Excel Data sheet."""
     rows = fetch_active_campaign_rows()
-    return [
-        {
-            "Program": row["program_name"],
-            "Date": _format_date(row["campaign_date"]),
-            "Year": row["campaign_year"],
-            "Client": row.get("client_name") or "",
-            "Influencers": _number(row["influencer_count"]),
-            "Engagements": _number(row["engagements"]),
-            "Organic Impressions": _number(row["organic_impressions"]),
-            "Paid Impressions": _number(row["paid_impressions"]),
-            "Paid Spend (Impressions)": _number(row["paid_spend_impressions"]),
-            "Paid Engagements": _number(row["paid_engagements"]),
-            "Paid Spend (Engagements)": _number(row["paid_spend_engagements"]),
-            "Paid Clicks": _number(row["paid_clicks"]),
-            "Paid Spend (Clicks)": _number(row["paid_spend_clicks"]),
-        }
-        for row in rows
-    ]
+    display_rows: list[dict[str, Any]] = []
+    for row in rows:
+        derived = derive_campaign_metrics(row)
+        display_rows.append(
+            {
+                "Program": row["program_name"],
+                "Date": _format_date(row["campaign_date"]),
+                "# of Influencers": _number(row["influencer_count"]),
+                "Engagements": _number(row["engagements"]),
+                "Organic Impressions": _number(row["organic_impressions"]),
+                "Impressions Per Influencer": derived["impressions_per_influencer"],
+                "Engagements Per Influencer": derived["engagements_per_influencer"],
+                "Paid Impressions": _optional_number(row["paid_impressions"]),
+                "Paid Spend (Impressions)": _optional_number(
+                    row["paid_spend_impressions"]
+                ),
+                "Impressions per $1 Spend": derived["impressions_per_dollar"],
+                "Paid Engagement": _optional_number(row["paid_engagements"]),
+                "Paid Spend (Engagement)": _optional_number(
+                    row["paid_spend_engagements"]
+                ),
+                "Engagements per $1": derived["engagements_per_dollar"],
+                "Paid Clicks": _optional_number(row["paid_clicks"]),
+                "Paid Spend (Clicks)": _optional_number(row["paid_spend_clicks"]),
+                "Clicks per $1": derived["clicks_per_dollar"],
+            }
+        )
+    return display_rows
 
 
 def compute_benchmark_series(
@@ -98,15 +169,12 @@ def compute_benchmark_series(
         "paid_engagements": [],
     }
     for row in campaign_rows:
-        organic = _safe_ratio(row["organic_impressions"], row["influencer_count"])
-        engagements = _safe_ratio(row["engagements"], row["influencer_count"])
-        paid_impressions = _safe_ratio(
-            row["paid_impressions"], row["paid_spend_impressions"]
-        )
-        paid_clicks = _safe_ratio(row["paid_clicks"], row["paid_spend_clicks"])
-        paid_engagements = _safe_ratio(
-            row["paid_engagements"], row["paid_spend_engagements"]
-        )
+        derived = derive_campaign_metrics(row)
+        organic = derived["impressions_per_influencer"]
+        engagements = derived["engagements_per_influencer"]
+        paid_impressions = derived["impressions_per_dollar"]
+        paid_clicks = derived["clicks_per_dollar"]
+        paid_engagements = derived["engagements_per_dollar"]
 
         if organic is not None:
             series["organic_impressions"].append(organic)
@@ -127,28 +195,49 @@ def load_historical_benchmarks_from_db() -> dict[str, list[float]] | None:
     if not rows:
         return None
     series = compute_benchmark_series(rows)
-    if any(not values for values in series.values()):
+    if not any(series.values()):
         return None
     return series
 
 
 def build_seed_campaign_payload(row: dict[str, Any]) -> dict[str, Any]:
     """Normalize one future Excel/Data-sheet row for insertion code."""
-    return {
-        "program_name": row.get("Program") or row.get("program_name"),
-        "campaign_date": row.get("Date") or row.get("campaign_date"),
-        "influencer_count": row.get("# of Influencers") or row.get("influencer_count"),
-        "engagements": row.get("Engagements") or row.get("engagements"),
-        "organic_impressions": row.get("Organic Impressions")
-        or row.get("organic_impressions"),
-        "paid_impressions": row.get("Paid Impressions") or row.get("paid_impressions"),
-        "paid_spend_impressions": row.get("Paid Spend (Impressions)")
-        or row.get("paid_spend_impressions"),
-        "paid_engagements": row.get("Paid Engagement")
-        or row.get("paid_engagements"),
-        "paid_spend_engagements": row.get("Paid Spend (Engagements)")
-        or row.get("paid_spend_engagements"),
-        "paid_clicks": row.get("Paid Clicks") or row.get("paid_clicks"),
-        "paid_spend_clicks": row.get("Paid Spend (Clicks)")
-        or row.get("paid_spend_clicks"),
+    payload = {
+        "program_name": _first_present(row, "Program", "program_name"),
+        "campaign_date": _first_present(row, "Date", "campaign_date"),
+        "influencer_count": _optional_number(
+            _first_present(row, "# of Influencers", "influencer_count")
+        ),
+        "engagements": _optional_number(
+            _first_present(row, "Engagements", "engagements")
+        ),
+        "organic_impressions": _optional_number(
+            _first_present(row, "Organic Impressions", "organic_impressions")
+        ),
+        "paid_impressions": _optional_number(
+            _first_present(row, "Paid Impressions", "paid_impressions")
+        ),
+        "paid_spend_impressions": _optional_number(
+            _first_present(row, "Paid Spend (Impressions)", "paid_spend_impressions")
+        ),
+        "paid_engagements": _optional_number(
+            _first_present(row, "Paid Engagement", "paid_engagements")
+        ),
+        "paid_spend_engagements": _optional_number(
+            _first_present(
+                row,
+                "Paid Spend (Engagement)",
+                "Paid Spend (Engagements)",
+                "paid_spend_engagements",
+                "paid_engagements_spend",
+            )
+        ),
+        "paid_clicks": _optional_number(
+            _first_present(row, "Paid Clicks", "paid_clicks")
+        ),
+        "paid_spend_clicks": _optional_number(
+            _first_present(row, "Paid Spend (Clicks)", "paid_spend_clicks")
+        ),
     }
+    payload.update(derive_campaign_metrics(payload))
+    return payload

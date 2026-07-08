@@ -221,7 +221,7 @@ def _safe_ratio(numerator: float | None, denominator: float | None) -> float | N
 def load_historical_benchmarks(
     rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, list[float]]:
-    """Load benchmark columns using a shape that can later map to Data rows."""
+    """Load benchmark columns from Excel Data-sheet style rows."""
     benchmark_values: dict[str, list[float]] = {
         "organic_impressions": [],
         "engagements": [],
@@ -233,40 +233,83 @@ def load_historical_benchmarks(
     if rows:
         for row in rows:
             organic_impressions = _row_number(
-                row, "F", "organic_impressions_benchmark"
+                row,
+                "F",
+                "Impressions Per Influencer",
+                "impressions_per_influencer",
+                "organic_impressions_benchmark",
             )
             if organic_impressions is None:
                 organic_impressions = _safe_ratio(
-                    _row_number(row, "E", "organic_impressions"),
-                    _row_number(row, "C", "influencer_count"),
+                    _row_number(row, "E", "Organic Impressions", "organic_impressions"),
+                    _row_number(row, "C", "# of Influencers", "influencer_count"),
                 )
 
-            engagements = _row_number(row, "G", "engagements_benchmark")
+            engagements = _row_number(
+                row,
+                "G",
+                "Engagements Per Influencer",
+                "engagements_per_influencer",
+                "engagements_benchmark",
+            )
             if engagements is None:
                 engagements = _safe_ratio(
-                    _row_number(row, "D", "engagements"),
-                    _row_number(row, "C", "influencer_count"),
+                    _row_number(row, "D", "Engagements", "engagements"),
+                    _row_number(row, "C", "# of Influencers", "influencer_count"),
                 )
 
-            paid_impressions = _row_number(row, "J", "paid_impressions_benchmark")
+            paid_impressions = _row_number(
+                row,
+                "J",
+                "Impressions per $1 Spend",
+                "impressions_per_dollar",
+                "paid_impressions_benchmark",
+            )
             if paid_impressions is None:
                 paid_impressions = _safe_ratio(
-                    _row_number(row, "H", "paid_impressions"),
-                    _row_number(row, "I", "paid_impressions_spend"),
+                    _row_number(row, "H", "Paid Impressions", "paid_impressions"),
+                    _row_number(
+                        row,
+                        "I",
+                        "Paid Spend (Impressions)",
+                        "paid_spend_impressions",
+                        "paid_impressions_spend",
+                    ),
                 )
 
-            paid_engagements = _row_number(row, "M", "paid_engagements_benchmark")
+            paid_engagements = _row_number(
+                row,
+                "M",
+                "Engagements per $1",
+                "engagements_per_dollar",
+                "paid_engagements_benchmark",
+            )
             if paid_engagements is None:
                 paid_engagements = _safe_ratio(
-                    _row_number(row, "K", "paid_engagements"),
-                    _row_number(row, "L", "paid_engagements_spend"),
+                    _row_number(row, "K", "Paid Engagement", "paid_engagements"),
+                    _row_number(
+                        row,
+                        "L",
+                        "Paid Spend (Engagement)",
+                        "Paid Spend (Engagements)",
+                        "paid_spend_engagements",
+                        "paid_engagements_spend",
+                    ),
                 )
 
-            paid_clicks = _row_number(row, "P", "paid_clicks_benchmark")
+            paid_clicks = _row_number(
+                row,
+                "P",
+                "Clicks per $1",
+                "clicks_per_dollar",
+                "paid_clicks_benchmark",
+            )
             if paid_clicks is None:
                 paid_clicks = _safe_ratio(
-                    _row_number(row, "N", "paid_clicks"),
-                    _row_number(row, "O", "paid_clicks_spend"),
+                    _row_number(row, "N", "Paid Clicks", "paid_clicks"),
+                    _row_number(
+                        row, "O", "Paid Spend (Clicks)", "paid_spend_clicks"
+                    ),
                 )
 
             benchmark_values["organic_impressions"].append(organic_impressions)
