@@ -71,7 +71,7 @@ def format_scenario_price(value: Any) -> str:
 
 
 def included_text(value: bool) -> str:
-    return CHECKMARK if value else ""
+    return "true" if value else ""
 
 
 def derive_total_minimum_pieces(snapshot: dict[str, Any]) -> str:
@@ -316,8 +316,8 @@ def set_cell_text(cell: Any, text: str) -> None:
     replace_text_frame_text(cell.text_frame, text)
 
 
-def set_checkmark_cell(cell: Any) -> None:
-    replace_text_frame_text(cell.text_frame, CHECKMARK)
+def clear_cell_text(cell: Any) -> None:
+    replace_text_frame_text(cell.text_frame, "")
 
 
 def update_approach_slide_table(slide: Any, payload: dict[str, Any]) -> list[str]:
@@ -347,11 +347,12 @@ def update_approach_slide_table(slide: Any, payload: dict[str, Any]) -> list[str
             if not scenario:
                 continue
             value = scenario.get("price") if row_index == price_row_index else scenario.get(field)
+            if field in {"click2cart_link", "paid_social"}:
+                if not value:
+                    clear_cell_text(row.cells[column_index])
+                continue
             if value:
-                if field in {"click2cart_link", "paid_social"}:
-                    set_checkmark_cell(row.cells[column_index])
-                else:
-                    set_cell_text(row.cells[column_index], value)
+                set_cell_text(row.cells[column_index], value)
     return []
 
 
