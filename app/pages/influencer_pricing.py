@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
@@ -12,7 +13,16 @@ if str(ROOT_DIR) not in sys.path:
 
 from core.influencer_pricing import calculate_metric_estimates, calculate_pricing
 from core.db import get_database_status
-from core.historical_data import EXCEL_DATA_COLUMNS, fetch_historical_campaign_view
+from core.historical_data import (
+    EXCEL_DATA_COLUMNS,
+    archive_campaign,
+    fetch_active_campaign_rows,
+    fetch_campaign_by_id,
+    fetch_campaign_years,
+    format_historical_campaign_rows,
+    insert_campaign_with_metrics,
+    update_campaign_with_metrics,
+)
 
 
 def hide_default_streamlit_sidebar_nav() -> None:
@@ -521,6 +531,213 @@ def render_metric_calculator_cards(
     render_metrics_snapshot_table()
 
 
+def _date_value(value: object | None = None) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return date.today()
+    return date.today()
+
+
+def _text_value(value: object | None) -> str:
+    return "" if value is None else str(value)
+
+
+def _campaign_label(row: dict[str, object]) -> str:
+    return f"{row['campaign_date']} - {row['program_name']}"
+
+
+def render_campaign_form(
+    form_key: str,
+    submit_label: str,
+    initial: dict[str, object] | None = None,
+) -> tuple[bool, dict[str, object]]:
+    initial = initial or {}
+    with st.form(form_key):
+        top_cols = st.columns([2, 1, 1])
+        with top_cols[0]:
+            program_name = st.text_input(
+                "Program",
+                value=_text_value(initial.get("program_name")),
+                key=f"{form_key}_program",
+            )
+        with top_cols[1]:
+            campaign_date = st.date_input(
+                "Date",
+                value=_date_value(initial.get("campaign_date")),
+                key=f"{form_key}_date",
+            )
+        with top_cols[2]:
+            client_name = st.text_input(
+                "Client",
+                value=_text_value(initial.get("client_name")),
+                key=f"{form_key}_client",
+            )
+
+        notes = st.text_area(
+            "Notes",
+            value=_text_value(initial.get("notes")),
+            height=80,
+            key=f"{form_key}_notes",
+        )
+
+        required_cols = st.columns(3)
+        with required_cols[0]:
+            influencer_count = st.number_input(
+                "# of Influencers",
+                min_value=0.0,
+                value=float(initial.get("influencer_count") or 0),
+                step=1.0,
+                key=f"{form_key}_influencers",
+            )
+        with required_cols[1]:
+            engagements = st.number_input(
+                "Engagements",
+                min_value=0.0,
+                value=float(initial.get("engagements") or 0),
+                step=1.0,
+                key=f"{form_key}_engagements",
+            )
+        with required_cols[2]:
+            organic_impressions = st.number_input(
+                "Organic Impressions",
+                min_value=0.0,
+                value=float(initial.get("organic_impressions") or 0),
+                step=1.0,
+                key=f"{form_key}_organic_impressions",
+            )
+
+        paid_cols = st.columns(3)
+        with paid_cols[0]:
+            paid_impressions = st.text_input(
+                "Paid Impressions",
+                value=_text_value(initial.get("paid_impressions")),
+                key=f"{form_key}_paid_impressions",
+            )
+            paid_spend_impressions = st.text_input(
+                "Paid Spend (Impressions)",
+                value=_text_value(initial.get("paid_spend_impressions")),
+                key=f"{form_key}_paid_spend_impressions",
+            )
+        with paid_cols[1]:
+            paid_engagements = st.text_input(
+                "Paid Engagement",
+                value=_text_value(initial.get("paid_engagements")),
+                key=f"{form_key}_paid_engagements",
+            )
+            paid_spend_engagements = st.text_input(
+                "Paid Spend (Engagement)",
+                value=_text_value(initial.get("paid_spend_engagements")),
+                key=f"{form_key}_paid_spend_engagements",
+            )
+        with paid_cols[2]:
+            paid_clicks = st.text_input(
+                "Paid Clicks",
+                value=_text_value(initial.get("paid_clicks")),
+                key=f"{form_key}_paid_clicks",
+            )
+            paid_spend_clicks = st.text_input(
+                "Paid Spend (Clicks)",
+                value=_text_value(initial.get("paid_spend_clicks")),
+                key=f"{form_key}_paid_spend_clicks",
+            )
+
+        submitted = st.form_submit_button(submit_label, type="primary")
+
+    payload: dict[str, object] = {
+        "Program": program_name,
+        "Date": campaign_date,
+        "Client": client_name,
+        "Notes": notes,
+        "# of Influencers": influencer_count,
+        "Engagements": engagements,
+        "Organic Impressions": organic_impressions,
+        "Paid Impressions": paid_impressions,
+        "Paid Spend (Impressions)": paid_spend_impressions,
+        "Paid Engagement": paid_engagements,
+        "Paid Spend (Engagement)": paid_spend_engagements,
+        "Paid Clicks": paid_clicks,
+        "Paid Spend (Clicks)": paid_spend_clicks,
+    }
+    return submitted, payload
+
+
+def show_campaign_action_result(
+    success: bool, errors: list[str], success_message: str
+) -> None:
+    if success:
+        st.success(success_message)
+        st.rerun()
+    for error in errors:
+        st.error(error)
+
+
+def render_add_campaign() -> None:
+    with st.expander("Add Campaign"):
+        submitted, payload = render_campaign_form(
+            "historical_add_campaign",
+            "Add Campaign",
+        )
+        if submitted:
+            success, errors = insert_campaign_with_metrics(payload)
+            show_campaign_action_result(success, errors, "Campaign added.")
+
+
+def render_edit_campaign(active_rows: list[dict[str, object]]) -> None:
+    with st.expander("Edit Campaign"):
+        if not active_rows:
+            st.info("No active campaigns are available to edit.")
+            return
+        options = {str(row["id"]): _campaign_label(row) for row in active_rows}
+        selected_id = st.selectbox(
+            "Campaign",
+            list(options.keys()),
+            format_func=lambda value: options[value],
+            key="historical_edit_campaign_id",
+        )
+        selected_row = fetch_campaign_by_id(selected_id)
+        if selected_row is None:
+            st.warning("Selected campaign could not be loaded.")
+            return
+        submitted, payload = render_campaign_form(
+            f"historical_edit_campaign_{selected_id}",
+            "Save Changes",
+            selected_row,
+        )
+        if submitted:
+            success, errors = update_campaign_with_metrics(selected_id, payload)
+            show_campaign_action_result(success, errors, "Campaign updated.")
+
+
+def render_archive_campaign(active_rows: list[dict[str, object]]) -> None:
+    with st.expander("Archive Campaign"):
+        if not active_rows:
+            st.info("No active campaigns are available to archive.")
+            return
+        options = {str(row["id"]): _campaign_label(row) for row in active_rows}
+        selected_id = st.selectbox(
+            "Campaign to Archive",
+            list(options.keys()),
+            format_func=lambda value: options[value],
+            key="historical_archive_campaign_id",
+        )
+        confirmed = st.checkbox(
+            "Archive this campaign",
+            key="historical_archive_confirmed",
+        )
+        if st.button(
+            "Archive Campaign",
+            disabled=not confirmed,
+            type="secondary",
+            use_container_width=True,
+        ):
+            success, errors = archive_campaign(selected_id)
+            show_campaign_action_result(success, errors, "Campaign archived.")
+
+
 def render_metrics() -> None:
     """Render the benchmark-based Metrics foundation."""
     st.subheader("Metrics")
@@ -649,11 +866,10 @@ def render_metrics() -> None:
 
 
 def render_historical_data() -> None:
-    """Render the Historical Data foundation placeholder."""
+    """Render the Historical Data management page."""
     st.subheader("Historical Data")
-    st.markdown("Historical campaigns will eventually power the Metrics benchmarks.")
+    st.markdown("Manage campaign history used by Metrics benchmarks.")
 
-    historical_rows = fetch_historical_campaign_view()
     database_status = get_database_status()
     st.caption(
         "DB config: "
@@ -661,6 +877,9 @@ def render_historical_data() -> None:
         f"connection succeeded={database_status['connection_succeeded']}; "
         f"status={database_status['message']}"
     )
+
+    active_rows = fetch_active_campaign_rows()
+    years = fetch_campaign_years()
     view_mode = st.radio(
         "View",
         ["Full View", "Baseline View by Year"],
@@ -668,50 +887,45 @@ def render_historical_data() -> None:
         key="historical_data_view_mode",
     )
 
-    if historical_rows:
-        display_rows = historical_rows
-        if view_mode == "Baseline View by Year":
-            display_rows = sorted(
-                historical_rows,
-                key=lambda row: (row["Date"], row["Program"]),
-                reverse=True,
+    selected_year = None
+    if view_mode == "Baseline View by Year":
+        if years:
+            selected_year = st.selectbox(
+                "Year",
+                years,
+                index=len(years) - 1,
+                key="historical_data_year",
             )
+        else:
+            st.info("No active campaign years are available yet.")
+
+    table_rows = active_rows
+    if selected_year is not None:
+        table_rows = fetch_active_campaign_rows(selected_year)
+
+    historical_rows = format_historical_campaign_rows(table_rows)
+    if historical_rows:
         st.dataframe(
-            display_rows,
+            historical_rows,
             width="stretch",
             hide_index=True,
             column_order=EXCEL_DATA_COLUMNS,
         )
     else:
         st.info(
-            "No historical campaign rows are available yet. Configure DATABASE_URL "
-            "and load campaigns to power this view and Metrics benchmarks."
+            "No active historical campaign rows are available for this view. "
+            "Configure DATABASE_URL and load campaigns to power this view and "
+            "Metrics benchmarks."
         )
 
-    st.markdown("#### Mapped source fields")
-    st.markdown(
-        """
-- program_name
-- campaign_date
-- influencer_count
-- engagements
-- organic_impressions
-- paid_impressions
-- paid_impressions_spend
-- paid_engagements
-- paid_engagements_spend
-- paid_clicks
-- paid_clicks_spend
-- notes
-        """
-    )
-    st.caption(
-        "Excel derived columns are computed from raw fields for display and "
-        "benchmarks; they are not stored as editable source-of-truth values."
-    )
-    st.info(
-        "Database-backed add/edit/delete and Excel import will be added in a later phase."
-    )
+    st.divider()
+    action_cols = st.columns(3)
+    with action_cols[0]:
+        render_add_campaign()
+    with action_cols[1]:
+        render_edit_campaign(active_rows)
+    with action_cols[2]:
+        render_archive_campaign(active_rows)
 
 
 def main() -> None:

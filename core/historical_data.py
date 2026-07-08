@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from core.db import get_db_connection, maybe_init_database
@@ -94,15 +94,79 @@ def derive_campaign_metrics(row: dict[str, Any]) -> dict[str, float | None]:
     }
 
 
-def fetch_active_campaign_rows() -> list[dict[str, Any]]:
+def parse_campaign_date(value: Any) -> date | None:
+    """Parse a campaign date from UI, Excel, or DB-shaped values."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+            try:
+                return datetime.strptime(cleaned, fmt).date()
+            except ValueError:
+                continue
+    return None
+
+
+def normalize_campaign_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize raw Historical Data form/import values for DB writes."""
+    normalized = build_seed_campaign_payload(payload)
+    normalized["campaign_date"] = parse_campaign_date(normalized["campaign_date"])
+    normalized["client_name"] = _first_present(payload, "Client", "client_name")
+    normalized["notes"] = _first_present(payload, "Notes", "notes")
+    return normalized
+
+
+def validate_campaign_payload(payload: dict[str, Any]) -> list[str]:
+    """Validate required raw/source fields before a DB write."""
+    errors = []
+    if not payload.get("program_name"):
+        errors.append("Program is required.")
+    if payload.get("campaign_date") is None:
+        errors.append("Date is required.")
+    required_numeric_fields = {
+        "influencer_count": "# of Influencers is required.",
+        "engagements": "Engagements is required.",
+        "organic_impressions": "Organic Impressions is required.",
+    }
+    for key, message in required_numeric_fields.items():
+        if payload.get(key) is None:
+            errors.append(message)
+        elif payload[key] < 0:
+            errors.append(message.replace("is required", "must be 0 or greater"))
+    nullable_numeric_fields = (
+        "paid_impressions",
+        "paid_spend_impressions",
+        "paid_engagements",
+        "paid_spend_engagements",
+        "paid_clicks",
+        "paid_spend_clicks",
+    )
+    for key in nullable_numeric_fields:
+        if payload.get(key) is not None and payload[key] < 0:
+            errors.append(f"{key} must be 0 or greater.")
+    return errors
+
+
+def fetch_active_campaign_rows(year: int | None = None) -> list[dict[str, Any]]:
     """Fetch all active historical campaigns for benchmark calculations."""
     maybe_init_database()
+    params: list[Any] = []
+    year_filter = ""
+    if year is not None:
+        year_filter = "and c.campaign_year = %s"
+        params.append(year)
     query = """
         select
             c.id,
             c.program_name,
             c.campaign_date,
             c.campaign_year,
+            c.client_name,
             c.notes,
             m.influencer_count,
             m.engagements,
@@ -116,7 +180,29 @@ def fetch_active_campaign_rows() -> list[dict[str, Any]]:
         from campaigns c
         join campaign_metrics m on m.campaign_id = c.id
         where c.is_active = true
-        order by c.campaign_date desc, c.program_name asc
+        {year_filter}
+        order by c.campaign_date asc, c.program_name asc
+    """
+    query = query.format(year_filter=year_filter)
+    with get_db_connection() as connection:
+        if connection is None:
+            return []
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(query, params)
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            return []
+
+
+def fetch_campaign_years() -> list[int]:
+    """Fetch active campaign years for Historical Data filtering."""
+    maybe_init_database()
+    query = """
+        select distinct campaign_year
+        from campaigns
+        where is_active = true
+        order by campaign_year asc
     """
     with get_db_connection() as connection:
         if connection is None:
@@ -124,14 +210,49 @@ def fetch_active_campaign_rows() -> list[dict[str, Any]]:
         try:
             with connection.cursor() as cursor:
                 cursor.execute(query)
-                return [dict(row) for row in cursor.fetchall()]
+                return [int(row["campaign_year"]) for row in cursor.fetchall()]
         except Exception:
             return []
 
 
-def fetch_historical_campaign_view() -> list[dict[str, Any]]:
+def fetch_campaign_by_id(campaign_id: Any) -> dict[str, Any] | None:
+    """Fetch one active campaign and metrics row for editing."""
+    maybe_init_database()
+    query = """
+        select
+            c.id,
+            c.program_name,
+            c.campaign_date,
+            c.campaign_year,
+            c.client_name,
+            c.notes,
+            m.influencer_count,
+            m.engagements,
+            m.organic_impressions,
+            m.paid_impressions,
+            m.paid_spend_impressions,
+            m.paid_engagements,
+            m.paid_spend_engagements,
+            m.paid_clicks,
+            m.paid_spend_clicks
+        from campaigns c
+        join campaign_metrics m on m.campaign_id = c.id
+        where c.is_active = true and c.id = %s
+    """
+    with get_db_connection() as connection:
+        if connection is None:
+            return None
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(query, (campaign_id,))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except Exception:
+            return None
+
+
+def format_historical_campaign_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Fetch historical campaign rows formatted like the Excel Data sheet."""
-    rows = fetch_active_campaign_rows()
     display_rows: list[dict[str, Any]] = []
     for row in rows:
         derived = derive_campaign_metrics(row)
@@ -160,6 +281,177 @@ def fetch_historical_campaign_view() -> list[dict[str, Any]]:
             }
         )
     return display_rows
+
+
+def fetch_historical_campaign_view(year: int | None = None) -> list[dict[str, Any]]:
+    """Fetch historical campaign rows formatted like the Excel Data sheet."""
+    return format_historical_campaign_rows(fetch_active_campaign_rows(year))
+
+
+def insert_campaign_with_metrics(payload: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Insert one active campaign and its source metric fields."""
+    normalized = normalize_campaign_payload(payload)
+    errors = validate_campaign_payload(normalized)
+    if errors:
+        return False, errors
+    if not maybe_init_database():
+        return False, ["Database is not configured or reachable."]
+
+    with get_db_connection() as connection:
+        if connection is None:
+            return False, ["Database connection is not available."]
+        try:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        insert into campaigns (
+                            program_name, campaign_date, client_name, notes
+                        )
+                        values (%s, %s, %s, %s)
+                        returning id
+                        """,
+                        (
+                            normalized["program_name"],
+                            normalized["campaign_date"],
+                            normalized["client_name"],
+                            normalized["notes"],
+                        ),
+                    )
+                    campaign_id = cursor.fetchone()["id"]
+                    cursor.execute(
+                        """
+                        insert into campaign_metrics (
+                            campaign_id,
+                            influencer_count,
+                            engagements,
+                            organic_impressions,
+                            paid_impressions,
+                            paid_spend_impressions,
+                            paid_engagements,
+                            paid_spend_engagements,
+                            paid_clicks,
+                            paid_spend_clicks
+                        )
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            campaign_id,
+                            normalized["influencer_count"],
+                            normalized["engagements"],
+                            normalized["organic_impressions"],
+                            normalized["paid_impressions"],
+                            normalized["paid_spend_impressions"],
+                            normalized["paid_engagements"],
+                            normalized["paid_spend_engagements"],
+                            normalized["paid_clicks"],
+                            normalized["paid_spend_clicks"],
+                        ),
+                    )
+            return True, []
+        except Exception:
+            connection.rollback()
+            return False, ["Campaign could not be saved. Check for duplicates or invalid values."]
+
+
+def update_campaign_with_metrics(
+    campaign_id: Any, payload: dict[str, Any]
+) -> tuple[bool, list[str]]:
+    """Update one active campaign and its source metric fields."""
+    normalized = normalize_campaign_payload(payload)
+    errors = validate_campaign_payload(normalized)
+    if errors:
+        return False, errors
+    if not maybe_init_database():
+        return False, ["Database is not configured or reachable."]
+
+    with get_db_connection() as connection:
+        if connection is None:
+            return False, ["Database connection is not available."]
+        try:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        update campaigns
+                        set
+                            program_name = %s,
+                            campaign_date = %s,
+                            client_name = %s,
+                            notes = %s
+                        where id = %s and is_active = true
+                        """,
+                        (
+                            normalized["program_name"],
+                            normalized["campaign_date"],
+                            normalized["client_name"],
+                            normalized["notes"],
+                            campaign_id,
+                        ),
+                    )
+                    if cursor.rowcount == 0:
+                        raise ValueError("Campaign was not found.")
+                    cursor.execute(
+                        """
+                        update campaign_metrics
+                        set
+                            influencer_count = %s,
+                            engagements = %s,
+                            organic_impressions = %s,
+                            paid_impressions = %s,
+                            paid_spend_impressions = %s,
+                            paid_engagements = %s,
+                            paid_spend_engagements = %s,
+                            paid_clicks = %s,
+                            paid_spend_clicks = %s
+                        where campaign_id = %s
+                        """,
+                        (
+                            normalized["influencer_count"],
+                            normalized["engagements"],
+                            normalized["organic_impressions"],
+                            normalized["paid_impressions"],
+                            normalized["paid_spend_impressions"],
+                            normalized["paid_engagements"],
+                            normalized["paid_spend_engagements"],
+                            normalized["paid_clicks"],
+                            normalized["paid_spend_clicks"],
+                            campaign_id,
+                        ),
+                    )
+                    if cursor.rowcount == 0:
+                        raise ValueError("Campaign metrics were not found.")
+            return True, []
+        except ValueError as error:
+            connection.rollback()
+            return False, [str(error)]
+        except Exception:
+            connection.rollback()
+            return False, ["Campaign could not be updated. Check for duplicates or invalid values."]
+
+
+def archive_campaign(campaign_id: Any) -> tuple[bool, list[str]]:
+    """Soft-delete one campaign from active Historical Data and benchmarks."""
+    if not maybe_init_database():
+        return False, ["Database is not configured or reachable."]
+
+    with get_db_connection() as connection:
+        if connection is None:
+            return False, ["Database connection is not available."]
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "update campaigns set is_active = false where id = %s and is_active = true",
+                    (campaign_id,),
+                )
+                if cursor.rowcount == 0:
+                    connection.rollback()
+                    return False, ["Campaign was not found."]
+            connection.commit()
+            return True, []
+        except Exception:
+            connection.rollback()
+            return False, ["Campaign could not be archived."]
 
 
 def compute_benchmark_series(
