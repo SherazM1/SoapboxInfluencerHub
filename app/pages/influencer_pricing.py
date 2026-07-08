@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from core.influencer_pricing import calculate_metric_estimates, calculate_pricing
+from core.db import get_database_status
 from core.historical_data import fetch_historical_campaign_view
 
 
@@ -653,6 +654,13 @@ def render_historical_data() -> None:
     st.markdown("Historical campaigns will eventually power the Metrics benchmarks.")
 
     historical_rows = fetch_historical_campaign_view()
+    database_status = get_database_status()
+    st.caption(
+        "DB config: "
+        f"DATABASE_URL detected={database_status['database_url_detected']}; "
+        f"connection succeeded={database_status['connection_succeeded']}; "
+        f"status={database_status['message']}"
+    )
     view_mode = st.radio(
         "View",
         ["Full View", "Baseline View by Year"],
