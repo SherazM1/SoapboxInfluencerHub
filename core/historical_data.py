@@ -24,6 +24,11 @@ EXCEL_DATA_COLUMNS = [
     "Clicks per $1",
 ]
 
+__all__ = [
+    "EXCEL_DATA_COLUMNS",
+    "fetch_historical_campaign_view",
+]
+
 
 def _is_blank(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
