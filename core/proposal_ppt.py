@@ -8,6 +8,8 @@ from typing import Any
 
 
 SCENARIO_KEYS = ("A", "B", "C")
+CHECKMARK = "✓"
+PLACEHOLDER_REPLACEMENT_SLIDE_LIMIT = 6
 APPROACH_ROWS = {
     "Campaign Flight": "campaign_flight",
     "Total # of Influencers": "total_influencers",
@@ -69,7 +71,7 @@ def format_scenario_price(value: Any) -> str:
 
 
 def included_text(value: bool) -> str:
-    return "Included" if value else ""
+    return CHECKMARK if value else ""
 
 
 def derive_total_minimum_pieces(snapshot: dict[str, Any]) -> str:
@@ -134,6 +136,13 @@ def iter_shape_text(shape: Any) -> str:
     return " ".join(parts)
 
 
+def iter_all_shapes(shapes: Any) -> Any:
+    for shape in shapes:
+        yield shape
+        if hasattr(shape, "shapes"):
+            yield from iter_all_shapes(shape.shapes)
+
+
 def replace_paragraph_text(paragraph: Any, text: str) -> None:
     if paragraph.runs:
         first_run = paragraph.runs[0]
@@ -153,20 +162,92 @@ def replace_text_frame_text(text_frame: Any, text: str) -> None:
         text_frame._txBody.remove(paragraph._p)
 
 
-def replace_text_in_shape(shape: Any, replacements: dict[str, str]) -> bool:
-    if not getattr(shape, "has_text_frame", False):
-        return False
+def replace_runs_preserving_first_style(paragraph: Any, text: str) -> None:
+    if paragraph.runs:
+        first_run = paragraph.runs[0]
+        for extra_run in list(paragraph.runs)[1:]:
+            paragraph._p.remove(extra_run._r)
+        first_run.text = text
+    else:
+        paragraph.add_run().text = text
+
+
+def replacement_for(replacements: list[tuple[str, str]], target: str) -> str:
+    for candidate, replacement in replacements:
+        if candidate == target:
+            return replacement
+    return ""
+
+
+def apply_placeholder_replacements(
+    text: str,
+    replacements: list[tuple[str, str]],
+) -> str:
+    updated = text
+    brand = replacement_for(replacements, "Brand Name")
+    retailer = replacement_for(replacements, "retailer(s)")
+    if brand:
+        updated = re.sub(r"\b[Bb]rand\b(?!\s+Name)(?!/product\(s\))", brand, updated)
+    if retailer:
+        updated = re.sub(r"\b[Rr]etailer\b(?!\(s\))", retailer, updated)
+
+    for target, replacement in replacements:
+        if replacement:
+            updated = updated.replace(target, replacement)
+    return updated
+
+
+def replace_paragraph_placeholders(
+    paragraph: Any,
+    replacements: list[tuple[str, str]],
+) -> bool:
     changed = False
-    for paragraph in shape.text_frame.paragraphs:
-        for run in paragraph.runs:
-            original = run.text
-            updated = original
-            for target, replacement in replacements.items():
-                if target in updated and replacement:
-                    updated = updated.replace(target, replacement)
-            if updated != original:
-                run.text = updated
-                changed = True
+    for run in paragraph.runs:
+        original_run_text = run.text
+        updated_run_text = apply_placeholder_replacements(
+            original_run_text, replacements
+        )
+        if updated_run_text != original_run_text:
+            run.text = updated_run_text
+            changed = True
+    if changed:
+        return True
+
+    original = "".join(run.text for run in paragraph.runs)
+    if not original:
+        return changed
+    updated = apply_placeholder_replacements(original, replacements)
+    if updated == original:
+        return changed
+    replace_runs_preserving_first_style(paragraph, updated)
+    return True
+
+
+def replace_text_frame_placeholders(
+    text_frame: Any,
+    replacements: list[tuple[str, str]],
+) -> bool:
+    changed = False
+    for paragraph in text_frame.paragraphs:
+        changed = replace_paragraph_placeholders(paragraph, replacements) or changed
+    return changed
+
+
+def replace_text_everywhere(slide: Any, replacements: list[tuple[str, str]]) -> bool:
+    changed = False
+    for shape in iter_all_shapes(slide.shapes):
+        if getattr(shape, "has_text_frame", False):
+            changed = (
+                replace_text_frame_placeholders(shape.text_frame, replacements)
+                or changed
+            )
+        if getattr(shape, "has_table", False):
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    changed = (
+                        replace_text_frame_placeholders(cell.text_frame, replacements)
+                        or changed
+                    )
     return changed
 
 
@@ -174,26 +255,45 @@ def find_slide_by_text(presentation: Any, *needles: str) -> Any | None:
     normalized_needles = [normalize_text(needle) for needle in needles]
     for slide in presentation.slides:
         slide_text = normalize_text(
-            " ".join(iter_shape_text(shape) for shape in slide.shapes)
+            " ".join(iter_shape_text(shape) for shape in iter_all_shapes(slide.shapes))
         )
         if all(needle in slide_text for needle in normalized_needles):
             return slide
     return None
 
 
-def populate_cover_slide(slide: Any, payload: dict[str, Any]) -> list[str]:
+def build_template_replacements(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    brand = payload.get("brand") or ""
+    retailer = payload.get("retailer") or ""
+    campaign_name = payload.get("campaign_name") or ""
+    return [
+        ("Brand Name", brand),
+        ("Campaign Name", campaign_name),
+        (" Influencer Campaign", campaign_name),
+        ("Influencer Campaign", campaign_name),
+        ("brand/product(s)", brand),
+        ("Brand/Product(s)", brand),
+        ("retailer(s)", retailer),
+        ("Retailer(s)", retailer),
+        ("retailer-focused", f"{retailer}-focused" if retailer else ""),
+        ("Retailer-focused", f"{retailer}-focused" if retailer else ""),
+        ("retailer’s", f"{retailer}'s" if retailer else ""),
+        ("Retailer’s", f"{retailer}'s" if retailer else ""),
+        ("retailer shoppers", f"{retailer} shoppers" if retailer else ""),
+        ("Retailer shoppers", f"{retailer} shoppers" if retailer else ""),
+    ]
+
+
+def populate_template_placeholders(presentation: Any, payload: dict[str, Any]) -> list[str]:
     warnings = []
-    replacements = {
-        "Brand Name": payload.get("brand") or "",
-        "Retailer": payload.get("retailer") or "",
-        " Influencer Campaign": payload.get("campaign_name") or "",
-        "Influencer Campaign": payload.get("campaign_name") or "",
-    }
+    replacements = build_template_replacements(payload)
     changed = False
-    for shape in slide.shapes:
-        changed = replace_text_in_shape(shape, replacements) or changed
+    for slide_index, slide in enumerate(presentation.slides, start=1):
+        if slide_index > PLACEHOLDER_REPLACEMENT_SLIDE_LIMIT:
+            break
+        changed = replace_text_everywhere(slide, replacements) or changed
     if not changed:
-        warnings.append("Cover slide placeholders were not found.")
+        warnings.append("Proposal template placeholders were not found.")
     return warnings
 
 
@@ -202,7 +302,7 @@ def cell_key(cell_text: str) -> str:
 
 
 def find_table_shape(slide: Any) -> Any | None:
-    for shape in slide.shapes:
+    for shape in iter_all_shapes(slide.shapes):
         if getattr(shape, "has_table", False):
             table_text = normalize_text(iter_shape_text(shape))
             if "campaign flight" in table_text and "estimated impressions" in table_text:
@@ -214,6 +314,10 @@ def set_cell_text(cell: Any, text: str) -> None:
     if text == "":
         return
     replace_text_frame_text(cell.text_frame, text)
+
+
+def set_checkmark_cell(cell: Any) -> None:
+    replace_text_frame_text(cell.text_frame, CHECKMARK)
 
 
 def update_approach_slide_table(slide: Any, payload: dict[str, Any]) -> list[str]:
@@ -244,7 +348,10 @@ def update_approach_slide_table(slide: Any, payload: dict[str, Any]) -> list[str
                 continue
             value = scenario.get("price") if row_index == price_row_index else scenario.get(field)
             if value:
-                set_cell_text(row.cells[column_index], value)
+                if field in {"click2cart_link", "paid_social"}:
+                    set_checkmark_cell(row.cells[column_index])
+                else:
+                    set_cell_text(row.cells[column_index], value)
     return []
 
 
@@ -263,11 +370,7 @@ def generate_powerpoint_proposal(
     presentation = Presentation(str(template))
     warnings: list[str] = []
 
-    cover_slide = presentation.slides[0] if presentation.slides else None
-    if cover_slide is None:
-        warnings.append("Cover slide was not found.")
-    else:
-        warnings.extend(populate_cover_slide(cover_slide, payload))
+    warnings.extend(populate_template_placeholders(presentation, payload))
 
     approach_slide = find_slide_by_text(
         presentation,
