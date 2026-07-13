@@ -447,6 +447,7 @@ def render_pricing_tool() -> None:
         "outputs": outputs,
         "total_influencers": outputs["total_influencers"],
         "paid_media_spend": inputs["paid_media_spend"],
+        "budget": inputs["budget"],
         "program_total": outputs["program_total"],
         "raw_subtotal": outputs["raw_subtotal"],
         "brand_ambassadors_count": inputs["brand_ambassadors_count"],
@@ -507,7 +508,7 @@ def render_metric_calculator_card(
         )
 
 
-def initialize_metrics_snapshots() -> dict[str, dict[str, float] | None]:
+def initialize_metrics_snapshots() -> dict[str, dict[str, object] | None]:
     """Ensure A/B/C metrics snapshots exist in session state."""
     if "metrics_snapshots" not in st.session_state:
         st.session_state["metrics_snapshots"] = {"A": None, "B": None, "C": None}
@@ -534,6 +535,11 @@ def save_metrics_snapshot(bucket: str, estimates: dict[str, float]) -> None:
         "organic_paid_impressions": estimates["total_impressions"],
         "organic_paid_engagements_clicks": estimates["total_engagement_actions"],
         "campaign_flight": pricing_inputs.get("campaign_flight", ""),
+        "budget": pricing_inputs.get(
+            "budget", pricing_state.get("budget", "")
+            if isinstance(pricing_state, dict)
+            else ""
+        ),
         "total_influencers": pricing_outputs.get(
             "total_influencers", pricing_state.get("total_influencers", 0)
             if isinstance(pricing_state, dict)
@@ -561,24 +567,32 @@ def render_metrics_snapshot_table() -> None:
     snapshots = initialize_metrics_snapshots()
     rows = []
     row_specs = [
+        ("Budget", "budget", "currency"),
         ("Organic + Paid Impressions", "organic_paid_impressions"),
         ("Organic + Paid Engagements/Clicks", "organic_paid_engagements_clicks"),
     ]
-    for label, key in row_specs:
+    for spec in row_specs:
+        label, key = spec[:2]
+        formatter = spec[2] if len(spec) > 2 else "whole_number"
         row = {"Metric": label}
         for bucket in ("A", "B", "C"):
             snapshot = snapshots.get(bucket)
-            row[bucket] = (
-                format_whole_number(snapshot[key])
-                if isinstance(snapshot, dict) and key in snapshot
-                else "-"
-            )
+            if not isinstance(snapshot, dict) or key not in snapshot:
+                row[bucket] = "-"
+                continue
+            value = snapshot.get(key)
+            if formatter == "currency":
+                row[bucket] = (
+                    format_currency(float(value)) if value not in ("", None) else "-"
+                )
+            else:
+                row[bucket] = format_whole_number(value)
         rows.append(row)
 
     st.dataframe(
         rows,
         width="stretch",
-        height=112,
+        height=147,
         hide_index=True,
         column_order=["Metric", "A", "B", "C"],
     )
