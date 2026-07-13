@@ -12,6 +12,7 @@ CHECKMARK = "✓"
 PLACEHOLDER_REPLACEMENT_SLIDE_LIMIT = 6
 APPROACH_ROWS = {
     "Campaign Flight": "campaign_flight",
+    "Budget": "budget",
     "Total # of Influencers": "total_influencers",
     "Social + Story Influencers": "social_stories_count",
     "Video Influencers": "video_creators_count",
@@ -92,6 +93,7 @@ def build_scenario_payload(snapshot: dict[str, Any] | None) -> dict[str, str]:
         "estimated_engagements_clicks": format_engagements_clicks_range(
             snapshot.get("organic_paid_engagements_clicks")
         ),
+        "budget": format_scenario_price(snapshot.get("budget")),
         "price": format_scenario_price(snapshot.get("budget")),
     }
 
@@ -105,6 +107,7 @@ def build_proposal_payload(
         "brand": inputs.get("brand") or inputs.get("client_name") or "",
         "retailer": inputs.get("retailer") or "",
         "campaign_name": inputs.get("campaign_name") or "",
+        "budget": format_scenario_price(inputs.get("budget")),
         "scenarios": {},
     }
     scenario_snapshots = scenario_snapshots or {}
@@ -258,9 +261,14 @@ def build_template_replacements(payload: dict[str, Any]) -> list[tuple[str, str]
     brand = payload.get("brand") or ""
     retailer = payload.get("retailer") or ""
     campaign_name = payload.get("campaign_name") or ""
+    budget = payload.get("budget") or ""
     return [
         ("Brand Name", brand),
         ("Campaign Name", campaign_name),
+        ("{{budget}}", budget),
+        ("{{Budget}}", budget),
+        ("[Budget]", budget),
+        ("Budget Amount", budget),
         (" Influencer Campaign", campaign_name),
         ("Influencer Campaign", campaign_name),
         ("brand/product(s)", brand),
@@ -338,7 +346,11 @@ def update_approach_slide_table(slide: Any, payload: dict[str, Any]) -> list[str
             scenario = payload["scenarios"].get(scenario_key, {})
             if not scenario:
                 continue
-            value = scenario.get("price") if row_index == price_row_index else scenario.get(field)
+            value = (
+                scenario.get("budget")
+                if row_index == price_row_index
+                else scenario.get(field)
+            )
             if value:
                 set_cell_text(row.cells[column_index], value)
     return []
