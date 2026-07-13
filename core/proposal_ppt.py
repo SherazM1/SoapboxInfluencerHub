@@ -70,10 +70,6 @@ def format_scenario_price(value: Any) -> str:
     return f"${rounded_thousands}K"
 
 
-def included_text(value: bool) -> str:
-    return "true" if value else ""
-
-
 def derive_total_minimum_pieces(snapshot: dict[str, Any]) -> str:
     social_stories = number_value(snapshot.get("social_stories_count"))
     video_creators = number_value(snapshot.get("video_creators_count"))
@@ -84,23 +80,19 @@ def derive_total_minimum_pieces(snapshot: dict[str, Any]) -> str:
 def build_scenario_payload(snapshot: dict[str, Any] | None) -> dict[str, str]:
     if not isinstance(snapshot, dict):
         return {}
-    click_2_cart_cost = number_value(snapshot.get("click_2_cart_cost"))
-    paid_media_spend = number_value(snapshot.get("paid_media_spend"))
     return {
         "campaign_flight": str(snapshot.get("campaign_flight") or ""),
         "total_influencers": whole_number_text(snapshot.get("total_influencers")),
         "social_stories_count": whole_number_text(snapshot.get("social_stories_count")),
         "video_creators_count": whole_number_text(snapshot.get("video_creators_count")),
         "total_minimum_pieces": derive_total_minimum_pieces(snapshot),
-        "click2cart_link": included_text(click_2_cart_cost > 0),
-        "paid_social": included_text(paid_media_spend > 0),
         "estimated_impressions": format_impressions_range(
             snapshot.get("organic_paid_impressions")
         ),
         "estimated_engagements_clicks": format_engagements_clicks_range(
             snapshot.get("organic_paid_engagements_clicks")
         ),
-        "price": format_scenario_price(snapshot.get("program_total")),
+        "price": format_scenario_price(snapshot.get("budget")),
     }
 
 
@@ -347,10 +339,6 @@ def update_approach_slide_table(slide: Any, payload: dict[str, Any]) -> list[str
             if not scenario:
                 continue
             value = scenario.get("price") if row_index == price_row_index else scenario.get(field)
-            if field in {"click2cart_link", "paid_social"}:
-                if not value:
-                    clear_cell_text(row.cells[column_index])
-                continue
             if value:
                 set_cell_text(row.cells[column_index], value)
     return []
