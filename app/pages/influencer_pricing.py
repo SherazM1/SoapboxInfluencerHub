@@ -163,28 +163,28 @@ def render_influencer_mix_inputs() -> dict[str, float | int]:
         video_creators_rate = st.number_input(
             "Video Creators Rate",
             min_value=0.0,
-            value=1000.0,
+            value=1200.0,
             step=100.0,
             help=VIDEO_CREATORS_HELP,
         )
         social_stories_rate = st.number_input(
             "Social + Stories Rate",
             min_value=0.0,
-            value=600.0,
+            value=800.0,
             step=100.0,
             help=SOCIAL_STORIES_HELP,
         )
         social_story_video_rate = st.number_input(
             "Social + Story + Video Rate",
             min_value=0.0,
-            value=1600.0,
+            value=1800.0,
             step=100.0,
             help=SOCIAL_STORY_VIDEO_HELP,
         )
         macro_influencers_rate = st.number_input(
             "Macro Influencers Rate",
             min_value=0.0,
-            value=10000.0,
+            value=12000.0,
             step=500.0,
             help=MACRO_INFLUENCERS_HELP,
         )
@@ -223,7 +223,7 @@ def render_advanced_assumptions() -> dict[str, float]:
         hiring_leeway_cost = st.number_input(
             "Hiring Leeway Cost",
             min_value=0.0,
-            value=500.0,
+            value=750.0,
             step=100.0,
             help=HIRING_LEEWAY_HELP,
         )
