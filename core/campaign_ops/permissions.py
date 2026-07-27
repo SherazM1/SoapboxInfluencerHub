@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.campaign_ops.enums import AssignmentRole, UserRole
-from core.campaign_ops.models import CampaignOpsUser, Program, ProgramAssignment, Workstream
+from core.campaign_ops.models import CampaignOpsUser, Program, ProgramAssignment, Task, Workstream
 
 
 def user_role(user: CampaignOpsUser | None) -> str | None:
@@ -123,6 +123,49 @@ def can_view_activity_history(
 ) -> bool:
     """Return whether a user can view program activity history."""
     return can_view_program(user, program, assignments)
+
+
+def can_view_task(
+    user: CampaignOpsUser | None,
+    program: Program,
+    task: Task,
+    assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can view a task through program access."""
+    return can_view_program(user, program, assignments)
+
+
+def can_edit_task(
+    user: CampaignOpsUser | None,
+    program: Program,
+    task: Task,
+    assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can edit task fields or status."""
+    if is_administrator(user):
+        return True
+    if not is_team_member(user) or not program.is_active or not task.is_active:
+        return False
+    if task.assigned_user_id == user.id:
+        return True
+    if task.workstream_id:
+        return user_has_assignment(
+            user,
+            assignments,
+            program_id=program.id,
+            workstream_id=task.workstream_id,
+        )
+    return False
+
+
+def can_manage_task_state(
+    user: CampaignOpsUser | None,
+    program: Program,
+    task: Task,
+    assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can deactivate or reactivate a task."""
+    return is_administrator(user)
 
 
 def can_access_admin(user: CampaignOpsUser | None) -> bool:

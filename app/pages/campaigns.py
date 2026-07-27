@@ -20,6 +20,7 @@ from app.campaign_ops.components import (
 from app.campaign_ops.program_forms import render_new_program_form
 from app.campaign_ops.program_list import render_all_programs, render_my_programs
 from app.campaign_ops.program_workspace import render_program_workspace
+from app.campaign_ops.personal_views import render_my_work
 from app.campaign_ops.state import (
     VIEWER_OPTIONS,
     get_default_section,
@@ -170,8 +171,7 @@ def render_active_section(
     elif section == "New Program":
         render_new_program_form(user, service, users, clients)
     elif section == "My Work":
-        st.subheader("My Work")
-        st.info("Task-based My Work is planned for a later implementation pass. Use My Programs for assigned program access.")
+        render_my_work(user, service, users)
     else:
         render_placeholder(section)
 

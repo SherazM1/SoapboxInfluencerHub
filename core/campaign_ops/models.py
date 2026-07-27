@@ -293,6 +293,9 @@ class ProgramPortfolioRow:
     is_active: bool = True
     assignment_role: str | None = None
     assigned_workstream_type: str | None = None
+    open_task_count: int = 0
+    overdue_task_count: int = 0
+    nearest_task_due_date: date | None = None
 
 
 @dataclass(slots=True)
@@ -303,3 +306,30 @@ class ProgramWorkspaceSummary:
     assignments: list[ProgramAssignment]
     users: list[CampaignOpsUser]
     activity: list[ActivityEvent]
+
+
+@dataclass(slots=True)
+class TaskListRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    title: str
+    description: str | None
+    workstream_id: str | None
+    workstream_type: str | None
+    assigned_user_id: str | None
+    assigned_user_name: str | None
+    responsible_party: str | None
+    status: str
+    risk_level: str
+    waiting_on: str
+    due_date: date | None
+    start_date: date | None
+    completed_at: datetime | None
+    hard_deadline: bool
+    priority: str | None
+    sort_order: int
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None

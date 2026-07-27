@@ -216,6 +216,9 @@ def render_program_rows(rows: list[ProgramPortfolioRow], mode: str, my_programs:
         if my_programs:
             base["Assignment role"] = ASSIGNMENT_ROLE_LABELS.get(row.assignment_role or "", "-")
             base["Assigned workstream"] = WORKFLOW_LABELS.get(row.assigned_workstream_type or "", "-")
+            base["Open assigned tasks"] = str(row.open_task_count)
+            base["Overdue assigned tasks"] = str(row.overdue_task_count)
+            base["Nearest task due"] = format_date(row.nearest_task_due_date)
         table_rows.append(base)
     st.dataframe(table_rows, use_container_width=True, hide_index=True)
 

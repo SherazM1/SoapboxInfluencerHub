@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -20,14 +21,17 @@ from core.campaign_ops.db import (
     get_campaign_ops_setup_status,
 )
 from core.campaign_ops.enums import (
+    AssignmentRole,
     ProgramStatus,
     RiskLevel,
     TaskStatus,
     UserRole,
+    WaitingOn,
     WorkstreamType,
 )
 from core.campaign_ops.exceptions import (
     CampaignOpsDatabaseError,
+    CampaignOpsNotFoundError,
     CampaignOpsPermissionError,
     CampaignOpsSetupRequiredError,
     CampaignOpsValidationError,
@@ -48,6 +52,7 @@ from core.campaign_ops.models import (
     ProgramAssignment,
     Workstream,
     Task,
+    TaskListRow,
     TaskDependency,
 )
 from core.campaign_ops.permissions import (
@@ -188,6 +193,7 @@ class FakePrompt4ARepository:
         self.programs: list[Program] = []
         self.workstreams: list[Workstream] = []
         self.assignments: list[ProgramAssignment] = []
+        self.tasks: list[Task] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -216,11 +222,65 @@ class FakePrompt4ARepository:
         self.programs.append(program)
         return program
 
+    def update_program(self, program_id: str, actor_user_id: str | None = None, **kwargs: object) -> Program:
+        program = self.get_program(program_id)
+        if program is None:
+            raise CampaignOpsNotFoundError("Program was not found.")
+        for key, value in kwargs.items():
+            setattr(program, key, value)
+        program.updated_by = actor_user_id
+        return program
+
+    def archive_program(self, program_id: str, actor_user_id: str | None = None) -> Program:
+        program = self.get_program(program_id)
+        if program is None:
+            raise CampaignOpsNotFoundError("Program was not found.")
+        program.is_active = False
+        program.status = ProgramStatus.ARCHIVED.value
+        program.updated_by = actor_user_id
+        return program
+
+    def reactivate_program(self, program_id: str, actor_user_id: str | None = None) -> Program:
+        program = self.get_program(program_id)
+        if program is None:
+            raise CampaignOpsNotFoundError("Program was not found.")
+        program.is_active = True
+        program.status = ProgramStatus.ACTIVE.value
+        program.updated_by = actor_user_id
+        return program
+
     def create_workstream(self, program_id: str, workstream_type: str, actor_user_id: str | None = None, **kwargs: object) -> Workstream:
         if any(workstream.program_id == program_id and workstream.workstream_type == workstream_type and workstream.is_active for workstream in self.workstreams):
             raise CampaignOpsValidationError("Duplicate active workstreams are not allowed.")
         workstream = Workstream(id=f"cccccccc-cccc-4ccc-8ccc-{len(self.workstreams) + 1:012d}", program_id=program_id, workstream_type=workstream_type, created_by=actor_user_id, updated_by=actor_user_id, **kwargs)
         self.workstreams.append(workstream)
+        return workstream
+
+    def get_workstream(self, workstream_id: str) -> Workstream | None:
+        return next((workstream for workstream in self.workstreams if workstream.id == workstream_id), None)
+
+    def update_workstream(self, workstream_id: str, actor_user_id: str | None = None, **kwargs: object) -> Workstream:
+        workstream = self.get_workstream(workstream_id)
+        if workstream is None:
+            raise CampaignOpsNotFoundError("Workstream was not found.")
+        for key, value in kwargs.items():
+            setattr(workstream, key, value)
+        workstream.updated_by = actor_user_id
+        return workstream
+
+    def deactivate_workstream(self, workstream_id: str, actor_user_id: str | None = None) -> None:
+        workstream = self.get_workstream(workstream_id)
+        if workstream is None:
+            raise CampaignOpsNotFoundError("Workstream was not found.")
+        workstream.is_active = False
+        workstream.updated_by = actor_user_id
+
+    def reactivate_workstream(self, workstream_id: str, actor_user_id: str | None = None) -> Workstream:
+        workstream = self.get_workstream(workstream_id)
+        if workstream is None:
+            raise CampaignOpsNotFoundError("Workstream was not found.")
+        workstream.is_active = True
+        workstream.updated_by = actor_user_id
         return workstream
 
     def create_assignment(self, program_id: str, user_id: str, assignment_role: str, actor_user_id: str | None = None, workstream_id: str | None = None, is_primary: bool = False) -> ProgramAssignment:
@@ -229,6 +289,119 @@ class FakePrompt4ARepository:
         assignment = ProgramAssignment(id=f"dddddddd-dddd-4ddd-8ddd-{len(self.assignments) + 1:012d}", program_id=program_id, workstream_id=workstream_id, user_id=user_id, assignment_role=assignment_role, is_primary=is_primary, created_by=actor_user_id, updated_by=actor_user_id)
         self.assignments.append(assignment)
         return assignment
+
+    def get_assignment(self, assignment_id: str) -> ProgramAssignment | None:
+        return next((assignment for assignment in self.assignments if assignment.id == assignment_id), None)
+
+    def update_assignment(self, assignment_id: str, actor_user_id: str | None = None, **kwargs: object) -> ProgramAssignment:
+        assignment = self.get_assignment(assignment_id)
+        if assignment is None:
+            raise CampaignOpsNotFoundError("Assignment was not found.")
+        for key, value in kwargs.items():
+            setattr(assignment, key, value)
+        assignment.updated_by = actor_user_id
+        return assignment
+
+    def deactivate_assignment(self, assignment_id: str, actor_user_id: str | None = None) -> None:
+        assignment = self.get_assignment(assignment_id)
+        if assignment is None:
+            raise CampaignOpsNotFoundError("Assignment was not found.")
+        assignment.is_active = False
+        assignment.updated_by = actor_user_id
+
+    def reactivate_assignment(self, assignment_id: str, actor_user_id: str | None = None) -> ProgramAssignment:
+        assignment = self.get_assignment(assignment_id)
+        if assignment is None:
+            raise CampaignOpsNotFoundError("Assignment was not found.")
+        assignment.is_active = True
+        assignment.updated_by = actor_user_id
+        return assignment
+
+    def create_task(self, program_id: str, title: str, actor_user_id: str | None = None, **kwargs: object) -> Task:
+        task = Task(
+            id=f"eeeeeeee-eeee-4eee-8eee-{len(self.tasks) + 1:012d}",
+            program_id=program_id,
+            title=title,
+            created_by=actor_user_id,
+            updated_by=actor_user_id,
+            **kwargs,
+        )
+        self.tasks.append(task)
+        return task
+
+    def get_task(self, task_id: str) -> Task | None:
+        return next((task for task in self.tasks if task.id == task_id), None)
+
+    def update_task_details(self, task_id: str, actor_user_id: str | None = None, **kwargs: object) -> Task:
+        task = self.get_task(task_id)
+        if task is None or not task.is_active:
+            raise CampaignOpsNotFoundError("Task was not found.")
+        for key, value in kwargs.items():
+            setattr(task, key, value)
+        task.updated_by = actor_user_id
+        return task
+
+    def deactivate_task(self, task_id: str, actor_user_id: str | None = None) -> None:
+        task = self.get_task(task_id)
+        if task is None or not task.is_active:
+            raise CampaignOpsNotFoundError("Task was not found.")
+        task.is_active = False
+        task.updated_by = actor_user_id
+
+    def reactivate_task(self, task_id: str, actor_user_id: str | None = None) -> Task:
+        task = self.get_task(task_id)
+        if task is None or task.is_active:
+            raise CampaignOpsNotFoundError("Task was not found.")
+        task.is_active = True
+        task.updated_by = actor_user_id
+        return task
+
+    def _task_list_row(self, task: Task) -> TaskListRow:
+        program = self.get_program(task.program_id)
+        workstream = self.get_workstream(task.workstream_id) if task.workstream_id else None
+        assignee = self.get_user_by_id(task.assigned_user_id) if task.assigned_user_id else None
+        client = self.get_program_client(task.program_id)
+        return TaskListRow(
+            id=task.id,
+            program_id=task.program_id,
+            program_name=program.program_name if program else "",
+            client_name=client.name if client else None,
+            title=task.title,
+            description=task.description,
+            workstream_id=task.workstream_id,
+            workstream_type=workstream.workstream_type if workstream else None,
+            assigned_user_id=task.assigned_user_id,
+            assigned_user_name=assignee.display_name if assignee else None,
+            responsible_party=task.responsible_party,
+            status=task.status,
+            risk_level=task.risk_level,
+            waiting_on=task.waiting_on,
+            due_date=task.due_date,
+            start_date=task.start_date,
+            completed_at=task.completed_at,
+            hard_deadline=task.hard_deadline,
+            priority=task.priority,
+            sort_order=task.sort_order,
+            is_active=task.is_active,
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+        )
+
+    def list_task_rows_by_program(self, program_id: str, include_inactive: bool = False) -> list[TaskListRow]:
+        rows = [
+            self._task_list_row(task)
+            for task in self.tasks
+            if task.program_id == program_id and (include_inactive or task.is_active)
+        ]
+        return sorted(rows, key=lambda task: (task.sort_order, task.due_date or date.max, task.title))
+
+    def list_task_rows_by_assigned_user(self, user_id: str, include_inactive: bool = False) -> list[TaskListRow]:
+        rows = [
+            self._task_list_row(task)
+            for task in self.tasks
+            if task.assigned_user_id == user_id and (include_inactive or task.is_active)
+        ]
+        return sorted(rows, key=lambda task: (task.due_date or date.max, task.title))
 
     def append_event(self, **kwargs: str | None) -> object:
         self.events.append(kwargs)
@@ -252,14 +425,57 @@ class FakePrompt4ARepository:
     def list_workstreams_by_program(self, program_id: str) -> list[Workstream]:
         return [workstream for workstream in self.workstreams if workstream.program_id == program_id and workstream.is_active]
 
+    def list_all_workstreams_by_program(self, program_id: str) -> list[Workstream]:
+        return [workstream for workstream in self.workstreams if workstream.program_id == program_id]
+
     def list_assignments_by_program(self, program_id: str) -> list[ProgramAssignment]:
         return [assignment for assignment in self.assignments if assignment.program_id == program_id and assignment.is_active]
+
+    def list_all_assignments_by_program(self, program_id: str) -> list[ProgramAssignment]:
+        return [assignment for assignment in self.assignments if assignment.program_id == program_id]
 
     def list_program_activity(self, program_id: str) -> list[object]:
         return []
 
 
 class CampaignOpsFoundationTests(unittest.TestCase):
+    def _prompt4c_fixture(self) -> tuple[
+        FakePrompt4ARepository,
+        CampaignOpsService,
+        CampaignOpsUser,
+        CampaignOpsUser,
+        CampaignOpsUser,
+        str,
+        Workstream,
+        Workstream,
+    ]:
+        repository = FakePrompt4ARepository()
+        service = CampaignOpsService(repository=repository)
+        bailey, t_user, l_user = repository.users[:3]
+        program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Program",
+            new_client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=bailey.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value, WorkstreamType.RETAIL_MEDIA.value],
+            workstream_lead_user_ids={
+                WorkstreamType.INFLUENCER.value: t_user.id,
+                WorkstreamType.RETAIL_MEDIA.value: l_user.id,
+            },
+        )
+        influencer = next(
+            workstream
+            for workstream in repository.workstreams
+            if workstream.program_id == program_id and workstream.workstream_type == WorkstreamType.INFLUENCER.value
+        )
+        retail = next(
+            workstream
+            for workstream in repository.workstreams
+            if workstream.program_id == program_id and workstream.workstream_type == WorkstreamType.RETAIL_MEDIA.value
+        )
+        return repository, service, bailey, t_user, l_user, program_id, influencer, retail
+
     def test_enum_values_are_stable_storage_values(self) -> None:
         self.assertEqual(UserRole.ADMINISTRATOR.value, "administrator")
         self.assertEqual(ProgramStatus.ACTIVE.value, "active")
@@ -873,6 +1089,398 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertNotIn("campaign_ops_selected_program_id", state)
         self.assertEqual(state["campaign_ops_section"], "My Programs")
         self.assertEqual(state["campaign_ops_viewer_id"], "u2")
+
+    def test_prompt4b_overview_update_validates_noop_and_activity(self) -> None:
+        repository = FakePrompt4ARepository()
+        service = CampaignOpsService(repository=repository)
+        bailey, t_user = repository.users[:2]
+        program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Program",
+            new_client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=t_user.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value],
+        )
+        event_count = len(repository.events)
+
+        unchanged = service.update_program_details(bailey, program_id, program_name="Program")
+        self.assertEqual(unchanged.program_name, "Program")
+        self.assertEqual(len(repository.events), event_count)
+
+        updated = service.update_program_details(
+            bailey,
+            program_id,
+            program_name="Program Updated",
+            status=ProgramStatus.ACTIVE.value,
+        )
+        self.assertEqual(updated.program_name, "Program Updated")
+        self.assertGreater(len(repository.events), event_count)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.update_program_details(bailey, program_id, program_name=" ")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.update_program_details(
+                bailey,
+                program_id,
+                start_date=date(2026, 2, 2),
+                target_end_date=date(2026, 2, 1),
+            )
+
+    def test_prompt4b_team_member_overview_permission_behavior(self) -> None:
+        repository = FakePrompt4ARepository()
+        service = CampaignOpsService(repository=repository)
+        bailey, t_user, l_user = repository.users[:3]
+        program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Program",
+            new_client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=t_user.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value],
+        )
+
+        service.update_program_details(t_user, program_id, status=ProgramStatus.ACTIVE.value)
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.update_program_details(l_user, program_id, status=ProgramStatus.COMPLETE.value)
+
+    def test_prompt4b_workstream_lifecycle_and_duplicate_reactivation_conflict(self) -> None:
+        repository = FakePrompt4ARepository()
+        service = CampaignOpsService(repository=repository)
+        bailey, t_user = repository.users[:2]
+        program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Program",
+            new_client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=t_user.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value],
+        )
+        retail = service.add_workstream_to_program(bailey, program_id, WorkstreamType.RETAIL_MEDIA.value)
+        edited = service.update_workstream_details(
+            bailey,
+            program_id,
+            retail.id,
+            next_action="Confirm brief",
+            risk_level=RiskLevel.AT_RISK.value,
+        )
+        self.assertEqual(edited.next_action, "Confirm brief")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.add_workstream_to_program(bailey, program_id, WorkstreamType.RETAIL_MEDIA.value)
+
+        service.deactivate_workstream(bailey, program_id, retail.id)
+        self.assertFalse(repository.get_workstream(retail.id).is_active)
+        replacement = service.add_workstream_to_program(bailey, program_id, WorkstreamType.RETAIL_MEDIA.value)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.reactivate_workstream(bailey, program_id, retail.id)
+        service.deactivate_workstream(bailey, program_id, replacement.id)
+        reactivated = service.reactivate_workstream(bailey, program_id, retail.id)
+        self.assertTrue(reactivated.is_active)
+
+    def test_prompt4b_assignment_lifecycle_and_scope_validation(self) -> None:
+        repository = FakePrompt4ARepository()
+        service = CampaignOpsService(repository=repository)
+        bailey, t_user, l_user = repository.users[:3]
+        program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Program",
+            new_client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=t_user.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value],
+        )
+        workstream = repository.workstreams[0]
+        assignment = service.add_assignment(
+            bailey,
+            program_id,
+            l_user.id,
+            AssignmentRole.CONTRIBUTOR.value,
+        )
+        updated = service.update_assignment(
+            bailey,
+            program_id,
+            assignment.id,
+            l_user.id,
+            AssignmentRole.REVIEWER.value,
+            None,
+        )
+        self.assertEqual(updated.assignment_role, AssignmentRole.REVIEWER.value)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.add_assignment(bailey, program_id, l_user.id, AssignmentRole.PROGRAM_OWNER.value, workstream.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.add_assignment(bailey, program_id, l_user.id, AssignmentRole.WORKSTREAM_LEAD.value, None)
+        service.deactivate_assignment(bailey, program_id, assignment.id)
+        self.assertFalse(repository.get_assignment(assignment.id).is_active)
+        reactivated = service.reactivate_assignment(bailey, program_id, assignment.id)
+        self.assertTrue(reactivated.is_active)
+
+    def test_prompt4b_primary_owner_reassignment_exactly_one_active_owner(self) -> None:
+        repository = FakePrompt4ARepository()
+        service = CampaignOpsService(repository=repository)
+        bailey, t_user, l_user = repository.users[:3]
+        program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Program",
+            new_client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=t_user.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value],
+        )
+
+        summary = service.reassign_primary_program_owner(bailey, program_id, l_user.id)
+        active_owners = [
+            assignment
+            for assignment in repository.assignments
+            if assignment.program_id == program_id
+            and assignment.is_active
+            and assignment.is_primary
+            and assignment.assignment_role == AssignmentRole.PROGRAM_OWNER.value
+        ]
+        self.assertEqual(len(active_owners), 1)
+        self.assertEqual(active_owners[0].user_id, l_user.id)
+        self.assertEqual(summary.program.id, program_id)
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.reassign_primary_program_owner(t_user, program_id, t_user.id)
+
+    def test_prompt4b_workstream_lead_reassignment_keeps_owner_and_assignment_in_sync(self) -> None:
+        repository = FakePrompt4ARepository()
+        service = CampaignOpsService(repository=repository)
+        bailey, t_user, l_user = repository.users[:3]
+        program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Program",
+            new_client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=t_user.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value],
+        )
+        workstream = repository.workstreams[0]
+        updated = service.reassign_workstream_lead(bailey, program_id, workstream.id, l_user.id)
+        self.assertEqual(updated.owner_user_id, l_user.id)
+        self.assertTrue(
+            any(
+                assignment.user_id == l_user.id
+                and assignment.workstream_id == workstream.id
+                and assignment.assignment_role == AssignmentRole.WORKSTREAM_LEAD.value
+                and assignment.is_active
+                for assignment in repository.assignments
+            )
+        )
+
+    def test_prompt4b_archive_reactivate_permissions_and_child_preservation(self) -> None:
+        repository = FakePrompt4ARepository()
+        service = CampaignOpsService(repository=repository)
+        bailey, t_user = repository.users[:2]
+        program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Program",
+            new_client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=t_user.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value],
+        )
+        child_counts = (len(repository.workstreams), len(repository.assignments))
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.archive_program(t_user, program_id)
+        archived = service.archive_program(bailey, program_id)
+        self.assertFalse(archived.is_active)
+        self.assertEqual((len(repository.workstreams), len(repository.assignments)), child_counts)
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.reactivate_program(t_user, program_id)
+        reactivated = service.reactivate_program(bailey, program_id)
+        self.assertTrue(reactivated.is_active)
+
+    def test_prompt4b_activity_filter_helper_handles_event_groups(self) -> None:
+        from app.campaign_ops.program_workspace import activity_matches_filter
+
+        self.assertTrue(activity_matches_filter("program_field_changed", "Program changes"))
+        self.assertTrue(activity_matches_filter("workstream_reactivated", "Workstream changes"))
+        self.assertTrue(activity_matches_filter("assignment_updated", "Assignment changes"))
+        self.assertTrue(activity_matches_filter("primary_owner_reassigned", "Ownership changes"))
+        self.assertTrue(activity_matches_filter("program_archived", "Archive activity"))
+        self.assertTrue(activity_matches_filter("task_field_changed", "Task changes"))
+
+    def test_prompt4c_task_creation_validates_required_fields(self) -> None:
+        repository, service, bailey, _t_user, _l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_task_record(bailey, program_id, "   ")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_task_record(
+                bailey,
+                program_id,
+                "Task",
+                assigned_user_id=repository.users[3].id,
+            )
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_task_record(
+                bailey,
+                program_id,
+                "Task",
+                start_date=date(2026, 2, 2),
+                due_date=date(2026, 2, 1),
+            )
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_task_record(bailey, program_id, "Task", responsible_party="bad_party")
+
+        repository.deactivate_workstream(influencer.id, actor_user_id=bailey.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_task_record(bailey, program_id, "Task", workstream_id=influencer.id)
+
+    def test_prompt4c_task_crud_status_transitions_and_activity(self) -> None:
+        repository, service, bailey, t_user, _l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        starting_events = len(repository.events)
+
+        task = service.create_task_record(
+            bailey,
+            program_id,
+            "TEST - Prompt 4C Lifecycle",
+            workstream_id=influencer.id,
+            assigned_user_id=t_user.id,
+            responsible_party=WaitingOn.INTERNAL_TEAM.value,
+            due_date=date(2026, 3, 2),
+            start_date=date(2026, 3, 1),
+            priority="High",
+            sort_order=7,
+        )
+        self.assertEqual(task.status, TaskStatus.NOT_STARTED.value)
+        self.assertIn("task_created", [event["event_type"] for event in repository.events[starting_events:]])
+
+        event_count = len(repository.events)
+        unchanged = service.update_task_details(t_user, task.id, title=task.title)
+        self.assertEqual(unchanged.title, task.title)
+        self.assertEqual(len(repository.events), event_count)
+
+        task = service.update_task_details(t_user, task.id, status=TaskStatus.IN_PROGRESS.value)
+        self.assertEqual(task.status, TaskStatus.IN_PROGRESS.value)
+        task = service.update_task_details(t_user, task.id, status=TaskStatus.READY_FOR_INTERNAL_REVIEW.value)
+        self.assertEqual(task.status, TaskStatus.READY_FOR_INTERNAL_REVIEW.value)
+        task = service.update_task_details(t_user, task.id, status=TaskStatus.COMPLETED.value)
+        self.assertEqual(task.status, TaskStatus.COMPLETED.value)
+        self.assertIsNotNone(task.completed_at)
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.update_task_details(t_user, task.id, status=TaskStatus.IN_PROGRESS.value)
+
+        reopened = service.reopen_task(t_user, task.id)
+        self.assertEqual(reopened.status, TaskStatus.IN_PROGRESS.value)
+        self.assertIsNone(reopened.completed_at)
+        self.assertEqual(reopened.priority, "High")
+        self.assertEqual(reopened.due_date, date(2026, 3, 2))
+
+    def test_prompt4c_task_permissions_and_lifecycle_state(self) -> None:
+        repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        task = service.create_task_record(
+            bailey,
+            program_id,
+            "TEST - Prompt 4C Permission",
+            workstream_id=influencer.id,
+            assigned_user_id=t_user.id,
+        )
+
+        updated = service.update_task_details(t_user, task.id, description="Assigned user can edit")
+        self.assertEqual(updated.description, "Assigned user can edit")
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.update_task_details(l_user, task.id, description="L cannot edit T task")
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.update_task_details(t_user, task.id, assigned_user_id=l_user.id)
+
+        service.deactivate_task_record(bailey, task.id)
+        self.assertFalse(repository.get_task(task.id).is_active)
+        service.reactivate_task_record(bailey, task.id)
+        self.assertTrue(repository.get_task(task.id).is_active)
+
+        service.archive_program(bailey, program_id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.update_task_details(bailey, task.id, description="Archived edit")
+
+    def test_prompt4c_user_task_visibility_and_program_task_listing(self) -> None:
+        _repository, service, bailey, t_user, l_user, program_id, influencer, retail = self._prompt4c_fixture()
+        t_task = service.create_task_record(
+            bailey,
+            program_id,
+            "TEST - Prompt 4C T",
+            workstream_id=influencer.id,
+            assigned_user_id=t_user.id,
+        )
+        l_task = service.create_task_record(
+            bailey,
+            program_id,
+            "TEST - Prompt 4C L",
+            workstream_id=retail.id,
+            assigned_user_id=l_user.id,
+        )
+        service.create_task_record(bailey, program_id, "TEST - Prompt 4C Unassigned")
+
+        program_rows = service.list_program_tasks(bailey, program_id)
+        self.assertEqual({row.id for row in program_rows}, {t_task.id, l_task.id, _repository.tasks[-1].id})
+        self.assertEqual([row.id for row in service.list_user_tasks(t_user, t_user.id)], [t_task.id])
+        self.assertEqual([row.id for row in service.list_user_tasks(l_user, l_user.id)], [l_task.id])
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.list_user_tasks(t_user, l_user.id)
+
+    def test_prompt4c_my_work_grouping_is_deterministic_and_single_bucket(self) -> None:
+        _repository, service, _bailey, _t_user, _l_user, _program_id, _influencer, _retail = self._prompt4c_fixture()
+        today = date(2026, 7, 27)
+        base = TaskListRow(
+            id="task-1",
+            program_id="program-1",
+            program_name="Program",
+            client_name="Client",
+            title="Base",
+            description=None,
+            workstream_id=None,
+            workstream_type=None,
+            assigned_user_id="user-1",
+            assigned_user_name="T",
+            responsible_party=WaitingOn.INTERNAL_TEAM.value,
+            status=TaskStatus.IN_PROGRESS.value,
+            risk_level=RiskLevel.UNRATED.value,
+            waiting_on=WaitingOn.NONE.value,
+            due_date=None,
+            start_date=None,
+            completed_at=None,
+            hard_deadline=False,
+            priority=None,
+            sort_order=0,
+            is_active=True,
+            created_at=None,
+            updated_at=None,
+        )
+        tasks = [
+            replace(base, id="overdue", title="Overdue", due_date=today - timedelta(days=1)),
+            replace(base, id="today", title="Today", due_date=today),
+            replace(base, id="week", title="Week", due_date=today + timedelta(days=2)),
+            replace(base, id="waiting", title="Waiting", waiting_on=WaitingOn.CLIENT.value),
+            replace(base, id="remaining", title="Remaining"),
+            replace(
+                base,
+                id="completed",
+                title="Completed",
+                status=TaskStatus.COMPLETED.value,
+                completed_at=datetime(2026, 7, 26, tzinfo=UTC),
+            ),
+            replace(
+                base,
+                id="old-completed",
+                title="Old Completed",
+                status=TaskStatus.COMPLETED.value,
+                completed_at=datetime(2026, 7, 1, tzinfo=UTC),
+            ),
+            replace(base, id="inactive", title="Inactive", is_active=False),
+        ]
+
+        groups = service.group_user_tasks(tasks, today=today)
+
+        self.assertEqual([task.id for task in groups["Overdue"]], ["overdue"])
+        self.assertEqual([task.id for task in groups["Due today"]], ["today"])
+        self.assertEqual([task.id for task in groups["Due this week"]], ["week"])
+        self.assertEqual([task.id for task in groups["Waiting"]], ["waiting"])
+        self.assertEqual([task.id for task in groups["Remaining open"]], ["remaining"])
+        self.assertEqual([task.id for task in groups["Recently completed"]], ["completed"])
+        grouped_ids = [task.id for bucket in groups.values() for task in bucket]
+        self.assertEqual(len(grouped_ids), len(set(grouped_ids)))
+        self.assertNotIn("old-completed", grouped_ids)
+        self.assertNotIn("inactive", grouped_ids)
 
 
 if __name__ == "__main__":

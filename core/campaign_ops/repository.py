@@ -34,6 +34,7 @@ from core.campaign_ops.models import (
     ProgramNote,
     Resource,
     Task,
+    TaskListRow,
     Workstream,
     enum_value,
     require_text,
@@ -167,6 +168,9 @@ class CampaignOpsRepository:
             is_active=bool(normalized.get("is_active", True)),
             assignment_role=normalized.get("assignment_role"),
             assigned_workstream_type=normalized.get("assigned_workstream_type"),
+            open_task_count=int(normalized.get("open_task_count") or 0),
+            overdue_task_count=int(normalized.get("overdue_task_count") or 0),
+            nearest_task_due_date=normalized.get("nearest_task_due_date"),
         )
 
     def _write_returning(
@@ -488,6 +492,17 @@ class CampaignOpsRepository:
                   and a.is_primary = true
                   and a.assignment_role = %s
                 order by a.program_id, a.updated_at desc
+            ),
+            task_agg as (
+                select
+                    program_id,
+                    count(*) filter (where is_active = true and status <> %s) as open_task_count,
+                    count(*) filter (
+                        where is_active = true and status <> %s and due_date < current_date
+                    ) as overdue_task_count,
+                    min(due_date) filter (where is_active = true and status <> %s) as nearest_task_due_date
+                from campaign_ops_tasks
+                group by program_id
             )
             select
                 p.id,
@@ -508,16 +523,29 @@ class CampaignOpsRepository:
                 p.updated_at,
                 p.is_active,
                 null::text as assignment_role,
-                null::text as assigned_workstream_type
+                null::text as assigned_workstream_type,
+                coalesce(ta.open_task_count, 0) as open_task_count,
+                coalesce(ta.overdue_task_count, 0) as overdue_task_count,
+                ta.nearest_task_due_date
             from campaign_ops_programs p
             left join campaign_ops_clients c on c.id = p.client_id
             left join workstream_agg wa on wa.program_id = p.id
             left join assignment_agg aa on aa.program_id = p.id
             left join primary_owner po on po.program_id = p.id
+            left join task_agg ta on ta.program_id = p.id
             {where_clause}
             order by {order_by}
         """
-        rows = self._fetch_raw_all(query, (AssignmentRole.PROGRAM_OWNER.value, *params))
+        rows = self._fetch_raw_all(
+            query,
+            (
+                AssignmentRole.PROGRAM_OWNER.value,
+                TaskStatus.COMPLETED.value,
+                TaskStatus.COMPLETED.value,
+                TaskStatus.COMPLETED.value,
+                *params,
+            ),
+        )
         return [self._portfolio_row_from_db(row) for row in rows]
 
     def list_programs_assigned_to_user(
@@ -555,11 +583,41 @@ class CampaignOpsRepository:
             (user_id,),
         )
         by_program = {str(row["program_id"]): row for row in assignment_rows}
+        task_rows = self._fetch_raw_all(
+            """
+            select
+                program_id,
+                count(*) filter (where is_active = true and status <> %s) as open_task_count,
+                count(*) filter (
+                    where is_active = true and status <> %s and due_date < current_date
+                ) as overdue_task_count,
+                min(due_date) filter (where is_active = true and status <> %s) as nearest_task_due_date
+            from campaign_ops_tasks
+            where assigned_user_id = %s
+            group by program_id
+            """,
+            (
+                TaskStatus.COMPLETED.value,
+                TaskStatus.COMPLETED.value,
+                TaskStatus.COMPLETED.value,
+                user_id,
+            ),
+        )
+        task_counts = {str(row["program_id"]): row for row in task_rows}
         for row in rows:
             assignment = by_program.get(row.id)
             if assignment:
                 row.assignment_role = assignment.get("assignment_role")
                 row.assigned_workstream_type = assignment.get("assigned_workstream_type")
+            counts = task_counts.get(row.id)
+            if counts:
+                row.open_task_count = int(counts.get("open_task_count") or 0)
+                row.overdue_task_count = int(counts.get("overdue_task_count") or 0)
+                row.nearest_task_due_date = counts.get("nearest_task_due_date")
+            else:
+                row.open_task_count = 0
+                row.overdue_task_count = 0
+                row.nearest_task_due_date = None
         return rows
 
     def list_programs(
@@ -608,6 +666,8 @@ class CampaignOpsRepository:
         self,
         program_id: str,
         actor_user_id: str | None = None,
+        client_id: str | None = None,
+        primary_workstream_type: str | None = None,
         program_name: str | None = None,
         status: str | None = None,
         cross_stage: str | None = None,
@@ -615,12 +675,21 @@ class CampaignOpsRepository:
         priority: str | None = None,
         description: str | None = None,
         latest_update: str | None = None,
+        start_date: Any | None = None,
         target_end_date: Any | None = None,
     ) -> Program:
+        if primary_workstream_type is not None:
+            primary_workstream_type = enum_value(
+                WorkstreamType,
+                primary_workstream_type,
+                "primary_workstream_type",
+            )
         return self._write_returning(
             """
             update campaign_ops_programs
             set
+                client_id = coalesce(%s, client_id),
+                primary_workstream_type = coalesce(%s, primary_workstream_type),
                 program_name = coalesce(%s, program_name),
                 status = coalesce(%s, status),
                 cross_stage = coalesce(%s, cross_stage),
@@ -628,12 +697,15 @@ class CampaignOpsRepository:
                 priority = coalesce(%s, priority),
                 description = coalesce(%s, description),
                 latest_update = coalesce(%s, latest_update),
+                start_date = coalesce(%s, start_date),
                 target_end_date = coalesce(%s, target_end_date),
                 updated_by = %s
             where id = %s and is_active = true
             returning *
             """,
             (
+                client_id,
+                primary_workstream_type,
                 require_text(program_name, "program_name") if program_name is not None else None,
                 enum_value(ProgramStatus, status, "status") if status is not None else None,
                 enum_value(CrossStage, cross_stage, "cross_stage") if cross_stage is not None else None,
@@ -641,6 +713,7 @@ class CampaignOpsRepository:
                 priority,
                 description,
                 latest_update,
+                start_date,
                 target_end_date,
                 actor_user_id,
                 program_id,
@@ -661,6 +734,22 @@ class CampaignOpsRepository:
             returning *
             """,
             (ProgramStatus.ARCHIVED.value, actor_user_id, program_id),
+            Program,
+        )
+
+    def reactivate_program(self, program_id: str, actor_user_id: str | None = None) -> Program:
+        return self._write_returning(
+            """
+            update campaign_ops_programs
+            set
+                is_active = true,
+                archived_at = null,
+                status = case when status = %s then %s else status end,
+                updated_by = %s
+            where id = %s and is_active = false
+            returning *
+            """,
+            (ProgramStatus.ARCHIVED.value, ProgramStatus.ACTIVE.value, actor_user_id, program_id),
             Program,
         )
 
@@ -718,6 +807,24 @@ class CampaignOpsRepository:
             Workstream,
         )
 
+    def list_all_workstreams_by_program(self, program_id: str) -> list[Workstream]:
+        return self._fetch_all(
+            """
+            select * from campaign_ops_workstreams
+            where program_id = %s
+            order by is_active desc, workstream_type asc
+            """,
+            (program_id,),
+            Workstream,
+        )
+
+    def get_workstream(self, workstream_id: str) -> Workstream | None:
+        return self._fetch_one(
+            "select * from campaign_ops_workstreams where id = %s",
+            (workstream_id,),
+            Workstream,
+        )
+
     def update_workstream(
         self,
         workstream_id: str,
@@ -772,6 +879,18 @@ class CampaignOpsRepository:
             (actor_user_id, workstream_id),
         )
 
+    def reactivate_workstream(self, workstream_id: str, actor_user_id: str | None = None) -> Workstream:
+        return self._write_returning(
+            """
+            update campaign_ops_workstreams
+            set is_active = true, updated_by = %s
+            where id = %s and is_active = false
+            returning *
+            """,
+            (actor_user_id, workstream_id),
+            Workstream,
+        )
+
     def create_assignment(
         self,
         program_id: str,
@@ -813,6 +932,59 @@ class CampaignOpsRepository:
             ProgramAssignment,
         )
 
+    def list_all_assignments_by_program(self, program_id: str) -> list[ProgramAssignment]:
+        return self._fetch_all(
+            """
+            select * from campaign_ops_assignments
+            where program_id = %s
+            order by is_active desc, is_primary desc, assignment_role asc
+            """,
+            (program_id,),
+            ProgramAssignment,
+        )
+
+    def get_assignment(self, assignment_id: str) -> ProgramAssignment | None:
+        return self._fetch_one(
+            "select * from campaign_ops_assignments where id = %s",
+            (assignment_id,),
+            ProgramAssignment,
+        )
+
+    def update_assignment(
+        self,
+        assignment_id: str,
+        actor_user_id: str | None = None,
+        program_id: str | None = None,
+        workstream_id: str | None = None,
+        user_id: str | None = None,
+        assignment_role: str | None = None,
+        is_primary: bool | None = None,
+    ) -> ProgramAssignment:
+        return self._write_returning(
+            """
+            update campaign_ops_assignments
+            set
+                program_id = coalesce(%s, program_id),
+                workstream_id = %s,
+                user_id = coalesce(%s, user_id),
+                assignment_role = coalesce(%s, assignment_role),
+                is_primary = coalesce(%s, is_primary),
+                updated_by = %s
+            where id = %s and is_active = true
+            returning *
+            """,
+            (
+                program_id,
+                workstream_id,
+                user_id,
+                enum_value(AssignmentRole, assignment_role, "assignment_role") if assignment_role is not None else None,
+                is_primary,
+                actor_user_id,
+                assignment_id,
+            ),
+            ProgramAssignment,
+        )
+
     def list_assignments_by_user(self, user_id: str) -> list[ProgramAssignment]:
         return self._fetch_all(
             """
@@ -832,6 +1004,18 @@ class CampaignOpsRepository:
             where id = %s and is_active = true
             """,
             (actor_user_id, assignment_id),
+        )
+
+    def reactivate_assignment(self, assignment_id: str, actor_user_id: str | None = None) -> ProgramAssignment:
+        return self._write_returning(
+            """
+            update campaign_ops_assignments
+            set is_active = true, updated_by = %s
+            where id = %s and is_active = false
+            returning *
+            """,
+            (actor_user_id, assignment_id),
+            ProgramAssignment,
         )
 
     def create_task(
@@ -884,6 +1068,99 @@ class CampaignOpsRepository:
             ),
             Task,
         )
+
+    def get_task(self, task_id: str) -> Task | None:
+        return self._fetch_one(
+            "select * from campaign_ops_tasks where id = %s",
+            (task_id,),
+            Task,
+        )
+
+    def _task_list_row_from_db(self, row: dict[str, Any]) -> TaskListRow:
+        normalized = normalize_row(row)
+        return TaskListRow(
+            id=str(normalized["id"]),
+            program_id=str(normalized["program_id"]),
+            program_name=str(normalized["program_name"]),
+            client_name=normalized.get("client_name"),
+            title=str(normalized["title"]),
+            description=normalized.get("description"),
+            workstream_id=normalize_id(normalized.get("workstream_id")),
+            workstream_type=normalized.get("workstream_type"),
+            assigned_user_id=normalize_id(normalized.get("assigned_user_id")),
+            assigned_user_name=normalized.get("assigned_user_name"),
+            responsible_party=normalized.get("responsible_party"),
+            status=str(normalized["status"]),
+            risk_level=str(normalized["risk_level"]),
+            waiting_on=str(normalized["waiting_on"]),
+            due_date=normalized.get("due_date"),
+            start_date=normalized.get("start_date"),
+            completed_at=normalized.get("completed_at"),
+            hard_deadline=bool(normalized.get("hard_deadline", False)),
+            priority=normalized.get("priority"),
+            sort_order=int(normalized.get("sort_order") or 0),
+            is_active=bool(normalized.get("is_active", True)),
+            created_at=normalized.get("created_at"),
+            updated_at=normalized.get("updated_at"),
+        )
+
+    def list_task_rows_by_program(
+        self,
+        program_id: str,
+        include_inactive: bool = False,
+    ) -> list[TaskListRow]:
+        clauses = ["t.program_id = %s"]
+        params: list[Any] = [program_id]
+        if not include_inactive:
+            clauses.append("t.is_active = true")
+        query = f"""
+            select
+                t.*,
+                p.program_name,
+                c.name as client_name,
+                w.workstream_type,
+                u.display_name as assigned_user_name
+            from campaign_ops_tasks t
+            join campaign_ops_programs p on p.id = t.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_workstreams w on w.id = t.workstream_id
+            left join campaign_ops_users u on u.id = t.assigned_user_id
+            where {' and '.join(clauses)}
+            order by t.sort_order asc, t.due_date asc nulls last, t.updated_at desc
+        """
+        return [
+            self._task_list_row_from_db(row)
+            for row in self._fetch_raw_all(query, tuple(params))
+        ]
+
+    def list_task_rows_by_assigned_user(
+        self,
+        user_id: str,
+        include_inactive: bool = False,
+    ) -> list[TaskListRow]:
+        clauses = ["t.assigned_user_id = %s"]
+        params: list[Any] = [user_id]
+        if not include_inactive:
+            clauses.append("t.is_active = true")
+        query = f"""
+            select
+                t.*,
+                p.program_name,
+                c.name as client_name,
+                w.workstream_type,
+                u.display_name as assigned_user_name
+            from campaign_ops_tasks t
+            join campaign_ops_programs p on p.id = t.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_workstreams w on w.id = t.workstream_id
+            left join campaign_ops_users u on u.id = t.assigned_user_id
+            where {' and '.join(clauses)}
+            order by t.due_date asc nulls last, t.updated_at desc
+        """
+        return [
+            self._task_list_row_from_db(row)
+            for row in self._fetch_raw_all(query, tuple(params))
+        ]
 
     def list_tasks_by_program(self, program_id: str) -> list[Task]:
         return self._fetch_all(
@@ -959,6 +1236,68 @@ class CampaignOpsRepository:
             Task,
         )
 
+    def update_task_details(
+        self,
+        task_id: str,
+        actor_user_id: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        workstream_id: str | None = None,
+        assigned_user_id: str | None = None,
+        responsible_party: str | None = None,
+        status: str | None = None,
+        risk_level: str | None = None,
+        waiting_on: str | None = None,
+        due_date: Any | None = None,
+        start_date: Any | None = None,
+        completed_at: Any | None = None,
+        hard_deadline: bool | None = None,
+        priority: str | None = None,
+        sort_order: int | None = None,
+    ) -> Task:
+        return self._write_returning(
+            """
+            update campaign_ops_tasks
+            set
+                title = coalesce(%s, title),
+                description = %s,
+                workstream_id = %s,
+                assigned_user_id = %s,
+                responsible_party = %s,
+                status = coalesce(%s, status),
+                risk_level = coalesce(%s, risk_level),
+                waiting_on = coalesce(%s, waiting_on),
+                due_date = %s,
+                start_date = %s,
+                completed_at = %s,
+                hard_deadline = coalesce(%s, hard_deadline),
+                priority = %s,
+                sort_order = coalesce(%s, sort_order),
+                updated_by = %s
+            where id = %s and is_active = true
+            returning *
+            """,
+            (
+                require_text(title, "title") if title is not None else None,
+                description,
+                workstream_id,
+                assigned_user_id,
+                responsible_party,
+                enum_value(TaskStatus, status, "status") if status is not None else None,
+                enum_value(RiskLevel, risk_level, "risk_level") if risk_level is not None else None,
+                enum_value(WaitingOn, waiting_on, "waiting_on") if waiting_on is not None else None,
+                due_date,
+                start_date,
+                completed_at,
+                hard_deadline,
+                priority,
+                sort_order,
+                actor_user_id,
+                task_id,
+            ),
+            Task,
+        )
+
     def complete_task(self, task_id: str, actor_user_id: str | None = None) -> Task:
         return self._write_returning(
             """
@@ -979,6 +1318,18 @@ class CampaignOpsRepository:
             where id = %s and is_active = true
             """,
             (actor_user_id, task_id),
+        )
+
+    def reactivate_task(self, task_id: str, actor_user_id: str | None = None) -> Task:
+        return self._write_returning(
+            """
+            update campaign_ops_tasks
+            set is_active = true, updated_by = %s
+            where id = %s and is_active = false
+            returning *
+            """,
+            (actor_user_id, task_id),
+            Task,
         )
 
     def create_resource(
@@ -1146,4 +1497,20 @@ class CampaignOpsRepository:
             """,
             (program_id,),
             ActivityEvent,
+        )
+
+    def list_program_activity_with_actor(self, program_id: str) -> list[dict[str, Any]]:
+        return self._fetch_raw_all(
+            """
+            select
+                a.*,
+                u.display_name as actor_display_name,
+                w.workstream_type as workstream_type
+            from campaign_ops_activity a
+            left join campaign_ops_users u on u.id = a.actor_user_id
+            left join campaign_ops_workstreams w on w.id = a.workstream_id
+            where a.program_id = %s
+            order by a.created_at desc
+            """,
+            (program_id,),
         )
