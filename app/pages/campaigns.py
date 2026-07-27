@@ -15,7 +15,7 @@ from app.navigation import (
 )
 from core.campaign_ops.enums import UserRole
 from core.campaign_ops.exceptions import CampaignOpsError
-from core.campaign_ops.db import get_campaign_ops_database_status
+from core.campaign_ops.db import CampaignOpsSetupStatus, get_campaign_ops_setup_status
 from core.campaign_ops.migrations import initialize_campaign_ops_database
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.permissions import can_access_admin
@@ -85,11 +85,10 @@ def resolve_viewer_user(viewer: str) -> tuple[CampaignOpsUser | None, str | None
         return None, str(exc)
 
 
-def render_viewer_selector() -> tuple[str, str, CampaignOpsUser | None]:
-    """Render temporary viewer scaffolding until authentication exists."""
+def render_temporary_viewer_selector() -> tuple[str, str]:
+    """Render temporary viewer selector without database lookups."""
     previous_viewer = st.session_state.get("campaign_ops_previous_viewer")
     viewer = st.selectbox("Viewing as", VIEWER_OPTIONS, key="campaign_ops_viewer")
-    user, setup_error = resolve_viewer_user(viewer)
     sections = get_sections_for_viewer(viewer)
     default_section = get_default_section(viewer)
 
@@ -100,42 +99,50 @@ def render_viewer_selector() -> tuple[str, str, CampaignOpsUser | None]:
         st.session_state["campaign_ops_section"] = default_section
         st.session_state["campaign_ops_previous_viewer"] = viewer
 
+    return viewer, st.session_state["campaign_ops_section"]
+
+
+def resolve_initialized_viewer(viewer: str) -> CampaignOpsUser | None:
+    """Resolve a viewer only after Campaign Operations schema is initialized."""
+    user, setup_error = resolve_viewer_user(viewer)
+    if setup_error:
+        st.warning(
+            "Campaign Operations user lookup failed. Ask Bailey to verify database setup."
+        )
+        return None
     if user is not None:
         st.session_state["campaign_ops_viewer_id"] = user.id
     else:
         st.session_state.pop("campaign_ops_viewer_id", None)
-
     st.caption(f"Role: {get_viewer_role(viewer, user)}")
-    if setup_error:
-        st.warning(
-            "Campaign Operations database is not initialized or is unavailable. "
-            "Use the Bailey setup control to initialize it when CAMPAIGN_OPS_DATABASE_URL "
-            "is configured."
-        )
-    elif user is None:
+    if user is None:
         st.warning(
             f"{viewer} is not available in Campaign Operations users yet. "
             "Initialize the Campaign Operations database to seed internal users."
         )
-    return viewer, st.session_state["campaign_ops_section"], user
+    return user
 
 
-def render_initialization_control(viewer: str, user: CampaignOpsUser | None) -> None:
+def render_initialization_control(
+    viewer: str,
+    user: CampaignOpsUser | None,
+    setup_status: CampaignOpsSetupStatus,
+) -> None:
     """Render Bailey-only database initialization control."""
     fallback_admin = viewer == "Bailey" and user is None
     if not (can_access_admin(user) or fallback_admin):
         return
 
     with st.expander("Database Setup", expanded=False):
-        database_status = get_campaign_ops_database_status()
         st.caption(
             "Runs pending Campaign Operations migrations and idempotently seeds Bailey, T, and L."
         )
         st.caption(
             "DB config: "
-            f"CAMPAIGN_OPS_DATABASE_URL detected={database_status['database_url_detected']}; "
-            f"connection succeeded={database_status['connection_succeeded']}; "
-            f"status={database_status['message']}"
+            f"CAMPAIGN_OPS_DATABASE_URL detected={setup_status.database_url_detected}; "
+            f"connection succeeded={setup_status.connection_succeeded}; "
+            f"schema initialized={setup_status.schema_initialized}; "
+            f"status={setup_status.message}"
         )
         if st.button("Initialize Campaign Operations Database", type="primary"):
             try:
@@ -146,10 +153,44 @@ def render_initialization_control(viewer: str, user: CampaignOpsUser | None) -> 
 
             applied = result.migrations.applied_migrations or ["None"]
             skipped = result.migrations.skipped_migrations or ["None"]
-            st.success("Campaign Operations database initialization completed.")
-            st.markdown(f"- Applied migrations: {', '.join(applied)}")
-            st.markdown(f"- Already applied migrations: {', '.join(skipped)}")
-            st.markdown(f"- Seeded users: {', '.join(result.seed.seeded_users)}")
+            st.session_state["campaign_ops_initialization_message"] = {
+                "applied": ", ".join(applied),
+                "skipped": ", ".join(skipped),
+                "seeded": ", ".join(result.seed.seeded_users),
+            }
+            st.session_state.pop("campaign_ops_viewer_id", None)
+            st.rerun()
+
+
+def viewer_can_initialize_in_setup(viewer: str) -> bool:
+    """Return whether a temporary viewer can initialize before users are seeded."""
+    return viewer == "Bailey"
+
+
+def render_setup_state(viewer: str, setup_status: CampaignOpsSetupStatus) -> None:
+    """Render pre-initialization setup state without repository queries."""
+    st.warning(setup_status.message)
+    if not viewer_can_initialize_in_setup(viewer):
+        st.info(
+            "Campaign Operations database setup has not been completed. "
+            "Ask Bailey to initialize it."
+        )
+        st.stop()
+
+    st.info("Bailey can initialize Campaign Operations database setup from this page.")
+    render_initialization_control(viewer, None, setup_status)
+    st.stop()
+
+
+def render_initialization_message() -> None:
+    """Render initialization result stored before setup rerun."""
+    message = st.session_state.pop("campaign_ops_initialization_message", None)
+    if not message:
+        return
+    st.success("Campaign Operations database initialization completed.")
+    st.markdown(f"- Applied migrations: {message['applied']}")
+    st.markdown(f"- Already applied migrations: {message['skipped']}")
+    st.markdown(f"- Seeded users: {message['seeded']}")
 
 
 def set_active_section(section: str) -> None:
@@ -228,8 +269,14 @@ def main() -> None:
 
     render_header()
     st.divider()
-    viewer, _, user = render_viewer_selector()
-    render_initialization_control(viewer, user)
+    render_initialization_message()
+    viewer, _ = render_temporary_viewer_selector()
+    setup_status = get_campaign_ops_setup_status()
+    if not setup_status.is_initialized:
+        render_setup_state(viewer, setup_status)
+
+    user = resolve_initialized_viewer(viewer)
+    render_initialization_control(viewer, user, setup_status)
     st.divider()
     active_section = render_section_navigation(viewer)
     st.divider()

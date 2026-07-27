@@ -17,7 +17,12 @@ from core.campaign_ops.enums import (
     WaitingOn,
     WorkstreamType,
 )
-from core.campaign_ops.exceptions import CampaignOpsDatabaseError, CampaignOpsNotFoundError
+from core.campaign_ops.db import is_undefined_table_error
+from core.campaign_ops.exceptions import (
+    CampaignOpsDatabaseError,
+    CampaignOpsNotFoundError,
+    CampaignOpsSetupRequiredError,
+)
 from core.campaign_ops.migrations import connect_to_database
 from core.campaign_ops.models import (
     ActivityEvent,
@@ -78,10 +83,17 @@ class CampaignOpsRepository:
         params: tuple[Any, ...],
         model_type: type,
     ) -> Any | None:
-        with self.connection_scope() as (connection, _owns_connection):
-            with connection.cursor() as cursor:
-                cursor.execute(query, params)
-                row = cursor.fetchone()
+        try:
+            with self.connection_scope() as (connection, _owns_connection):
+                with connection.cursor() as cursor:
+                    cursor.execute(query, params)
+                    row = cursor.fetchone()
+        except Exception as exc:
+            if is_undefined_table_error(exc):
+                raise CampaignOpsSetupRequiredError(
+                    "Campaign Operations database schema is not initialized."
+                ) from exc
+            raise CampaignOpsDatabaseError("Campaign Operations query failed.") from exc
         return model_type(**normalize_row(row)) if row else None
 
     def _fetch_all(
@@ -90,10 +102,17 @@ class CampaignOpsRepository:
         params: tuple[Any, ...],
         model_type: type,
     ) -> list[Any]:
-        with self.connection_scope() as (connection, _owns_connection):
-            with connection.cursor() as cursor:
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
+        try:
+            with self.connection_scope() as (connection, _owns_connection):
+                with connection.cursor() as cursor:
+                    cursor.execute(query, params)
+                    rows = cursor.fetchall()
+        except Exception as exc:
+            if is_undefined_table_error(exc):
+                raise CampaignOpsSetupRequiredError(
+                    "Campaign Operations database schema is not initialized."
+                ) from exc
+            raise CampaignOpsDatabaseError("Campaign Operations query failed.") from exc
         return [model_type(**normalize_row(row)) for row in rows]
 
     def _write_returning(
@@ -112,6 +131,10 @@ class CampaignOpsRepository:
             except Exception as exc:
                 if owns_connection:
                     connection.rollback()
+                if is_undefined_table_error(exc):
+                    raise CampaignOpsSetupRequiredError(
+                        "Campaign Operations database schema is not initialized."
+                    ) from exc
                 raise CampaignOpsDatabaseError("Campaign Operations write failed.") from exc
         if row is None:
             raise CampaignOpsNotFoundError("Campaign Operations record was not found.")
@@ -133,6 +156,10 @@ class CampaignOpsRepository:
             except Exception as exc:
                 if owns_connection:
                     connection.rollback()
+                if is_undefined_table_error(exc):
+                    raise CampaignOpsSetupRequiredError(
+                        "Campaign Operations database schema is not initialized."
+                    ) from exc
                 raise CampaignOpsDatabaseError("Campaign Operations write failed.") from exc
 
     def list_active_users(self) -> list[CampaignOpsUser]:

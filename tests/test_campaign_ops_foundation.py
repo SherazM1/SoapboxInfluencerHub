@@ -5,14 +5,22 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.campaign_ops.db import get_campaign_ops_database_url
+from app.pages.campaigns import viewer_can_initialize_in_setup
+from core.campaign_ops.db import (
+    CampaignOpsSetupStatus,
+    get_campaign_ops_database_url,
+    get_campaign_ops_setup_status,
+)
 from core.campaign_ops.enums import (
     ProgramStatus,
     TaskStatus,
     UserRole,
     WorkstreamType,
 )
-from core.campaign_ops.exceptions import CampaignOpsValidationError
+from core.campaign_ops.exceptions import (
+    CampaignOpsSetupRequiredError,
+    CampaignOpsValidationError,
+)
 from core.campaign_ops.migrations import get_migration_names, run_campaign_ops_migrations
 from core.campaign_ops.models import (
     CampaignOpsUser,
@@ -29,6 +37,7 @@ from core.campaign_ops.permissions import (
 )
 from core.campaign_ops.seed_data import get_seed_users
 from core.campaign_ops.service import CampaignOpsService
+from core.campaign_ops.repository import CampaignOpsRepository
 
 
 class FakeCursor:
@@ -57,6 +66,9 @@ class FakeCursor:
 
     def fetchall(self) -> list[dict[str, str]]:
         return self.rows
+
+    def fetchone(self) -> dict[str, str] | None:
+        return self.rows[0] if self.rows else None
 
 
 class FakeTransaction:
@@ -91,6 +103,25 @@ class FakeConnection:
 
     def close(self) -> None:
         self.closed = True
+
+
+class MissingTableCursor:
+    def __enter__(self) -> "MissingTableCursor":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute(self, _query: str, _params: tuple[str, ...] | None = None) -> None:
+        raise RuntimeError("undefined table")
+
+
+class MissingTableConnection:
+    def cursor(self) -> MissingTableCursor:
+        return MissingTableCursor()
+
+    def close(self) -> None:
+        return None
 
 
 class FakeRepository:
@@ -144,6 +175,71 @@ class CampaignOpsFoundationTests(unittest.TestCase):
                 clear=True,
             ):
                 self.assertIsNone(get_campaign_ops_database_url())
+
+    def test_reachable_database_missing_users_table_is_uninitialized(self) -> None:
+        fake_connection = FakeConnection()
+        with patch("core.campaign_ops.db.get_campaign_ops_database_url", return_value="postgresql://ops"):
+            with patch("core.campaign_ops.db.psycopg", object()):
+                with patch("core.campaign_ops.db.dict_row", object()):
+                    with patch("core.campaign_ops.db.connect_to_campaign_ops_database", return_value=fake_connection):
+                        with patch(
+                            "core.campaign_ops.db.table_exists",
+                            side_effect=lambda _conn, table_name: table_name == "schema_migrations",
+                        ):
+                            status = get_campaign_ops_setup_status()
+
+        self.assertEqual(status.state, "uninitialized")
+        self.assertTrue(status.connection_succeeded)
+        self.assertFalse(status.schema_initialized)
+
+    def test_initialized_status_requires_metadata_tables(self) -> None:
+        fake_connection = FakeConnection()
+        with patch("core.campaign_ops.db.get_campaign_ops_database_url", return_value="postgresql://ops"):
+            with patch("core.campaign_ops.db.psycopg", object()):
+                with patch("core.campaign_ops.db.dict_row", object()):
+                    with patch("core.campaign_ops.db.connect_to_campaign_ops_database", return_value=fake_connection):
+                        with patch("core.campaign_ops.db.table_exists", return_value=True):
+                            status = get_campaign_ops_setup_status()
+
+        self.assertEqual(status.state, "initialized")
+        self.assertTrue(status.schema_initialized)
+
+    def test_repository_converts_undefined_table_to_setup_error(self) -> None:
+        repository = CampaignOpsRepository(connection=MissingTableConnection())
+        with patch("core.campaign_ops.repository.is_undefined_table_error", return_value=True):
+            with self.assertRaises(CampaignOpsSetupRequiredError):
+                repository.get_user_by_display_name("Bailey")
+
+    def test_temporary_setup_admin_is_bailey_only(self) -> None:
+        self.assertTrue(viewer_can_initialize_in_setup("Bailey"))
+        self.assertFalse(viewer_can_initialize_in_setup("T"))
+        self.assertFalse(viewer_can_initialize_in_setup("L"))
+
+    def test_uninitialized_status_prevents_viewer_repository_lookup(self) -> None:
+        status = CampaignOpsSetupStatus(
+            state="uninitialized",
+            database_url_detected=True,
+            driver_available=True,
+            connection_succeeded=True,
+            schema_initialized=False,
+            message="Not initialized.",
+        )
+        with patch("app.pages.campaigns.render_header"):
+            with patch("app.pages.campaigns.hide_default_streamlit_sidebar_nav"):
+                with patch("app.pages.campaigns.clear_legacy_workflow_session_state"):
+                    with patch("app.pages.campaigns.render_initialization_message"):
+                        with patch("app.pages.campaigns.render_temporary_viewer_selector", return_value=("Bailey", "Cross-Team Dashboard")):
+                            with patch("app.pages.campaigns.get_campaign_ops_setup_status", return_value=status):
+                                with patch("app.pages.campaigns.render_setup_state", side_effect=StopIteration):
+                                    with patch("app.pages.campaigns.resolve_viewer_user") as resolve_viewer:
+                                        with patch("app.pages.campaigns.st.set_page_config"):
+                                            with patch("app.pages.campaigns.st.divider"):
+                                                with self.assertRaises(StopIteration):
+                                                    __import__(
+                                                        "app.pages.campaigns",
+                                                        fromlist=["main"],
+                                                    ).main()
+        resolve_viewer.assert_not_called()
 
     def test_permissions_by_role(self) -> None:
         admin = CampaignOpsUser(id="u1", display_name="Bailey", role=UserRole.ADMINISTRATOR.value)

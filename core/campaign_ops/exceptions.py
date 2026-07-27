@@ -9,6 +9,10 @@ class CampaignOpsDatabaseError(CampaignOpsError):
     """Raised when Campaign Operations persistence fails."""
 
 
+class CampaignOpsSetupRequiredError(CampaignOpsDatabaseError):
+    """Raised when Campaign Operations schema has not been initialized."""
+
+
 class CampaignOpsValidationError(CampaignOpsError):
     """Raised when Campaign Operations input is invalid."""
 

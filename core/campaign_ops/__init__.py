@@ -15,6 +15,7 @@ from core.campaign_ops.exceptions import (
     CampaignOpsError,
     CampaignOpsNotFoundError,
     CampaignOpsPermissionError,
+    CampaignOpsSetupRequiredError,
     CampaignOpsValidationError,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "CampaignOpsError",
     "CampaignOpsNotFoundError",
     "CampaignOpsPermissionError",
+    "CampaignOpsSetupRequiredError",
     "CampaignOpsValidationError",
     "CrossStage",
     "ProgramStatus",

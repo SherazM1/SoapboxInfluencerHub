@@ -6,6 +6,7 @@ from typing import Any
 
 from core.campaign_ops.db import (
     CAMPAIGN_OPS_DATABASE_ENV_VAR,
+    campaign_ops_schema_is_initialized,
     connect_to_campaign_ops_database,
     get_campaign_ops_database_url,
     psycopg,
@@ -159,8 +160,42 @@ def seed_campaign_ops_users() -> SeedResult:
         connection.close()
 
 
+def verify_campaign_ops_initialization() -> None:
+    """Verify required schema and seeded users exist after initialization."""
+    connection = connect_to_database()
+    try:
+        if not campaign_ops_schema_is_initialized(connection):
+            raise CampaignOpsDatabaseError("Campaign Operations schema verification failed.")
+        expected_names = {user.display_name for user in get_seed_users()}
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select display_name
+                from campaign_ops_users
+                where display_name = any(%s) and is_active = true
+                """,
+                (list(expected_names),),
+            )
+            present_names = {str(row["display_name"]) for row in cursor.fetchall()}
+        missing_names = sorted(expected_names - present_names)
+        if missing_names:
+            raise CampaignOpsDatabaseError(
+                "Campaign Operations seed verification failed for: "
+                + ", ".join(missing_names)
+            )
+    except CampaignOpsDatabaseError:
+        raise
+    except Exception as exc:
+        raise CampaignOpsDatabaseError(
+            "Campaign Operations initialization verification failed."
+        ) from exc
+    finally:
+        connection.close()
+
+
 def initialize_campaign_ops_database() -> CampaignOpsInitializationResult:
     """Run migrations and seed required Campaign Operations users."""
     migration_result = run_campaign_ops_migrations()
     seed_result = seed_campaign_ops_users()
+    verify_campaign_ops_initialization()
     return CampaignOpsInitializationResult(migrations=migration_result, seed=seed_result)
