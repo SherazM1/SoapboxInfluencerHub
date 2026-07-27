@@ -156,7 +156,7 @@ def render_initialization_control(
             st.session_state["campaign_ops_initialization_message"] = {
                 "applied": ", ".join(applied),
                 "skipped": ", ".join(skipped),
-                "seeded": ", ".join(result.seed.seeded_users),
+                "verified": ", ".join(result.seed.verified_users),
             }
             st.session_state.pop("campaign_ops_viewer_id", None)
             st.rerun()
@@ -190,7 +190,7 @@ def render_initialization_message() -> None:
     st.success("Campaign Operations database initialization completed.")
     st.markdown(f"- Applied migrations: {message['applied']}")
     st.markdown(f"- Already applied migrations: {message['skipped']}")
-    st.markdown(f"- Seeded users: {message['seeded']}")
+    st.markdown(f"- Verified users: {message['verified']}")
 
 
 def set_active_section(section: str) -> None:

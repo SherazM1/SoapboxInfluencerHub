@@ -18,10 +18,17 @@ from core.campaign_ops.enums import (
     WorkstreamType,
 )
 from core.campaign_ops.exceptions import (
+    CampaignOpsDatabaseError,
     CampaignOpsSetupRequiredError,
     CampaignOpsValidationError,
 )
-from core.campaign_ops.migrations import get_migration_names, run_campaign_ops_migrations
+from core.campaign_ops.migrations import (
+    MigrationResult,
+    get_migration_names,
+    initialize_campaign_ops_database,
+    run_campaign_ops_migrations,
+    verify_campaign_ops_seed_users,
+)
 from core.campaign_ops.models import (
     CampaignOpsUser,
     Program,
@@ -53,8 +60,18 @@ class FakeCursor:
 
     def execute(self, query: str, params: tuple[str, ...] | None = None) -> None:
         normalized = " ".join(query.lower().split())
+        if "raise failure" in normalized:
+            raise RuntimeError("migration failed")
         if normalized.startswith("select version from schema_migrations"):
             self.rows = [{"version": version} for version in self.connection.applied_versions]
+            return
+        if normalized.startswith("select display_name, role from campaign_ops_users"):
+            requested = set(params[0]) if params else set()
+            self.rows = [
+                {"display_name": user["display_name"], "role": user["role"]}
+                for user in self.connection.users
+                if user["display_name"] in requested and user.get("is_active", True)
+            ]
             return
         if normalized.startswith("insert into schema_migrations") and params:
             self.connection.applied_versions.add(params[0])
@@ -91,6 +108,11 @@ class FakeConnection:
         self.commit_count = 0
         self.closed = False
         self.transaction_count = 0
+        self.users: list[dict[str, str | bool]] = [
+            {"display_name": "Bailey", "role": "administrator", "is_active": True},
+            {"display_name": "T", "role": "team_member", "is_active": True},
+            {"display_name": "L", "role": "team_member", "is_active": True},
+        ]
 
     def cursor(self) -> FakeCursor:
         return FakeCursor(self)
@@ -153,6 +175,17 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual([user.email for user in users], [None, None, None])
         self.assertEqual([user.role.value for user in users], ["administrator", "team_member", "team_member"])
         self.assertEqual(len({user.id for user in users}), 3)
+
+    def test_seed_sql_uses_authoritative_enum_values_and_display_names(self) -> None:
+        seed_sql = Path("db/migrations/002_campaign_ops_seed_users.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("'Bailey'", seed_sql)
+        self.assertIn("'T'", seed_sql)
+        self.assertIn("'L'", seed_sql)
+        self.assertIn(f"'{UserRole.ADMINISTRATOR.value}'", seed_sql)
+        self.assertIn(f"'{UserRole.TEAM_MEMBER.value}'", seed_sql)
+        self.assertIn("lower(existing.display_name) = lower(seed_users.display_name)", seed_sql)
 
     def test_campaign_ops_database_url_is_isolated_from_database_url(self) -> None:
         with patch("core.campaign_ops.db.load_local_env", return_value=True):
@@ -299,6 +332,86 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual(first.applied_migrations, ["001_first.sql", "002_second.sql"])
         self.assertEqual(second.skipped_migrations, ["001_first.sql", "002_second.sql"])
         self.assertEqual(fake_connection.transaction_count, 2)
+        self.assertGreaterEqual(fake_connection.commit_count, 2)
+
+    def test_migration_001_applied_with_002_pending_retries_only_002(self) -> None:
+        fake_connection = FakeConnection()
+        fake_connection.applied_versions.add("001_first.sql")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "001_first.sql").write_text("select 1;", encoding="utf-8")
+            (root / "002_second.sql").write_text("select 2;", encoding="utf-8")
+
+            with patch(
+                "core.campaign_ops.migrations.connect_to_database",
+                return_value=fake_connection,
+            ):
+                result = run_campaign_ops_migrations(root)
+
+        self.assertEqual(result.skipped_migrations, ["001_first.sql"])
+        self.assertEqual(result.applied_migrations, ["002_second.sql"])
+
+    def test_failed_migration_is_not_recorded_and_remains_retryable(self) -> None:
+        fake_connection = FakeConnection()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "001_bad.sql").write_text("raise failure;", encoding="utf-8")
+
+            with patch(
+                "core.campaign_ops.migrations.connect_to_database",
+                return_value=fake_connection,
+            ):
+                with patch("core.campaign_ops.migrations.LOGGER.exception"):
+                    with self.assertRaises(CampaignOpsDatabaseError):
+                        run_campaign_ops_migrations(root)
+
+        self.assertNotIn("001_bad.sql", fake_connection.applied_versions)
+
+    def test_seed_verification_succeeds_without_writing_duplicates(self) -> None:
+        fake_connection = FakeConnection()
+        with patch(
+            "core.campaign_ops.migrations.connect_to_database",
+            return_value=fake_connection,
+        ):
+            first = verify_campaign_ops_seed_users()
+            second = verify_campaign_ops_seed_users()
+
+        self.assertEqual(first.verified_users, ["Bailey", "T", "L"])
+        self.assertEqual(second.verified_users, ["Bailey", "T", "L"])
+        self.assertEqual(len(fake_connection.users), 3)
+
+    def test_seed_verification_failure_is_wrapped_safely(self) -> None:
+        fake_connection = FakeConnection()
+        fake_connection.users = [
+            {"display_name": "Bailey", "role": "administrator", "is_active": True},
+        ]
+        with patch(
+            "core.campaign_ops.migrations.connect_to_database",
+            return_value=fake_connection,
+        ):
+            with patch("core.campaign_ops.migrations.LOGGER.exception"):
+                with self.assertRaisesRegex(
+                    CampaignOpsDatabaseError,
+                    "Campaign Operations user seed verification failed.",
+                ):
+                    verify_campaign_ops_seed_users()
+
+    def test_initialization_result_reports_applied_skipped_and_verified_users(self) -> None:
+        with patch(
+            "core.campaign_ops.migrations.run_campaign_ops_migrations",
+            return_value=MigrationResult(["001.sql"], ["002.sql"]),
+        ):
+            with patch("core.campaign_ops.migrations.verify_campaign_ops_initialization"):
+                with patch(
+                    "core.campaign_ops.migrations.verify_campaign_ops_seed_users"
+                ) as verify_seed:
+                    verify_seed.return_value.verified_users = ["Bailey", "T", "L"]
+                    verify_seed.return_value.seeded_users = ["Bailey", "T", "L"]
+                    result = initialize_campaign_ops_database()
+
+        self.assertEqual(result.migrations.applied_migrations, ["001.sql"])
+        self.assertEqual(result.migrations.skipped_migrations, ["002.sql"])
+        self.assertEqual(result.seed.verified_users, ["Bailey", "T", "L"])
 
     def test_service_create_program_appends_activity(self) -> None:
         repository = FakeRepository()

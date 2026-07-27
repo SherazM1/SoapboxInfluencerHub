@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from core.campaign_ops.exceptions import CampaignOpsDatabaseError
 from core.campaign_ops.seed_data import get_seed_users
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +32,12 @@ class MigrationResult:
 class SeedResult:
     """Summary of Campaign Operations seed execution."""
 
-    seeded_users: list[str]
+    verified_users: list[str]
+
+    @property
+    def seeded_users(self) -> list[str]:
+        """Backward-compatible display name for verified seeded users."""
+        return self.verified_users
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +58,26 @@ def list_migration_files(migrations_dir: Path = MIGRATIONS_DIR) -> list[Path]:
 def get_migration_names(migrations_dir: Path = MIGRATIONS_DIR) -> list[str]:
     """Return ordered Campaign Operations migration filenames."""
     return [path.name for path in list_migration_files(migrations_dir)]
+
+
+def log_safe_database_error(
+    stage: str,
+    exc: BaseException,
+    migration_name: str | None = None,
+) -> None:
+    """Log safe migration diagnostics without credentials."""
+    diagnostic = getattr(exc, "diag", None)
+    LOGGER.exception(
+        "Campaign Operations initialization failed",
+        extra={
+            "stage": stage,
+            "migration": migration_name,
+            "exception_type": type(exc).__name__,
+            "sqlstate": getattr(exc, "sqlstate", None),
+            "constraint_name": getattr(diagnostic, "constraint_name", None),
+            "safe_message": str(exc),
+        },
+    )
 
 
 def get_required_database_url() -> str:
@@ -113,6 +140,7 @@ def run_campaign_ops_migrations(
         ensure_schema_migrations_table(connection)
         connection.commit()
         completed = fetch_applied_migrations(connection)
+        connection.commit()
         for migration_file in migration_files:
             migration_name = migration_file.name
             if migration_name in completed:
@@ -125,6 +153,7 @@ def run_campaign_ops_migrations(
                     record_migration(connection, migration_name)
                 applied.append(migration_name)
             except Exception as exc:
+                log_safe_database_error("migration", exc, migration_name)
                 raise CampaignOpsDatabaseError(
                     f"Campaign Operations migration failed: {migration_name}"
                 ) from exc
@@ -134,28 +163,48 @@ def run_campaign_ops_migrations(
 
 
 def seed_campaign_ops_users() -> SeedResult:
-    """Seed initial Campaign Operations users idempotently."""
+    """Verify SQL migrations seeded required Campaign Operations users."""
+    return verify_campaign_ops_seed_users()
+
+
+def verify_campaign_ops_seed_users() -> SeedResult:
+    """Verify required Campaign Operations users exist with exact role values."""
     connection = connect_to_database()
     users = get_seed_users()
     try:
-        with connection.transaction():
-            with connection.cursor() as cursor:
-                for user in users:
-                    cursor.execute(
-                        """
-                        insert into campaign_ops_users (id, display_name, email, role, is_active)
-                        values (%s, %s, %s, %s, true)
-                        on conflict (id) do update set
-                            display_name = excluded.display_name,
-                            email = excluded.email,
-                            role = excluded.role,
-                            is_active = excluded.is_active
-                        """,
-                        (user.id, user.display_name, user.email, user.role.value),
-                    )
-        return SeedResult(seeded_users=[user.display_name for user in users])
+        expected = {user.display_name: user.role.value for user in users}
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select display_name, role
+                from campaign_ops_users
+                where display_name = any(%s) and is_active = true
+                order by display_name
+                """,
+                (list(expected),),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+        present = {str(row["display_name"]): str(row["role"]) for row in rows}
+        missing = sorted(set(expected) - set(present))
+        wrong_roles = sorted(
+            display_name
+            for display_name, role in present.items()
+            if expected.get(display_name) != role
+        )
+        if missing or wrong_roles:
+            details = []
+            if missing:
+                details.append("missing users: " + ", ".join(missing))
+            if wrong_roles:
+                details.append("incorrect roles: " + ", ".join(wrong_roles))
+            raise CampaignOpsDatabaseError("; ".join(details))
+        return SeedResult(verified_users=[user.display_name for user in users])
+    except CampaignOpsDatabaseError as exc:
+        log_safe_database_error("seed_verification", exc)
+        raise CampaignOpsDatabaseError("Campaign Operations user seed verification failed.") from exc
     except Exception as exc:
-        raise CampaignOpsDatabaseError("Campaign Operations user seeding failed.") from exc
+        log_safe_database_error("seed_verification", exc)
+        raise CampaignOpsDatabaseError("Campaign Operations user seed verification failed.") from exc
     finally:
         connection.close()
 
@@ -196,6 +245,6 @@ def verify_campaign_ops_initialization() -> None:
 def initialize_campaign_ops_database() -> CampaignOpsInitializationResult:
     """Run migrations and seed required Campaign Operations users."""
     migration_result = run_campaign_ops_migrations()
-    seed_result = seed_campaign_ops_users()
+    seed_result = verify_campaign_ops_seed_users()
     verify_campaign_ops_initialization()
     return CampaignOpsInitializationResult(migrations=migration_result, seed=seed_result)
