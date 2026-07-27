@@ -270,3 +270,36 @@ class ActivityEvent:
     def __post_init__(self) -> None:
         self.event_type = require_text(self.event_type, "event_type")
         self.entity_type = require_text(self.entity_type, "entity_type")
+
+
+@dataclass(slots=True)
+class ProgramPortfolioRow:
+    id: str
+    program_name: str
+    client_name: str | None
+    primary_workstream_type: str | None
+    workstream_types: list[str] = field(default_factory=list)
+    status: str = ProgramStatus.DRAFT.value
+    cross_stage: str = CrossStage.DRAFT.value
+    risk_level: str = RiskLevel.UNRATED.value
+    priority: str | None = None
+    primary_owner_user_id: str | None = None
+    primary_owner_name: str | None = None
+    assigned_user_ids: list[str] = field(default_factory=list)
+    assigned_user_names: list[str] = field(default_factory=list)
+    start_date: date | None = None
+    target_end_date: date | None = None
+    updated_at: datetime | None = None
+    is_active: bool = True
+    assignment_role: str | None = None
+    assigned_workstream_type: str | None = None
+
+
+@dataclass(slots=True)
+class ProgramWorkspaceSummary:
+    program: Program
+    client: Client | None
+    workstreams: list[Workstream]
+    assignments: list[ProgramAssignment]
+    users: list[CampaignOpsUser]
+    activity: list[ActivityEvent]

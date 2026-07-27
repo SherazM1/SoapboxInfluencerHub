@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import Any
 
 import streamlit as st
 
@@ -11,207 +9,82 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.campaign_ops.components import (
+    format_initialization_result,
+    render_database_setup,
+    render_initialization_message,
+    render_placeholder,
+    render_role_caption,
+    render_section_navigation,
+)
+from app.campaign_ops.program_forms import render_new_program_form
+from app.campaign_ops.program_list import render_all_programs, render_my_programs
+from app.campaign_ops.program_workspace import render_program_workspace
+from app.campaign_ops.state import (
+    VIEWER_OPTIONS,
+    get_default_section,
+    get_selected_program_id,
+    get_sections_for_user,
+    set_section,
+    update_viewer_state,
+)
 from app.navigation import (
     clear_legacy_workflow_session_state,
     hide_default_streamlit_sidebar_nav,
 )
-from core.campaign_ops.enums import UserRole
-from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.db import CampaignOpsSetupStatus, get_campaign_ops_setup_status
+from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.migrations import initialize_campaign_ops_database
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.permissions import can_access_admin
 from core.campaign_ops.repository import CampaignOpsRepository
+from core.campaign_ops.service import CampaignOpsService
 
-VIEWER_OPTIONS = ["Bailey", "T", "L"]
-BAILEY_SECTIONS = [
-    "Cross-Team Dashboard",
-    "All Programs",
-    "Influencer",
-    "Retail Media",
-    "eCommerce / Content",
-    "Requests",
-    "Administration",
-]
-TEAM_MEMBER_SECTIONS = [
-    "My Work",
-    "My Programs",
-    "Influencer",
-    "Retail Media",
-    "eCommerce / Content",
-    "Requests",
-]
-PROGRAM_WORKSPACES = [
-    "Influencer Programs",
-    "Retail Media Programs",
-    "eCommerce / Content Programs",
-]
 ROLE_LABELS = {
-    UserRole.ADMINISTRATOR.value: "Administrator",
-    UserRole.TEAM_MEMBER.value: "Team Member",
-    UserRole.VIEWER.value: "Viewer",
+    "administrator": "Administrator",
+    "team_member": "Team Member",
+    "viewer": "Viewer",
 }
 
 
-@dataclass(frozen=True, slots=True)
-class InitializationDisplaySummary:
-    """Safe Streamlit-facing summary of a Campaign Operations initialization run."""
-
-    initialized_status: str
-    applied_migrations: list[str]
-    skipped_migrations: list[str]
-    seeded_users: list[str]
-    verified_users: list[str]
-
-
-def read_result_field(source: Any, field_name: str) -> Any:
-    """Read a field from a result object or older dict-shaped session value."""
-    if source is None:
-        return None
-    if isinstance(source, dict):
-        return source.get(field_name)
-    return getattr(source, field_name, None)
-
-
-def normalize_summary_list(value: Any) -> list[str]:
-    """Normalize optional summary fields to a list of display strings."""
-    if value is None:
-        return []
-    if isinstance(value, str):
-        cleaned = value.strip()
-        return [cleaned] if cleaned else []
-    if isinstance(value, (list, tuple, set)):
-        return [str(item) for item in value if str(item).strip()]
-    return [str(value)]
-
-
-def format_initialization_result(
-    result: Any,
-    setup_status: CampaignOpsSetupStatus | None = None,
-) -> InitializationDisplaySummary:
-    """Convert initialization result variants into a safe display summary."""
-    migrations = read_result_field(result, "migrations")
-    seed = read_result_field(result, "seed")
-
-    applied = normalize_summary_list(
-        read_result_field(migrations, "applied_migrations")
-        or read_result_field(result, "applied_migrations")
-        or read_result_field(result, "applied")
-    )
-    skipped = normalize_summary_list(
-        read_result_field(migrations, "skipped_migrations")
-        or read_result_field(result, "skipped_migrations")
-        or read_result_field(result, "skipped")
-        or read_result_field(result, "already_applied_migrations")
-    )
-    verified_source = (
-        read_result_field(seed, "verified_users")
-        or read_result_field(result, "verified_users")
-        or read_result_field(result, "verified")
-    )
-    seeded = normalize_summary_list(
-        read_result_field(result, "seeded_users")
-        or read_result_field(result, "seeded")
-        or (read_result_field(seed, "seeded_users") if not verified_source else None)
-    )
-    verified = normalize_summary_list(verified_source)
-    status = (
-        read_result_field(result, "initialized_status")
-        or read_result_field(result, "status")
-        or read_result_field(result, "message")
-        or (setup_status.message if setup_status is not None else None)
-        or "Campaign Operations database is initialized."
-    )
-
-    return InitializationDisplaySummary(
-        initialized_status=str(status),
-        applied_migrations=applied,
-        skipped_migrations=skipped,
-        seeded_users=seeded,
-        verified_users=verified,
-    )
-
-
-def render_summary_list(label: str, values: list[str], empty_text: str) -> None:
-    """Render a normalized initialization summary list."""
-    st.markdown(f"**{label}:**")
-    if values:
-        for value in values:
-            st.markdown(f"- {value}")
-        return
-    st.markdown(f"- {empty_text}")
-
-
 def render_header() -> None:
-    """Render module workspace header and orientation."""
     st.title("Campaign Operations")
     st.markdown(
-        "Manage programs, workstreams, team assignments, deadlines, resources, and "
+        "Manage persisted programs, workstreams, team assignments, requests, and "
         "cross-team progress from one workspace."
     )
 
 
-def get_viewer_role(viewer: str, user: CampaignOpsUser | None = None) -> str:
-    """Return temporary role label for the selected viewer."""
-    if user is not None:
-        return ROLE_LABELS.get(user.role, user.role)
-    return "Administrator" if viewer == "Bailey" else "Team Member"
-
-
-def get_sections_for_viewer(viewer: str) -> list[str]:
-    """Return shell sections available to a temporary viewer."""
-    return BAILEY_SECTIONS if viewer == "Bailey" else TEAM_MEMBER_SECTIONS
-
-
-def get_default_section(viewer: str) -> str:
-    """Return the default landing section for a temporary viewer."""
-    return "Cross-Team Dashboard" if viewer == "Bailey" else "My Work"
-
-
 def resolve_viewer_user(viewer: str) -> tuple[CampaignOpsUser | None, str | None]:
-    """Resolve a temporary viewer against seeded Campaign Operations users."""
     try:
         return CampaignOpsRepository().get_user_by_display_name(viewer), None
     except CampaignOpsError as exc:
         return None, str(exc)
 
 
-def render_temporary_viewer_selector() -> tuple[str, str]:
-    """Render temporary viewer selector without database lookups."""
-    previous_viewer = st.session_state.get("campaign_ops_previous_viewer")
-    viewer = st.selectbox("Viewing as", VIEWER_OPTIONS, key="campaign_ops_viewer")
-    sections = get_sections_for_viewer(viewer)
-    default_section = get_default_section(viewer)
-
-    if (
-        previous_viewer != viewer
-        or st.session_state.get("campaign_ops_section") not in sections
-    ):
-        st.session_state["campaign_ops_section"] = default_section
-        st.session_state["campaign_ops_previous_viewer"] = viewer
-
-    return viewer, st.session_state["campaign_ops_section"]
+def get_viewer_role(viewer: str, user: CampaignOpsUser | None = None) -> str:
+    if user is not None:
+        return ROLE_LABELS.get(user.role, user.role)
+    return "Administrator" if viewer == "Bailey" else "Team Member"
 
 
 def resolve_initialized_viewer(viewer: str) -> CampaignOpsUser | None:
-    """Resolve a viewer only after Campaign Operations schema is initialized."""
     user, setup_error = resolve_viewer_user(viewer)
     if setup_error:
-        st.warning(
-            "Campaign Operations user lookup failed. Ask Bailey to verify database setup."
-        )
+        st.warning("Campaign Operations user lookup failed. Ask Bailey to verify database setup.")
         return None
     if user is not None:
         st.session_state["campaign_ops_viewer_id"] = user.id
     else:
         st.session_state.pop("campaign_ops_viewer_id", None)
-    st.caption(f"Role: {get_viewer_role(viewer, user)}")
+    render_role_caption(user)
     if user is None:
-        st.warning(
-            f"{viewer} is not available in Campaign Operations users yet. "
-            "Initialize the Campaign Operations database to seed internal users."
-        )
+        st.warning(f"{viewer} is not available in Campaign Operations users.")
     return user
+
+
+def viewer_can_initialize_in_setup(viewer: str) -> bool:
+    return viewer == "Bailey"
 
 
 def render_initialization_control(
@@ -219,23 +92,26 @@ def render_initialization_control(
     user: CampaignOpsUser | None,
     setup_status: CampaignOpsSetupStatus,
 ) -> None:
-    """Render Bailey-only database initialization control."""
-    fallback_admin = viewer == "Bailey" and user is None
-    if not (can_access_admin(user) or fallback_admin):
-        return
-
-    with st.expander("Database Setup", expanded=False):
-        st.caption(
-            "Runs pending Campaign Operations migrations and idempotently seeds Bailey, T, and L."
+    if user is None and viewer == "Bailey":
+        user = CampaignOpsUser(
+            id="00000000-0000-4000-8000-000000000000",
+            display_name="Bailey",
+            role="administrator",
         )
+    if not can_access_admin(user):
+        return
+    with st.expander("Database Setup", expanded=False):
+        if setup_status.is_initialized:
+            st.success("Campaign Operations database is initialized.")
+        else:
+            st.warning(setup_status.message)
         st.caption(
             "DB config: "
             f"CAMPAIGN_OPS_DATABASE_URL detected={setup_status.database_url_detected}; "
             f"connection succeeded={setup_status.connection_succeeded}; "
-            f"schema initialized={setup_status.schema_initialized}; "
-            f"status={setup_status.message}"
+            f"schema initialized={setup_status.schema_initialized}"
         )
-        if st.button("Initialize Campaign Operations Database", type="primary"):
+        if st.button("Initialize Campaign Operations Database", type="secondary"):
             try:
                 result = initialize_campaign_ops_database()
             except CampaignOpsError as exc:
@@ -243,131 +119,64 @@ def render_initialization_control(
                 st.session_state.pop("campaign_ops_initialization_result", None)
                 st.error(f"Campaign Operations database initialization failed: {exc}")
                 return
-
-            summary = format_initialization_result(result, setup_status)
             st.session_state.pop("campaign_ops_initialization_error", None)
             st.session_state.pop("campaign_ops_initialization_result", None)
-            st.session_state["campaign_ops_initialization_message"] = summary
+            st.session_state["campaign_ops_initialization_message"] = format_initialization_result(
+                result,
+                setup_status,
+            )
             st.session_state.pop("campaign_ops_viewer_id", None)
             st.rerun()
 
 
-def viewer_can_initialize_in_setup(viewer: str) -> bool:
-    """Return whether a temporary viewer can initialize before users are seeded."""
-    return viewer == "Bailey"
+def render_temporary_viewer_selector(user: CampaignOpsUser | None = None) -> str:
+    viewer = st.selectbox("Viewing as", VIEWER_OPTIONS, key="campaign_ops_viewer")
+    update_viewer_state(st.session_state, viewer, user)
+    return viewer
 
 
 def render_setup_state(viewer: str, setup_status: CampaignOpsSetupStatus) -> None:
-    """Render pre-initialization setup state without repository queries."""
     st.warning(setup_status.message)
     if not viewer_can_initialize_in_setup(viewer):
-        st.info(
-            "Campaign Operations database setup has not been completed. "
-            "Ask Bailey to initialize it."
-        )
+        st.info("Campaign Operations database setup has not been completed. Ask Bailey to initialize it.")
         st.stop()
-
     st.info("Bailey can initialize Campaign Operations database setup from this page.")
     render_initialization_control(viewer, None, setup_status)
     st.stop()
 
 
-def render_initialization_message() -> None:
-    """Render initialization result stored before setup rerun."""
-    raw_message = st.session_state.pop("campaign_ops_initialization_message", None)
-    if not raw_message:
-        return
-    summary = (
-        raw_message
-        if isinstance(raw_message, InitializationDisplaySummary)
-        else format_initialization_result(raw_message)
-    )
-    st.success(summary.initialized_status)
-    render_summary_list(
-        "Applied migrations",
-        summary.applied_migrations,
-        "None; all migrations were already applied",
-    )
-    render_summary_list(
-        "Already applied migrations",
-        summary.skipped_migrations,
-        "None",
-    )
-    if summary.seeded_users:
-        render_summary_list("Seeded users", summary.seeded_users, "None")
-    render_summary_list("Verified users", summary.verified_users, "None reported")
+def render_cross_team_intro() -> None:
+    st.subheader("Cross-Team")
+    st.info("Cross-team dashboard metrics are planned for a later implementation pass.")
+    if st.button("Open All Programs", type="primary", key="campaign_ops_open_all_programs"):
+        set_section(st.session_state, "All Programs")
+        st.rerun()
 
 
-def set_active_section(section: str) -> None:
-    """Persist selected Campaign Operations shell section."""
-    st.session_state["campaign_ops_section"] = section
-
-
-def render_section_navigation(viewer: str) -> str:
-    """Render internal Campaign Operations section navigation."""
-    sections = get_sections_for_viewer(viewer)
-    active_section = st.session_state.get("campaign_ops_section", get_default_section(viewer))
-
-    st.subheader("Workspace Areas")
-    columns = st.columns(3)
-    for index, section in enumerate(sections):
-        with columns[index % 3]:
-            button_type = "primary" if section == active_section else "secondary"
-            if st.button(section, type=button_type, use_container_width=True):
-                set_active_section(section)
-                active_section = section
-
-    return active_section
-
-
-def render_summary_cards() -> None:
-    """Render placeholder admin summary cards."""
-    st.subheader("Overview")
-    labels = ["Active Programs", "At Risk", "Overdue Tasks", "Waiting on Client"]
-    columns = st.columns(4)
-    for column, label in zip(columns, labels):
-        column.metric(label, "Not configured")
-
-
-def render_program_workspace_cards() -> None:
-    """Render future program workspace cards."""
-    st.subheader("Program Workspaces")
-    columns = st.columns(3)
-    for column, title in zip(columns, PROGRAM_WORKSPACES):
-        with column:
-            st.markdown(f"### {title}")
-            st.caption(
-                "Workspace foundation ready. Program data will be added in the next "
-                "implementation pass."
-            )
-
-
-def render_personal_notice(viewer: str) -> None:
-    """Render placeholder personal workload messaging."""
-    st.info(f"This view will show programs, tasks, and deadlines assigned to {viewer}.")
-
-
-def render_active_section(viewer: str, section: str) -> None:
-    """Render the currently selected Campaign Operations shell section."""
-    st.subheader(section)
-    if viewer == "Bailey" and section == "Cross-Team Dashboard":
-        render_summary_cards()
-        st.divider()
-        render_program_workspace_cards()
-        return
-
-    if viewer in {"T", "L"} and section == "My Work":
-        render_personal_notice(viewer)
-        return
-
-    st.info(
-        "Workspace foundation ready. Program data will be added in the next "
-        "implementation pass."
-    )
+def render_active_section(
+    section: str,
+    viewer: str,
+    user: CampaignOpsUser,
+    service: CampaignOpsService,
+    users: list[CampaignOpsUser],
+) -> None:
+    clients = service.list_active_clients()
+    if section == "Cross-Team":
+        render_cross_team_intro()
+    elif section == "All Programs":
+        render_all_programs(user, service, users, clients)
+    elif section == "My Programs":
+        render_my_programs(user, service, users, clients)
+    elif section == "New Program":
+        render_new_program_form(user, service, users, clients)
+    elif section == "My Work":
+        st.subheader("My Work")
+        st.info("Task-based My Work is planned for a later implementation pass. Use My Programs for assigned program access.")
+    else:
+        render_placeholder(section)
 
 
 def main() -> None:
-    """Render Campaign Operations module shell."""
     st.set_page_config(page_title="Campaign Operations", page_icon="??", layout="wide")
     hide_default_streamlit_sidebar_nav()
     clear_legacy_workflow_session_state()
@@ -375,17 +184,54 @@ def main() -> None:
     render_header()
     st.divider()
     render_initialization_message()
-    viewer, _ = render_temporary_viewer_selector()
+
     setup_status = get_campaign_ops_setup_status()
     if not setup_status.is_initialized:
+        viewer = render_temporary_viewer_selector(None)
         render_setup_state(viewer, setup_status)
 
+    viewer = st.selectbox("Viewing as", VIEWER_OPTIONS, key="campaign_ops_viewer")
     user = resolve_initialized_viewer(viewer)
-    render_initialization_control(viewer, user, setup_status)
+    if user is None:
+        st.stop()
+        return
+
+    update_viewer_state(st.session_state, viewer, user)
+    render_database_setup(user, setup_status)
+
+    service = CampaignOpsService()
+    try:
+        users = service.list_active_users()
+    except CampaignOpsError as exc:
+        st.error(f"Unable to load Campaign Operations users: {exc}")
+        users = [user]
+
+    selected_program_id = get_selected_program_id(st.session_state)
+    if selected_program_id:
+        render_program_workspace(user, service, selected_program_id)
+        return
+
+    sections = get_sections_for_user(user, viewer)
+    current_section = st.session_state.get(
+        "campaign_ops_section",
+        get_default_section(user, viewer),
+    )
+    if current_section not in sections and current_section != "New Program":
+        current_section = get_default_section(user, viewer)
+        set_section(st.session_state, current_section)
+    if current_section == "New Program" and not can_access_admin(user):
+        current_section = get_default_section(user, viewer)
+        set_section(st.session_state, current_section)
+
     st.divider()
-    active_section = render_section_navigation(viewer)
+    if current_section != "New Program":
+        current_section = render_section_navigation(user, viewer)
+    else:
+        if st.button("Back to All Programs", key="campaign_ops_back_from_new_program"):
+            set_section(st.session_state, "All Programs")
+            st.rerun()
     st.divider()
-    render_active_section(viewer, active_section)
+    render_active_section(current_section, viewer, user, service, users)
 
 
 if __name__ == "__main__":
