@@ -3,9 +3,15 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.pages.campaigns import viewer_can_initialize_in_setup
+from app.pages import campaigns
+from app.pages.campaigns import (
+    format_initialization_result,
+    render_initialization_control,
+    viewer_can_initialize_in_setup,
+)
 from core.campaign_ops.db import (
     CampaignOpsSetupStatus,
     get_campaign_ops_database_url,
@@ -23,7 +29,9 @@ from core.campaign_ops.exceptions import (
     CampaignOpsValidationError,
 )
 from core.campaign_ops.migrations import (
+    CampaignOpsInitializationResult,
     MigrationResult,
+    SeedResult,
     get_migration_names,
     initialize_campaign_ops_database,
     run_campaign_ops_migrations,
@@ -412,6 +420,169 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual(result.migrations.applied_migrations, ["001.sql"])
         self.assertEqual(result.migrations.skipped_migrations, ["002.sql"])
         self.assertEqual(result.seed.verified_users, ["Bailey", "T", "L"])
+
+    def test_initialization_display_summary_with_applied_migrations(self) -> None:
+        result = CampaignOpsInitializationResult(
+            migrations=MigrationResult(["001.sql"], ["002.sql"]),
+            seed=SeedResult(["Bailey", "T", "L"]),
+        )
+
+        summary = format_initialization_result(result)
+
+        self.assertEqual(summary.applied_migrations, ["001.sql"])
+        self.assertEqual(summary.skipped_migrations, ["002.sql"])
+        self.assertEqual(summary.verified_users, ["Bailey", "T", "L"])
+        self.assertEqual(
+            summary.initialized_status,
+            "Campaign Operations database is initialized.",
+        )
+
+    def test_initialization_display_summary_with_only_skipped_migrations(self) -> None:
+        result = CampaignOpsInitializationResult(
+            migrations=MigrationResult([], ["001.sql", "002.sql"]),
+            seed=SeedResult(["Bailey", "T", "L"]),
+        )
+
+        summary = format_initialization_result(result)
+
+        self.assertEqual(summary.applied_migrations, [])
+        self.assertEqual(summary.skipped_migrations, ["001.sql", "002.sql"])
+        self.assertEqual(summary.verified_users, ["Bailey", "T", "L"])
+
+    def test_initialization_display_summary_accepts_direct_seeded_users(self) -> None:
+        result = SimpleNamespace(
+            applied_migrations=["001.sql"],
+            skipped_migrations=[],
+            seeded_users=["Bailey", "T", "L"],
+            status="Campaign Operations database is initialized.",
+        )
+
+        summary = format_initialization_result(result)
+
+        self.assertEqual(summary.seeded_users, ["Bailey", "T", "L"])
+        self.assertEqual(summary.verified_users, [])
+
+    def test_initialization_display_summary_reads_verified_users_from_seed_model(self) -> None:
+        result = CampaignOpsInitializationResult(
+            migrations=MigrationResult([], []),
+            seed=SeedResult(["Bailey", "T", "L"]),
+        )
+
+        summary = format_initialization_result(result)
+
+        self.assertEqual(summary.verified_users, ["Bailey", "T", "L"])
+
+    def test_initialization_display_summary_handles_missing_optional_fields(self) -> None:
+        summary = format_initialization_result({})
+
+        self.assertEqual(summary.applied_migrations, [])
+        self.assertEqual(summary.skipped_migrations, [])
+        self.assertEqual(summary.seeded_users, [])
+        self.assertEqual(summary.verified_users, [])
+        self.assertEqual(
+            summary.initialized_status,
+            "Campaign Operations database is initialized.",
+        )
+
+    def test_initialization_success_formatting_does_not_raise_attribute_error(self) -> None:
+        old_result = SimpleNamespace(
+            migrations=SimpleNamespace(applied_migrations=[], skipped_migrations=["001.sql"]),
+            seed=SimpleNamespace(seeded_users=["Bailey", "T", "L"]),
+        )
+
+        summary = format_initialization_result(old_result)
+
+        self.assertEqual(summary.seeded_users, ["Bailey", "T", "L"])
+        self.assertEqual(summary.verified_users, [])
+
+    def test_already_initialized_database_path_loads_workspace(self) -> None:
+        status = CampaignOpsSetupStatus(
+            state="initialized",
+            database_url_detected=True,
+            driver_available=True,
+            connection_succeeded=True,
+            schema_initialized=True,
+            message="Campaign Operations database is initialized.",
+        )
+        with patch("app.pages.campaigns.render_header"):
+            with patch("app.pages.campaigns.hide_default_streamlit_sidebar_nav"):
+                with patch("app.pages.campaigns.clear_legacy_workflow_session_state"):
+                    with patch("app.pages.campaigns.render_initialization_message"):
+                        with patch("app.pages.campaigns.render_temporary_viewer_selector", return_value=("Bailey", "Cross-Team Dashboard")):
+                            with patch("app.pages.campaigns.get_campaign_ops_setup_status", return_value=status):
+                                with patch("app.pages.campaigns.render_setup_state") as render_setup:
+                                    with patch("app.pages.campaigns.resolve_initialized_viewer", return_value=CampaignOpsUser(id="u1", display_name="Bailey", role=UserRole.ADMINISTRATOR.value)) as resolve_viewer:
+                                        with patch("app.pages.campaigns.render_initialization_control"):
+                                            with patch("app.pages.campaigns.render_section_navigation", return_value="Cross-Team Dashboard"):
+                                                with patch("app.pages.campaigns.render_active_section") as render_active:
+                                                    with patch("app.pages.campaigns.st.set_page_config"):
+                                                        with patch("app.pages.campaigns.st.divider"):
+                                                            campaigns.main()
+
+        render_setup.assert_not_called()
+        resolve_viewer.assert_called_once_with("Bailey")
+        render_active.assert_called_once_with("Bailey", "Cross-Team Dashboard")
+
+    def test_initialized_seeded_users_resolve_to_expected_roles(self) -> None:
+        users = [
+            CampaignOpsUser(id="u1", display_name="Bailey", role=UserRole.ADMINISTRATOR.value),
+            CampaignOpsUser(id="u2", display_name="T", role=UserRole.TEAM_MEMBER.value),
+            CampaignOpsUser(id="u3", display_name="L", role=UserRole.TEAM_MEMBER.value),
+        ]
+
+        self.assertEqual(
+            [campaigns.get_viewer_role(user.display_name, user) for user in users],
+            ["Administrator", "Team Member", "Team Member"],
+        )
+
+    def test_successful_initialization_stores_summary_and_triggers_rerun(self) -> None:
+        status = CampaignOpsSetupStatus(
+            state="initialized",
+            database_url_detected=True,
+            driver_available=True,
+            connection_succeeded=True,
+            schema_initialized=True,
+            message="Campaign Operations database is initialized.",
+        )
+        result = CampaignOpsInitializationResult(
+            migrations=MigrationResult([], ["001.sql", "002.sql"]),
+            seed=SeedResult(["Bailey", "T", "L"]),
+        )
+        session_state: dict[str, object] = {
+            "campaign_ops_initialization_error": "old error",
+            "campaign_ops_initialization_result": "old result",
+            "campaign_ops_viewer_id": "old-user",
+        }
+
+        with patch.object(campaigns.st, "session_state", session_state):
+            with patch("app.pages.campaigns.st.expander"):
+                with patch("app.pages.campaigns.st.caption"):
+                    with patch("app.pages.campaigns.st.button", return_value=True):
+                        with patch(
+                            "app.pages.campaigns.initialize_campaign_ops_database",
+                            return_value=result,
+                        ):
+                            with patch(
+                                "app.pages.campaigns.st.rerun",
+                                side_effect=RuntimeError("rerun"),
+                            ):
+                                with self.assertRaisesRegex(RuntimeError, "rerun"):
+                                    render_initialization_control(
+                                        "Bailey",
+                                        CampaignOpsUser(
+                                            id="u1",
+                                            display_name="Bailey",
+                                            role=UserRole.ADMINISTRATOR.value,
+                                        ),
+                                        status,
+                                    )
+
+        self.assertNotIn("campaign_ops_initialization_error", session_state)
+        self.assertNotIn("campaign_ops_initialization_result", session_state)
+        self.assertNotIn("campaign_ops_viewer_id", session_state)
+        summary = session_state["campaign_ops_initialization_message"]
+        self.assertEqual(summary.verified_users, ["Bailey", "T", "L"])
+        self.assertEqual(summary.skipped_migrations, ["001.sql", "002.sql"])
 
     def test_service_create_program_appends_activity(self) -> None:
         repository = FakeRepository()

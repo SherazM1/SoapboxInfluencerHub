@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import sys
+from typing import Any
 
 import streamlit as st
 
@@ -49,6 +51,95 @@ ROLE_LABELS = {
     UserRole.TEAM_MEMBER.value: "Team Member",
     UserRole.VIEWER.value: "Viewer",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class InitializationDisplaySummary:
+    """Safe Streamlit-facing summary of a Campaign Operations initialization run."""
+
+    initialized_status: str
+    applied_migrations: list[str]
+    skipped_migrations: list[str]
+    seeded_users: list[str]
+    verified_users: list[str]
+
+
+def read_result_field(source: Any, field_name: str) -> Any:
+    """Read a field from a result object or older dict-shaped session value."""
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        return source.get(field_name)
+    return getattr(source, field_name, None)
+
+
+def normalize_summary_list(value: Any) -> list[str]:
+    """Normalize optional summary fields to a list of display strings."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [cleaned] if cleaned else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item).strip()]
+    return [str(value)]
+
+
+def format_initialization_result(
+    result: Any,
+    setup_status: CampaignOpsSetupStatus | None = None,
+) -> InitializationDisplaySummary:
+    """Convert initialization result variants into a safe display summary."""
+    migrations = read_result_field(result, "migrations")
+    seed = read_result_field(result, "seed")
+
+    applied = normalize_summary_list(
+        read_result_field(migrations, "applied_migrations")
+        or read_result_field(result, "applied_migrations")
+        or read_result_field(result, "applied")
+    )
+    skipped = normalize_summary_list(
+        read_result_field(migrations, "skipped_migrations")
+        or read_result_field(result, "skipped_migrations")
+        or read_result_field(result, "skipped")
+        or read_result_field(result, "already_applied_migrations")
+    )
+    verified_source = (
+        read_result_field(seed, "verified_users")
+        or read_result_field(result, "verified_users")
+        or read_result_field(result, "verified")
+    )
+    seeded = normalize_summary_list(
+        read_result_field(result, "seeded_users")
+        or read_result_field(result, "seeded")
+        or (read_result_field(seed, "seeded_users") if not verified_source else None)
+    )
+    verified = normalize_summary_list(verified_source)
+    status = (
+        read_result_field(result, "initialized_status")
+        or read_result_field(result, "status")
+        or read_result_field(result, "message")
+        or (setup_status.message if setup_status is not None else None)
+        or "Campaign Operations database is initialized."
+    )
+
+    return InitializationDisplaySummary(
+        initialized_status=str(status),
+        applied_migrations=applied,
+        skipped_migrations=skipped,
+        seeded_users=seeded,
+        verified_users=verified,
+    )
+
+
+def render_summary_list(label: str, values: list[str], empty_text: str) -> None:
+    """Render a normalized initialization summary list."""
+    st.markdown(f"**{label}:**")
+    if values:
+        for value in values:
+            st.markdown(f"- {value}")
+        return
+    st.markdown(f"- {empty_text}")
 
 
 def render_header() -> None:
@@ -148,16 +239,15 @@ def render_initialization_control(
             try:
                 result = initialize_campaign_ops_database()
             except CampaignOpsError as exc:
+                st.session_state.pop("campaign_ops_initialization_message", None)
+                st.session_state.pop("campaign_ops_initialization_result", None)
                 st.error(f"Campaign Operations database initialization failed: {exc}")
                 return
 
-            applied = result.migrations.applied_migrations or ["None"]
-            skipped = result.migrations.skipped_migrations or ["None"]
-            st.session_state["campaign_ops_initialization_message"] = {
-                "applied": ", ".join(applied),
-                "skipped": ", ".join(skipped),
-                "verified": ", ".join(result.seed.verified_users),
-            }
+            summary = format_initialization_result(result, setup_status)
+            st.session_state.pop("campaign_ops_initialization_error", None)
+            st.session_state.pop("campaign_ops_initialization_result", None)
+            st.session_state["campaign_ops_initialization_message"] = summary
             st.session_state.pop("campaign_ops_viewer_id", None)
             st.rerun()
 
@@ -184,13 +274,28 @@ def render_setup_state(viewer: str, setup_status: CampaignOpsSetupStatus) -> Non
 
 def render_initialization_message() -> None:
     """Render initialization result stored before setup rerun."""
-    message = st.session_state.pop("campaign_ops_initialization_message", None)
-    if not message:
+    raw_message = st.session_state.pop("campaign_ops_initialization_message", None)
+    if not raw_message:
         return
-    st.success("Campaign Operations database initialization completed.")
-    st.markdown(f"- Applied migrations: {message['applied']}")
-    st.markdown(f"- Already applied migrations: {message['skipped']}")
-    st.markdown(f"- Verified users: {message['verified']}")
+    summary = (
+        raw_message
+        if isinstance(raw_message, InitializationDisplaySummary)
+        else format_initialization_result(raw_message)
+    )
+    st.success(summary.initialized_status)
+    render_summary_list(
+        "Applied migrations",
+        summary.applied_migrations,
+        "None; all migrations were already applied",
+    )
+    render_summary_list(
+        "Already applied migrations",
+        summary.skipped_migrations,
+        "None",
+    )
+    if summary.seeded_users:
+        render_summary_list("Seeded users", summary.seeded_users, "None")
+    render_summary_list("Verified users", summary.verified_users, "None reported")
 
 
 def set_active_section(section: str) -> None:
