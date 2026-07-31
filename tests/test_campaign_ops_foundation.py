@@ -48,8 +48,14 @@ from core.campaign_ops.migrations import (
 from core.campaign_ops.models import (
     CampaignOpsUser,
     Client,
+    Milestone,
+    MilestoneListRow,
+    NoteListRow,
     Program,
     ProgramAssignment,
+    ProgramNote,
+    Resource,
+    ResourceListRow,
     Workstream,
     Task,
     TaskListRow,
@@ -194,6 +200,9 @@ class FakePrompt4ARepository:
         self.workstreams: list[Workstream] = []
         self.assignments: list[ProgramAssignment] = []
         self.tasks: list[Task] = []
+        self.milestones: list[Milestone] = []
+        self.resources: list[Resource] = []
+        self.notes: list[ProgramNote] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -355,6 +364,171 @@ class FakePrompt4ARepository:
         task.is_active = True
         task.updated_by = actor_user_id
         return task
+
+    def create_milestone(self, program_id: str, title: str, actor_user_id: str | None = None, **kwargs: object) -> Milestone:
+        milestone = Milestone(
+            id=f"ffffffff-ffff-4fff-8fff-{len(self.milestones) + 1:012d}",
+            program_id=program_id,
+            title=title,
+            status=str(kwargs.pop("status", TaskStatus.NOT_STARTED.value)),
+            created_by=actor_user_id,
+            updated_by=actor_user_id,
+            **kwargs,
+        )
+        self.milestones.append(milestone)
+        return milestone
+
+    def get_milestone(self, milestone_id: str) -> Milestone | None:
+        return next((milestone for milestone in self.milestones if milestone.id == milestone_id), None)
+
+    def update_milestone(self, milestone_id: str, actor_user_id: str | None = None, **kwargs: object) -> Milestone:
+        milestone = self.get_milestone(milestone_id)
+        if milestone is None:
+            raise CampaignOpsNotFoundError("Milestone was not found.")
+        for key, value in kwargs.items():
+            setattr(milestone, key, value)
+        milestone.updated_by = actor_user_id
+        return milestone
+
+    def deactivate_milestone(self, milestone_id: str, actor_user_id: str | None = None) -> None:
+        milestone = self.get_milestone(milestone_id)
+        if milestone is None or not milestone.is_active:
+            raise CampaignOpsNotFoundError("Milestone was not found.")
+        milestone.is_active = False
+        milestone.updated_by = actor_user_id
+
+    def reactivate_milestone(self, milestone_id: str, actor_user_id: str | None = None) -> Milestone:
+        milestone = self.get_milestone(milestone_id)
+        if milestone is None or milestone.is_active:
+            raise CampaignOpsNotFoundError("Milestone was not found.")
+        milestone.is_active = True
+        milestone.updated_by = actor_user_id
+        return milestone
+
+    def list_milestone_rows_by_program(self, program_id: str, include_inactive: bool = False) -> list[MilestoneListRow]:
+        rows: list[MilestoneListRow] = []
+        for milestone in self.milestones:
+            if milestone.program_id != program_id or (not include_inactive and not milestone.is_active):
+                continue
+            workstream = self.get_workstream(milestone.workstream_id) if milestone.workstream_id else None
+            owner = self.get_user_by_id(milestone.owner_user_id) if milestone.owner_user_id else None
+            rows.append(MilestoneListRow(
+                id=milestone.id,
+                program_id=milestone.program_id,
+                title=milestone.title,
+                status=milestone.status,
+                workstream_id=milestone.workstream_id,
+                workstream_type=workstream.workstream_type if workstream else None,
+                milestone_type=milestone.milestone_type,
+                target_date=milestone.target_date,
+                start_date=milestone.start_date,
+                end_date=milestone.end_date,
+                owner_user_id=milestone.owner_user_id,
+                owner_user_name=owner.display_name if owner else None,
+                hard_deadline=milestone.hard_deadline,
+                completed_at=milestone.completed_at,
+                is_active=milestone.is_active,
+                created_at=milestone.created_at,
+                updated_at=milestone.updated_at,
+            ))
+        return rows
+
+    def create_resource(self, program_id: str, resource_type: str, title: str, actor_user_id: str | None = None, **kwargs: object) -> Resource:
+        resource = Resource(
+            id=f"99999999-9999-4999-8999-{len(self.resources) + 1:012d}",
+            program_id=program_id,
+            resource_type=resource_type,
+            title=title,
+            created_by=actor_user_id,
+            updated_by=actor_user_id,
+            **kwargs,
+        )
+        self.resources.append(resource)
+        return resource
+
+    def get_resource(self, resource_id: str) -> Resource | None:
+        return next((resource for resource in self.resources if resource.id == resource_id), None)
+
+    def update_resource(self, resource_id: str, actor_user_id: str | None = None, **kwargs: object) -> Resource:
+        resource = self.get_resource(resource_id)
+        if resource is None:
+            raise CampaignOpsNotFoundError("Resource was not found.")
+        for key, value in kwargs.items():
+            setattr(resource, key, value)
+        resource.updated_by = actor_user_id
+        return resource
+
+    def deactivate_resource(self, resource_id: str, actor_user_id: str | None = None) -> None:
+        resource = self.get_resource(resource_id)
+        if resource is None or not resource.is_active:
+            raise CampaignOpsNotFoundError("Resource was not found.")
+        resource.is_active = False
+        resource.updated_by = actor_user_id
+
+    def reactivate_resource(self, resource_id: str, actor_user_id: str | None = None) -> Resource:
+        resource = self.get_resource(resource_id)
+        if resource is None or resource.is_active:
+            raise CampaignOpsNotFoundError("Resource was not found.")
+        resource.is_active = True
+        resource.updated_by = actor_user_id
+        return resource
+
+    def list_resource_rows_by_program(self, program_id: str, include_inactive: bool = False) -> list[ResourceListRow]:
+        rows: list[ResourceListRow] = []
+        for resource in self.resources:
+            if resource.program_id != program_id or (not include_inactive and not resource.is_active):
+                continue
+            workstream = self.get_workstream(resource.workstream_id) if resource.workstream_id else None
+            rows.append(ResourceListRow(
+                id=resource.id,
+                program_id=resource.program_id,
+                title=resource.title,
+                resource_type=resource.resource_type,
+                workstream_id=resource.workstream_id,
+                workstream_type=workstream.workstream_type if workstream else None,
+                url=resource.url,
+                notes=resource.notes,
+                is_required=resource.is_required,
+                is_active=resource.is_active,
+                created_at=resource.created_at,
+                updated_at=resource.updated_at,
+            ))
+        return rows
+
+    def append_note(self, program_id: str, note_text: str, author_user_id: str | None = None, **kwargs: object) -> ProgramNote:
+        note = ProgramNote(
+            id=f"88888888-8888-4888-8888-{len(self.notes) + 1:012d}",
+            program_id=program_id,
+            note_text=note_text,
+            author_user_id=author_user_id,
+            **kwargs,
+        )
+        self.notes.append(note)
+        return note
+
+    def list_note_rows_by_program(self, program_id: str, include_internal: bool = True, newest_first: bool = True) -> list[NoteListRow]:
+        rows: list[NoteListRow] = []
+        for note in self.notes:
+            if note.program_id != program_id or (note.is_internal and not include_internal):
+                continue
+            workstream = self.get_workstream(note.workstream_id) if note.workstream_id else None
+            task = self.get_task(note.task_id) if note.task_id else None
+            author = self.get_user_by_id(note.author_user_id) if note.author_user_id else None
+            rows.append(NoteListRow(
+                id=note.id,
+                program_id=note.program_id,
+                workstream_id=note.workstream_id,
+                workstream_type=workstream.workstream_type if workstream else None,
+                task_id=note.task_id,
+                task_title=task.title if task else None,
+                author_user_id=note.author_user_id,
+                author_display_name=author.display_name if author else None,
+                note_text=note.note_text,
+                note_type=note.note_type,
+                is_internal=note.is_internal,
+                created_at=note.created_at,
+            ))
+        return list(reversed(rows)) if newest_first else rows
 
     def _task_list_row(self, task: Task) -> TaskListRow:
         program = self.get_program(task.program_id)
@@ -1481,6 +1655,161 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual(len(grouped_ids), len(set(grouped_ids)))
         self.assertNotIn("old-completed", grouped_ids)
         self.assertNotIn("inactive", grouped_ids)
+
+    def test_prompt4d_milestone_validation_lifecycle_permissions_and_activity(self) -> None:
+        repository, service, bailey, t_user, l_user, program_id, influencer, retail = self._prompt4c_fixture()
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_milestone(bailey, program_id, " ")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_milestone(bailey, program_id, "Bad dates", start_date=date(2026, 8, 2), target_date=date(2026, 8, 1))
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_milestone(bailey, program_id, "Bad owner", owner_user_id=repository.users[3].id)
+        repository.deactivate_workstream(retail.id, actor_user_id=bailey.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_milestone(bailey, program_id, "Inactive workstream", workstream_id=retail.id)
+        repository.reactivate_workstream(retail.id, actor_user_id=bailey.id)
+
+        exact = service.create_milestone(
+            bailey,
+            program_id,
+            "TEST - Prompt 4D Exact",
+            workstream_id=influencer.id,
+            owner_user_id=t_user.id,
+            start_date=date(2026, 8, 5),
+            target_date=date(2026, 8, 5),
+            end_date=date(2026, 8, 5),
+            hard_deadline=True,
+        )
+        undated = service.create_milestone(bailey, program_id, "TEST - Prompt 4D Undated")
+        self.assertIsNone(undated.target_date)
+        event_count = len(repository.events)
+        unchanged = service.update_milestone_details(t_user, exact.id, title=exact.title)
+        self.assertEqual(unchanged.title, exact.title)
+        self.assertEqual(len(repository.events), event_count)
+
+        updated = service.update_milestone_details(t_user, exact.id, status=TaskStatus.IN_PROGRESS.value)
+        self.assertEqual(updated.status, TaskStatus.IN_PROGRESS.value)
+        completed = service.complete_milestone(t_user, exact.id)
+        self.assertEqual(completed.status, TaskStatus.COMPLETED.value)
+        self.assertIsNotNone(completed.completed_at)
+        reopened = service.reopen_milestone(t_user, exact.id)
+        self.assertEqual(reopened.status, TaskStatus.IN_PROGRESS.value)
+        self.assertIsNone(reopened.completed_at)
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.update_milestone_details(l_user, exact.id, title="No access")
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.deactivate_milestone(t_user, exact.id)
+        service.deactivate_milestone(bailey, exact.id)
+        self.assertFalse(repository.get_milestone(exact.id).is_active)
+        self.assertEqual([row.id for row in service.list_program_milestones(bailey, program_id)], [undated.id])
+        service.reactivate_milestone(bailey, exact.id)
+        rows = service.list_program_milestones(bailey, program_id)
+        self.assertEqual({row.id for row in rows}, {exact.id, undated.id})
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("milestone_created", event_types)
+        self.assertIn("milestone_reopened", event_types)
+        self.assertIn("milestone_deactivated", event_types)
+
+    def test_prompt4d_timeline_ordering_and_due_state_helpers(self) -> None:
+        from app.campaign_ops.timeline_views import milestone_due_state, sort_milestones
+
+        base = MilestoneListRow(
+            id="base",
+            program_id="program-1",
+            title="Base",
+            status=TaskStatus.IN_PROGRESS.value,
+            workstream_id=None,
+            workstream_type=None,
+            milestone_type=None,
+            target_date=None,
+            start_date=None,
+            end_date=None,
+            owner_user_id=None,
+            owner_user_name=None,
+            hard_deadline=False,
+            completed_at=None,
+            is_active=True,
+            created_at=None,
+            updated_at=None,
+        )
+        overdue = replace(base, id="overdue", title="Overdue", target_date=date(2026, 7, 30))
+        today = replace(base, id="today", title="Today", target_date=date(2026, 7, 31), hard_deadline=True)
+        start_only = replace(base, id="start", title="Start", start_date=date(2026, 8, 1))
+        undated = replace(base, id="undated", title="Undated")
+        self.assertEqual([row.id for row in sort_milestones([undated, start_only, today], "best_date")], ["today", "start", "undated"])
+        self.assertEqual(milestone_due_state(overdue, today=date(2026, 7, 31)), "Overdue")
+        self.assertEqual(milestone_due_state(today, today=date(2026, 7, 31)), "Due today")
+        self.assertEqual(milestone_due_state(replace(base, status=TaskStatus.BLOCKED.value)), "Blocked")
+        self.assertEqual(milestone_due_state(undated, today=date(2026, 7, 31)), "Undated")
+
+    def test_prompt4d_resource_validation_lifecycle_and_missing_required_indicator(self) -> None:
+        from app.campaign_ops.resource_views import sanitize_link, url_status
+
+        repository, service, bailey, t_user, _l_user, program_id, influencer, retail = self._prompt4c_fixture()
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_resource(bailey, program_id, " ", "Brief")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_resource(bailey, program_id, "Bad URL", "Brief", url="notaurl")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_resource(bailey, program_id, "Bad scheme", "Brief", url="javascript:alert(1)")
+        repository.deactivate_workstream(retail.id, actor_user_id=bailey.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_resource(bailey, program_id, "Inactive", "Brief", workstream_id=retail.id)
+        repository.reactivate_workstream(retail.id, actor_user_id=bailey.id)
+
+        missing = service.create_resource(bailey, program_id, "TEST - Prompt 4D Required", "Brief", is_required=True)
+        row = service.list_program_resources(bailey, program_id)[0]
+        self.assertEqual(row.id, missing.id)
+        self.assertEqual(url_status(row), "Missing required URL")
+        resource = service.create_resource(bailey, program_id, "TEST - Prompt 4D Link", "Live Tracker", workstream_id=influencer.id, url="https://user:pass@example.com/path")
+        self.assertEqual(sanitize_link(resource.url or ""), "https://example.com/path")
+        event_count = len(repository.events)
+        unchanged = service.update_resource_details(t_user, resource.id, title=resource.title)
+        self.assertEqual(unchanged.title, resource.title)
+        self.assertEqual(len(repository.events), event_count)
+        edited = service.update_resource_details(t_user, resource.id, notes="Updated notes", url="https://example.com/next")
+        self.assertEqual(edited.notes, "Updated notes")
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.deactivate_resource(t_user, resource.id)
+        service.deactivate_resource(bailey, resource.id)
+        self.assertFalse(repository.get_resource(resource.id).is_active)
+        service.reactivate_resource(bailey, resource.id)
+        self.assertTrue(repository.get_resource(resource.id).is_active)
+
+    def test_prompt4d_notes_append_only_visibility_scope_and_activity(self) -> None:
+        repository, service, bailey, t_user, l_user, program_id, influencer, retail = self._prompt4c_fixture()
+        task = service.create_task_record(bailey, program_id, "TEST - Prompt 4D Task", workstream_id=retail.id, assigned_user_id=l_user.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.append_program_note(bailey, program_id, " ")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.append_program_note(bailey, program_id, "Bad association", workstream_id=influencer.id, task_id=task.id)
+
+        program_note = service.append_program_note(bailey, program_id, "TEST - Prompt 4D Program note")
+        workstream_note = service.append_program_note(t_user, program_id, "TEST - Prompt 4D Workstream note", workstream_id=influencer.id)
+        task_note = service.append_program_note(l_user, program_id, "TEST - Prompt 4D Task note", workstream_id=retail.id, task_id=task.id)
+        internal = service.append_program_note(bailey, program_id, "TEST - Prompt 4D Internal note", is_internal=True)
+        self.assertEqual(program_note.author_user_id, bailey.id)
+        self.assertEqual(workstream_note.workstream_id, influencer.id)
+        self.assertEqual(task_note.task_id, task.id)
+        self.assertTrue(internal.is_internal)
+        self.assertEqual(len(repository.notes), 4)
+        notes_for_t = service.list_program_notes(t_user, program_id)
+        self.assertTrue(any(note.id == internal.id for note in notes_for_t))
+
+        other_program_id = service.create_program_with_workstreams_and_assignments(
+            actor=bailey,
+            program_name="Other Program",
+            new_client_name="Other Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            primary_owner_user_id=bailey.id,
+            workstream_types=[WorkstreamType.INFLUENCER.value],
+        )
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.append_program_note(t_user, other_program_id, "No access")
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("note_added", event_types)
+        self.assertIn("internal_note_added", event_types)
 
 
 if __name__ == "__main__":

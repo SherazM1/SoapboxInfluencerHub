@@ -13,6 +13,9 @@ from app.campaign_ops.formatting import (
     safe_text,
 )
 from app.campaign_ops.state import clear_selected_program
+from app.campaign_ops.timeline_views import render_timeline
+from app.campaign_ops.resource_views import render_resources
+from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.task_views import render_program_tasks
 from app.campaign_ops.validation import trim_or_none, validate_date_order
 from core.campaign_ops.enums import AssignmentRole, WaitingOn, WorkstreamType
@@ -50,11 +53,11 @@ def render_program_workspace(
     with tabs[2]:
         render_program_tasks(actor, service, summary)
     with tabs[3]:
-        st.info("Timeline and milestone management are planned for a later implementation pass.")
+        render_timeline(actor, service, summary)
     with tabs[4]:
-        st.info("Resource management is planned for a later implementation pass.")
+        render_resources(actor, service, summary)
     with tabs[5]:
-        st.info("Notes are planned for a later implementation pass.")
+        render_notes(actor, service, summary)
     with tabs[6]:
         render_team(summary, actor, service)
     with tabs[7]:
@@ -553,7 +556,18 @@ def render_activity(summary: ProgramWorkspaceSummary) -> None:
     users_by_id = {user.id: user.display_name for user in summary.users}
     filter_label = st.selectbox(
         "Activity filter",
-        ["All activity", "Program changes", "Workstream changes", "Task changes", "Assignment changes", "Ownership changes", "Archive activity"],
+        [
+            "All activity",
+            "Program changes",
+            "Workstream changes",
+            "Task changes",
+            "Milestone changes",
+            "Resource changes",
+            "Notes",
+            "Assignment changes",
+            "Ownership changes",
+            "Archive activity",
+        ],
         key="campaign_ops_activity_filter",
     )
     rows = [
@@ -588,6 +602,12 @@ def activity_matches_filter(event_type: str, filter_label: str) -> bool:
         return event_type.startswith("assignment_")
     if filter_label == "Task changes":
         return event_type.startswith("task_")
+    if filter_label == "Milestone changes":
+        return event_type.startswith("milestone_")
+    if filter_label == "Resource changes":
+        return event_type.startswith("resource_")
+    if filter_label == "Notes":
+        return "note" in event_type
     if filter_label == "Ownership changes":
         return "owner" in event_type or "lead" in event_type
     if filter_label == "Archive activity":

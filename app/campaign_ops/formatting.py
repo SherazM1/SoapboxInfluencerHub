@@ -8,6 +8,7 @@ from core.campaign_ops.enums import (
     CrossStage,
     ProgramStatus,
     RiskLevel,
+    TaskStatus,
     UserRole,
     WorkstreamType,
 )
@@ -56,4 +57,5 @@ WORKFLOW_LABELS = enum_label_map(WorkstreamType)
 STATUS_LABELS = enum_label_map(ProgramStatus)
 CROSS_STAGE_LABELS = enum_label_map(CrossStage)
 RISK_LABELS = enum_label_map(RiskLevel)
+TASK_STATUS_LABELS = enum_label_map(TaskStatus)
 ASSIGNMENT_ROLE_LABELS = enum_label_map(AssignmentRole)

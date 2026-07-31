@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 from core.campaign_ops.enums import (
@@ -24,12 +25,16 @@ from core.campaign_ops.migrations import connect_to_database
 from core.campaign_ops.models import (
     CampaignOpsUser,
     Client,
+    Milestone,
+    MilestoneListRow,
+    NoteListRow,
     Program,
     ProgramAssignment,
     ProgramPortfolioRow,
     ProgramWorkspaceSummary,
     ProgramNote,
     Resource,
+    ResourceListRow,
     Task,
     TaskListRow,
     Workstream,
@@ -38,11 +43,17 @@ from core.campaign_ops.models import (
 )
 from core.campaign_ops.permissions import (
     can_access_admin,
+    can_add_note,
     can_edit_program,
+    can_edit_milestone,
+    can_edit_resource,
     can_edit_task,
     can_edit_workstream,
     can_manage_assignments,
+    can_manage_milestone_state,
+    can_manage_resource_state,
     can_manage_task_state,
+    can_view_internal_notes,
     can_view_program,
 )
 from core.campaign_ops.repository import CampaignOpsRepository
@@ -52,6 +63,8 @@ WAITING_TASK_STATUSES = {
     TaskStatus.WAITING_ON_CREATOR.value,
     TaskStatus.WAITING_ON_INTERNAL_TEAM.value,
 }
+
+ALLOWED_RESOURCE_URL_SCHEMES = {"http", "https"}
 
 ALLOWED_TASK_TRANSITIONS = {
     TaskStatus.NOT_STARTED.value: {
@@ -214,6 +227,77 @@ class CampaignOpsService:
     ) -> None:
         if start_date and due_date and due_date < start_date:
             raise CampaignOpsValidationError("Due date cannot precede start date.")
+
+    def _validate_milestone_dates(
+        self,
+        start_date: date | None,
+        target_date: date | None,
+        end_date: date | None,
+    ) -> None:
+        if start_date and target_date and target_date < start_date:
+            raise CampaignOpsValidationError("Target date cannot precede start date.")
+        if start_date and end_date and end_date < start_date:
+            raise CampaignOpsValidationError("End date cannot precede start date.")
+
+    def _validate_milestone_owner(
+        self,
+        repository: CampaignOpsRepository,
+        owner_user_id: str | None,
+    ) -> None:
+        if owner_user_id:
+            self._require_active_user(repository, owner_user_id, "Owner")
+
+    def _validate_resource_url(self, url: str | None) -> str | None:
+        cleaned = url.strip() if isinstance(url, str) else None
+        if not cleaned:
+            return None
+        parsed = urlparse(cleaned)
+        if not parsed.scheme:
+            raise CampaignOpsValidationError("URL must include http:// or https://.")
+        if parsed.scheme.lower() not in ALLOWED_RESOURCE_URL_SCHEMES:
+            raise CampaignOpsValidationError("URL scheme is not allowed.")
+        if not parsed.netloc:
+            raise CampaignOpsValidationError("URL host is required.")
+        return cleaned
+
+    def _validate_resource_type(self, resource_type: str | None) -> str:
+        return require_text(resource_type, "Resource type")
+
+    def _validate_note_scope(
+        self,
+        repository: CampaignOpsRepository,
+        program_id: str,
+        workstream_id: str | None,
+        task_id: str | None,
+    ) -> None:
+        if workstream_id:
+            self._require_workstream(repository, program_id, workstream_id)
+        if task_id:
+            task = self._require_task(repository, task_id)
+            if task.program_id != program_id:
+                raise CampaignOpsValidationError("Task must belong to this program.")
+            if workstream_id and task.workstream_id and task.workstream_id != workstream_id:
+                raise CampaignOpsValidationError("Task does not belong to the selected workstream.")
+
+    def _require_milestone(
+        self,
+        repository: CampaignOpsRepository,
+        milestone_id: str,
+    ) -> Milestone:
+        milestone = repository.get_milestone(milestone_id)
+        if milestone is None:
+            raise CampaignOpsNotFoundError("Milestone was not found.")
+        return milestone
+
+    def _require_resource(
+        self,
+        repository: CampaignOpsRepository,
+        resource_id: str,
+    ) -> Resource:
+        resource = repository.get_resource(resource_id)
+        if resource is None:
+            raise CampaignOpsNotFoundError("Resource was not found.")
+        return resource
 
     def _validate_transition(self, current_status: str, new_status: str) -> None:
         current = enum_value(TaskStatus, current_status, "current_status")
@@ -1294,6 +1378,488 @@ class CampaignOpsService:
             return updated
 
         return self._transaction(operation)
+
+    def create_milestone(
+        self,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+        title: str,
+        **kwargs: Any,
+    ) -> Milestone:
+        cleaned_title = require_text(title, "Title")
+
+        def operation(repository: CampaignOpsRepository) -> Milestone:
+            program = self._require_program(repository, program_id)
+            assignments = repository.list_assignments_by_program(program_id)
+            temp = Milestone(
+                id="00000000-0000-4000-8000-000000000000",
+                program_id=program_id,
+                title=cleaned_title,
+                status=kwargs.get("status") or TaskStatus.NOT_STARTED.value,
+                owner_user_id=kwargs.get("owner_user_id"),
+                workstream_id=kwargs.get("workstream_id"),
+            )
+            if not can_edit_milestone(actor, program, temp, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to create this milestone.")
+            if not program.is_active:
+                raise CampaignOpsValidationError("Archived programs cannot have milestone changes.")
+            self._validate_task_workstream(repository, program_id, kwargs.get("workstream_id"))
+            self._validate_milestone_owner(repository, kwargs.get("owner_user_id"))
+            self._validate_milestone_dates(
+                kwargs.get("start_date"),
+                kwargs.get("target_date"),
+                kwargs.get("end_date"),
+            )
+            status = enum_value(TaskStatus, kwargs.get("status") or TaskStatus.NOT_STARTED.value, "status")
+            completed_at = datetime.now(UTC) if status == TaskStatus.COMPLETED.value else None
+            milestone = repository.create_milestone(
+                program_id=program_id,
+                title=cleaned_title,
+                actor_user_id=actor.id if actor else None,
+                workstream_id=kwargs.get("workstream_id"),
+                milestone_type=(kwargs.get("milestone_type") or "").strip() or None,
+                target_date=kwargs.get("target_date"),
+                start_date=kwargs.get("start_date"),
+                end_date=kwargs.get("end_date"),
+                status=status,
+                owner_user_id=kwargs.get("owner_user_id"),
+                hard_deadline=bool(kwargs.get("hard_deadline", False)),
+                completed_at=completed_at,
+            )
+            repository.append_event(
+                event_type="milestone_created",
+                entity_type="milestone",
+                entity_id=milestone.id,
+                program_id=program_id,
+                workstream_id=milestone.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                new_value_json={"title": milestone.title, "status": milestone.status},
+                message=f"{actor.display_name if actor else 'System'} created milestone {milestone.title}.",
+            )
+            return milestone
+
+        return self._transaction(operation)
+
+    def update_milestone_details(
+        self,
+        actor: CampaignOpsUser | None,
+        milestone_id: str,
+        **kwargs: Any,
+    ) -> Milestone:
+        def operation(repository: CampaignOpsRepository) -> Milestone:
+            before = self._require_milestone(repository, milestone_id)
+            program = self._require_program(repository, before.program_id)
+            assignments = repository.list_assignments_by_program(before.program_id)
+            if not can_edit_milestone(actor, program, before, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to edit this milestone.")
+            if not program.is_active:
+                raise CampaignOpsValidationError("Archived programs cannot have milestone changes.")
+            if "title" in kwargs:
+                kwargs["title"] = require_text(kwargs["title"], "Title")
+            if "workstream_id" in kwargs:
+                self._validate_task_workstream(repository, before.program_id, kwargs.get("workstream_id"))
+            if "owner_user_id" in kwargs:
+                self._validate_milestone_owner(repository, kwargs.get("owner_user_id"))
+                if not can_access_admin(actor) and kwargs.get("owner_user_id") != before.owner_user_id:
+                    raise CampaignOpsPermissionError("Team Members cannot reassign milestone owners.")
+            self._validate_milestone_dates(
+                kwargs.get("start_date", before.start_date),
+                kwargs.get("target_date", before.target_date),
+                kwargs.get("end_date", before.end_date),
+            )
+            if "status" in kwargs and kwargs["status"] is not None:
+                kwargs["status"] = enum_value(TaskStatus, kwargs["status"], "status")
+                kwargs["completed_at"] = (
+                    before.completed_at or datetime.now(UTC)
+                    if kwargs["status"] == TaskStatus.COMPLETED.value
+                    else None
+                )
+            editable = {
+                "title",
+                "workstream_id",
+                "milestone_type",
+                "target_date",
+                "start_date",
+                "end_date",
+                "status",
+                "owner_user_id",
+                "hard_deadline",
+                "completed_at",
+            }
+            changes = {
+                field: value
+                for field, value in kwargs.items()
+                if field in editable and getattr(before, field) != value
+            }
+            if not changes:
+                return before
+            merged = {
+                "title": before.title,
+                "workstream_id": before.workstream_id,
+                "milestone_type": before.milestone_type,
+                "target_date": before.target_date,
+                "start_date": before.start_date,
+                "end_date": before.end_date,
+                "status": before.status,
+                "owner_user_id": before.owner_user_id,
+                "hard_deadline": before.hard_deadline,
+                "completed_at": before.completed_at,
+            }
+            merged.update(changes)
+            updated = repository.update_milestone(
+                milestone_id,
+                actor_user_id=actor.id if actor else None,
+                **merged,
+            )
+            for field, value in changes.items():
+                self._append_change_activity(
+                    repository,
+                    actor,
+                    before.program_id,
+                    "milestone",
+                    milestone_id,
+                    field,
+                    getattr(before, field),
+                    value,
+                    updated.workstream_id,
+                )
+            return updated
+
+        return self._transaction(operation)
+
+    def complete_milestone(self, actor: CampaignOpsUser | None, milestone_id: str) -> Milestone:
+        return self.update_milestone_details(actor, milestone_id, status=TaskStatus.COMPLETED.value)
+
+    def reopen_milestone(
+        self,
+        actor: CampaignOpsUser | None,
+        milestone_id: str,
+        reopened_status: str = TaskStatus.IN_PROGRESS.value,
+    ) -> Milestone:
+        def operation(repository: CampaignOpsRepository) -> Milestone:
+            before = self._require_milestone(repository, milestone_id)
+            program = self._require_program(repository, before.program_id)
+            assignments = repository.list_assignments_by_program(before.program_id)
+            if not can_edit_milestone(actor, program, before, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to reopen this milestone.")
+            if before.status != TaskStatus.COMPLETED.value:
+                raise CampaignOpsValidationError("Only completed milestones can be reopened.")
+            status = enum_value(TaskStatus, reopened_status, "reopened_status")
+            if status in {TaskStatus.COMPLETED.value, TaskStatus.NOT_APPLICABLE.value}:
+                raise CampaignOpsValidationError("Reopened status must be active.")
+            updated = repository.update_milestone(
+                milestone_id,
+                actor_user_id=actor.id if actor else None,
+                title=before.title,
+                workstream_id=before.workstream_id,
+                milestone_type=before.milestone_type,
+                target_date=before.target_date,
+                start_date=before.start_date,
+                end_date=before.end_date,
+                status=status,
+                owner_user_id=before.owner_user_id,
+                hard_deadline=before.hard_deadline,
+                completed_at=None,
+            )
+            repository.append_event(
+                event_type="milestone_reopened",
+                entity_type="milestone",
+                entity_id=milestone_id,
+                program_id=before.program_id,
+                workstream_id=before.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                old_value_json={"status": before.status, "completed_at": self._activity_value(before.completed_at)},
+                new_value_json={"status": status, "completed_at": None},
+                message=f"{actor.display_name if actor else 'System'} reopened milestone {before.title}.",
+            )
+            return updated
+
+        return self._transaction(operation)
+
+    def deactivate_milestone(self, actor: CampaignOpsUser | None, milestone_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            milestone = self._require_milestone(repository, milestone_id)
+            program = self._require_program(repository, milestone.program_id)
+            assignments = repository.list_assignments_by_program(milestone.program_id)
+            if not can_manage_milestone_state(actor, program, milestone, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to deactivate this milestone.")
+            repository.deactivate_milestone(milestone_id, actor_user_id=actor.id if actor else None)
+            repository.append_event(
+                event_type="milestone_deactivated",
+                entity_type="milestone",
+                entity_id=milestone_id,
+                program_id=milestone.program_id,
+                workstream_id=milestone.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} deactivated milestone {milestone.title}.",
+            )
+
+        self._transaction(operation)
+
+    def reactivate_milestone(self, actor: CampaignOpsUser | None, milestone_id: str) -> Milestone:
+        def operation(repository: CampaignOpsRepository) -> Milestone:
+            milestone = self._require_milestone(repository, milestone_id)
+            program = self._require_program(repository, milestone.program_id)
+            assignments = repository.list_assignments_by_program(milestone.program_id)
+            if not can_manage_milestone_state(actor, program, milestone, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to reactivate this milestone.")
+            self._validate_task_workstream(repository, milestone.program_id, milestone.workstream_id)
+            updated = repository.reactivate_milestone(milestone_id, actor_user_id=actor.id if actor else None)
+            repository.append_event(
+                event_type="milestone_reactivated",
+                entity_type="milestone",
+                entity_id=milestone_id,
+                program_id=milestone.program_id,
+                workstream_id=milestone.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} reactivated milestone {milestone.title}.",
+            )
+            return updated
+
+        return self._transaction(operation)
+
+    def list_program_milestones(
+        self,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+        include_inactive: bool = False,
+    ) -> list[MilestoneListRow]:
+        repository = self.repository or CampaignOpsRepository()
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have permission to view program milestones.")
+        return repository.list_milestone_rows_by_program(program_id, include_inactive=include_inactive)
+
+    def create_resource(
+        self,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+        title: str,
+        resource_type: str,
+        **kwargs: Any,
+    ) -> Resource:
+        cleaned_title = require_text(title, "Title")
+        cleaned_type = self._validate_resource_type(resource_type)
+        cleaned_url = self._validate_resource_url(kwargs.get("url"))
+
+        def operation(repository: CampaignOpsRepository) -> Resource:
+            program = self._require_program(repository, program_id)
+            assignments = repository.list_assignments_by_program(program_id)
+            temp = Resource(
+                id="00000000-0000-4000-8000-000000000000",
+                program_id=program_id,
+                title=cleaned_title,
+                resource_type=cleaned_type,
+                workstream_id=kwargs.get("workstream_id"),
+            )
+            if not can_edit_resource(actor, program, temp, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to create this resource.")
+            if not program.is_active:
+                raise CampaignOpsValidationError("Archived programs cannot have resource changes.")
+            self._validate_task_workstream(repository, program_id, kwargs.get("workstream_id"))
+            resource = repository.create_resource(
+                program_id=program_id,
+                resource_type=cleaned_type,
+                title=cleaned_title,
+                actor_user_id=actor.id if actor else None,
+                workstream_id=kwargs.get("workstream_id"),
+                url=cleaned_url,
+                notes=(kwargs.get("notes") or "").strip() or None,
+                is_required=bool(kwargs.get("is_required", False)),
+            )
+            repository.append_event(
+                event_type="resource_created",
+                entity_type="resource",
+                entity_id=resource.id,
+                program_id=program_id,
+                workstream_id=resource.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                new_value_json={"title": resource.title, "is_required": resource.is_required},
+                message=f"{actor.display_name if actor else 'System'} added {'required ' if resource.is_required else ''}resource {resource.title}.",
+            )
+            return resource
+
+        return self._transaction(operation)
+
+    def update_resource_details(
+        self,
+        actor: CampaignOpsUser | None,
+        resource_id: str,
+        **kwargs: Any,
+    ) -> Resource:
+        def operation(repository: CampaignOpsRepository) -> Resource:
+            before = self._require_resource(repository, resource_id)
+            program = self._require_program(repository, before.program_id)
+            assignments = repository.list_assignments_by_program(before.program_id)
+            if not can_edit_resource(actor, program, before, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to edit this resource.")
+            if not program.is_active:
+                raise CampaignOpsValidationError("Archived programs cannot have resource changes.")
+            if "title" in kwargs:
+                kwargs["title"] = require_text(kwargs["title"], "Title")
+            if "resource_type" in kwargs:
+                kwargs["resource_type"] = self._validate_resource_type(kwargs["resource_type"])
+            if "workstream_id" in kwargs:
+                self._validate_task_workstream(repository, before.program_id, kwargs.get("workstream_id"))
+            if "url" in kwargs:
+                kwargs["url"] = self._validate_resource_url(kwargs.get("url"))
+            if "notes" in kwargs:
+                kwargs["notes"] = (kwargs.get("notes") or "").strip() or None
+            editable = {"title", "resource_type", "workstream_id", "url", "notes", "is_required"}
+            changes = {
+                field: value
+                for field, value in kwargs.items()
+                if field in editable and getattr(before, field) != value
+            }
+            if not changes:
+                return before
+            merged = {
+                "title": before.title,
+                "resource_type": before.resource_type,
+                "workstream_id": before.workstream_id,
+                "url": before.url,
+                "notes": before.notes,
+                "is_required": before.is_required,
+            }
+            merged.update(changes)
+            updated = repository.update_resource(
+                resource_id,
+                actor_user_id=actor.id if actor else None,
+                **merged,
+            )
+            for field, value in changes.items():
+                self._append_change_activity(
+                    repository,
+                    actor,
+                    before.program_id,
+                    "resource",
+                    resource_id,
+                    field,
+                    getattr(before, field),
+                    value,
+                    updated.workstream_id,
+                )
+            return updated
+
+        return self._transaction(operation)
+
+    def deactivate_resource(self, actor: CampaignOpsUser | None, resource_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            resource = self._require_resource(repository, resource_id)
+            program = self._require_program(repository, resource.program_id)
+            assignments = repository.list_assignments_by_program(resource.program_id)
+            if not can_manage_resource_state(actor, program, resource, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to deactivate this resource.")
+            repository.deactivate_resource(resource_id, actor_user_id=actor.id if actor else None)
+            repository.append_event(
+                event_type="resource_deactivated",
+                entity_type="resource",
+                entity_id=resource_id,
+                program_id=resource.program_id,
+                workstream_id=resource.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} deactivated resource {resource.title}.",
+            )
+
+        self._transaction(operation)
+
+    def reactivate_resource(self, actor: CampaignOpsUser | None, resource_id: str) -> Resource:
+        def operation(repository: CampaignOpsRepository) -> Resource:
+            resource = self._require_resource(repository, resource_id)
+            program = self._require_program(repository, resource.program_id)
+            assignments = repository.list_assignments_by_program(resource.program_id)
+            if not can_manage_resource_state(actor, program, resource, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to reactivate this resource.")
+            self._validate_task_workstream(repository, resource.program_id, resource.workstream_id)
+            updated = repository.reactivate_resource(resource_id, actor_user_id=actor.id if actor else None)
+            repository.append_event(
+                event_type="resource_reactivated",
+                entity_type="resource",
+                entity_id=resource_id,
+                program_id=resource.program_id,
+                workstream_id=resource.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} reactivated resource {resource.title}.",
+            )
+            return updated
+
+        return self._transaction(operation)
+
+    def list_program_resources(
+        self,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+        include_inactive: bool = False,
+    ) -> list[ResourceListRow]:
+        repository = self.repository or CampaignOpsRepository()
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have permission to view program resources.")
+        return repository.list_resource_rows_by_program(program_id, include_inactive=include_inactive)
+
+    def append_program_note(
+        self,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+        note_text: str,
+        **kwargs: Any,
+    ) -> ProgramNote:
+        cleaned_note = require_text(note_text, "Note")
+
+        def operation(repository: CampaignOpsRepository) -> ProgramNote:
+            program = self._require_program(repository, program_id)
+            assignments = repository.list_assignments_by_program(program_id)
+            if not can_add_note(actor, program, assignments):
+                raise CampaignOpsPermissionError("You do not have permission to add a note to this program.")
+            self._validate_note_scope(
+                repository,
+                program_id,
+                kwargs.get("workstream_id"),
+                kwargs.get("task_id"),
+            )
+            note = repository.append_note(
+                program_id=program_id,
+                note_text=cleaned_note,
+                author_user_id=actor.id if actor else None,
+                workstream_id=kwargs.get("workstream_id"),
+                task_id=kwargs.get("task_id"),
+                note_type=kwargs.get("note_type"),
+                is_internal=bool(kwargs.get("is_internal", False)),
+            )
+            preview = cleaned_note[:80] + ("..." if len(cleaned_note) > 80 else "")
+            repository.append_event(
+                event_type="internal_note_added" if note.is_internal else "note_added",
+                entity_type="note",
+                entity_id=note.id,
+                program_id=program_id,
+                workstream_id=note.workstream_id,
+                task_id=note.task_id,
+                actor_user_id=actor.id if actor else None,
+                new_value_json={"is_internal": note.is_internal, "preview": preview},
+                message=f"{actor.display_name if actor else 'System'} added {'an internal ' if note.is_internal else 'a '}note.",
+            )
+            return note
+
+        return self._transaction(operation)
+
+    def list_program_notes(
+        self,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+        newest_first: bool = True,
+    ) -> list[NoteListRow]:
+        repository = self.repository or CampaignOpsRepository()
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have permission to view program notes.")
+        return repository.list_note_rows_by_program(
+            program_id,
+            include_internal=can_view_internal_notes(actor, program, assignments),
+            newest_first=newest_first,
+        )
 
     def create_task_record(
         self,

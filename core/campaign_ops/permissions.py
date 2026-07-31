@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.campaign_ops.enums import AssignmentRole, UserRole
-from core.campaign_ops.models import CampaignOpsUser, Program, ProgramAssignment, Task, Workstream
+from core.campaign_ops.models import CampaignOpsUser, Milestone, Program, ProgramAssignment, Resource, Task, Workstream
 
 
 def user_role(user: CampaignOpsUser | None) -> str | None:
@@ -166,6 +166,92 @@ def can_manage_task_state(
 ) -> bool:
     """Return whether a user can deactivate or reactivate a task."""
     return is_administrator(user)
+
+
+def can_edit_milestone(
+    user: CampaignOpsUser | None,
+    program: Program,
+    milestone: Milestone,
+    assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can edit milestone fields or status."""
+    if is_administrator(user):
+        return True
+    if not is_team_member(user) or not program.is_active or not milestone.is_active:
+        return False
+    if milestone.owner_user_id == user.id:
+        return True
+    if milestone.workstream_id:
+        return user_has_assignment(
+            user,
+            assignments,
+            program_id=program.id,
+            workstream_id=milestone.workstream_id,
+        )
+    return False
+
+
+def can_manage_milestone_state(
+    user: CampaignOpsUser | None,
+    _program: Program,
+    _milestone: Milestone,
+    _assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can deactivate or reactivate a milestone."""
+    return is_administrator(user)
+
+
+def can_edit_resource(
+    user: CampaignOpsUser | None,
+    program: Program,
+    resource: Resource,
+    assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can edit a program resource."""
+    if is_administrator(user):
+        return True
+    if not is_team_member(user) or not program.is_active or not resource.is_active:
+        return False
+    if resource.workstream_id:
+        return user_has_assignment(
+            user,
+            assignments,
+            program_id=program.id,
+            workstream_id=resource.workstream_id,
+        )
+    return False
+
+
+def can_manage_resource_state(
+    user: CampaignOpsUser | None,
+    _program: Program,
+    _resource: Resource,
+    _assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can deactivate or reactivate a resource."""
+    return is_administrator(user)
+
+
+def can_add_note(
+    user: CampaignOpsUser | None,
+    program: Program,
+    assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can append a note to a program."""
+    return program.is_active and can_view_program(user, program, assignments)
+
+
+def can_view_internal_notes(
+    user: CampaignOpsUser | None,
+    program: Program,
+    assignments: list[ProgramAssignment],
+) -> bool:
+    """Return whether a user can view internal notes."""
+    if is_administrator(user):
+        return True
+    if is_team_member(user):
+        return user_has_assignment(user, assignments, program_id=program.id)
+    return False
 
 
 def can_access_admin(user: CampaignOpsUser | None) -> bool:

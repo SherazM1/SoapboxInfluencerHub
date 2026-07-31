@@ -40,6 +40,19 @@ SESSION_KEYS = {
     "campaign_ops_initialization_error",
     "campaign_ops_initialization_result",
     "campaign_ops_workspace_tab",
+    "campaign_ops_milestone_create_open",
+    "campaign_ops_milestone_edit_id",
+    "campaign_ops_milestone_filters",
+    "campaign_ops_milestone_show_inactive",
+    "campaign_ops_milestone_complete_id",
+    "campaign_ops_milestone_reopen_id",
+    "campaign_ops_resource_create_open",
+    "campaign_ops_resource_edit_id",
+    "campaign_ops_resource_filters",
+    "campaign_ops_resource_show_inactive",
+    "campaign_ops_note_create_open",
+    "campaign_ops_note_filters",
+    "campaign_ops_note_sort_order",
 }
 
 

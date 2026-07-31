@@ -191,6 +191,8 @@ class Milestone:
     end_date: date | None = None
     owner_user_id: str | None = None
     hard_deadline: bool = False
+    completed_at: datetime | None = None
+    is_active: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
     created_by: str | None = None
@@ -211,6 +213,7 @@ class Resource:
     url: str | None = None
     notes: str | None = None
     is_required: bool = False
+    is_active: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
     created_by: str | None = None
@@ -333,3 +336,56 @@ class TaskListRow:
     is_active: bool
     created_at: datetime | None
     updated_at: datetime | None
+
+
+@dataclass(slots=True)
+class MilestoneListRow:
+    id: str
+    program_id: str
+    title: str
+    status: str
+    workstream_id: str | None
+    workstream_type: str | None
+    milestone_type: str | None
+    target_date: date | None
+    start_date: date | None
+    end_date: date | None
+    owner_user_id: str | None
+    owner_user_name: str | None
+    hard_deadline: bool
+    completed_at: datetime | None
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+@dataclass(slots=True)
+class ResourceListRow:
+    id: str
+    program_id: str
+    title: str
+    resource_type: str
+    workstream_id: str | None
+    workstream_type: str | None
+    url: str | None
+    notes: str | None
+    is_required: bool
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+@dataclass(slots=True)
+class NoteListRow:
+    id: str
+    program_id: str
+    workstream_id: str | None
+    workstream_type: str | None
+    task_id: str | None
+    task_title: str | None
+    author_user_id: str | None
+    author_display_name: str | None
+    note_text: str
+    note_type: str | None
+    is_internal: bool
+    created_at: datetime | None

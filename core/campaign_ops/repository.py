@@ -28,11 +28,15 @@ from core.campaign_ops.models import (
     ActivityEvent,
     CampaignOpsUser,
     Client,
+    Milestone,
+    MilestoneListRow,
+    NoteListRow,
     Program,
     ProgramAssignment,
     ProgramPortfolioRow,
     ProgramNote,
     Resource,
+    ResourceListRow,
     Task,
     TaskListRow,
     Workstream,
@@ -1332,6 +1336,176 @@ class CampaignOpsRepository:
             Task,
         )
 
+    def create_milestone(
+        self,
+        program_id: str,
+        title: str,
+        actor_user_id: str | None = None,
+        workstream_id: str | None = None,
+        milestone_type: str | None = None,
+        target_date: Any | None = None,
+        start_date: Any | None = None,
+        end_date: Any | None = None,
+        status: str = TaskStatus.NOT_STARTED.value,
+        owner_user_id: str | None = None,
+        hard_deadline: bool = False,
+        completed_at: Any | None = None,
+    ) -> Milestone:
+        return self._write_returning(
+            """
+            insert into campaign_ops_milestones (
+                program_id, workstream_id, title, milestone_type, target_date,
+                start_date, end_date, status, owner_user_id, hard_deadline,
+                completed_at, created_by, updated_by
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                program_id,
+                workstream_id,
+                require_text(title, "title"),
+                milestone_type,
+                target_date,
+                start_date,
+                end_date,
+                enum_value(TaskStatus, status, "status"),
+                owner_user_id,
+                hard_deadline,
+                completed_at,
+                actor_user_id,
+                actor_user_id,
+            ),
+            Milestone,
+        )
+
+    def get_milestone(self, milestone_id: str) -> Milestone | None:
+        return self._fetch_one(
+            "select * from campaign_ops_milestones where id = %s",
+            (milestone_id,),
+            Milestone,
+        )
+
+    def update_milestone(
+        self,
+        milestone_id: str,
+        actor_user_id: str | None = None,
+        title: str | None = None,
+        workstream_id: str | None = None,
+        milestone_type: str | None = None,
+        target_date: Any | None = None,
+        start_date: Any | None = None,
+        end_date: Any | None = None,
+        status: str | None = None,
+        owner_user_id: str | None = None,
+        hard_deadline: bool | None = None,
+        completed_at: Any | None = None,
+    ) -> Milestone:
+        return self._write_returning(
+            """
+            update campaign_ops_milestones
+            set
+                title = coalesce(%s, title),
+                workstream_id = %s,
+                milestone_type = %s,
+                target_date = %s,
+                start_date = %s,
+                end_date = %s,
+                status = coalesce(%s, status),
+                owner_user_id = %s,
+                hard_deadline = coalesce(%s, hard_deadline),
+                completed_at = %s,
+                updated_by = %s
+            where id = %s
+            returning *
+            """,
+            (
+                require_text(title, "title") if title is not None else None,
+                workstream_id,
+                milestone_type,
+                target_date,
+                start_date,
+                end_date,
+                enum_value(TaskStatus, status, "status") if status is not None else None,
+                owner_user_id,
+                hard_deadline,
+                completed_at,
+                actor_user_id,
+                milestone_id,
+            ),
+            Milestone,
+        )
+
+    def deactivate_milestone(self, milestone_id: str, actor_user_id: str | None = None) -> None:
+        self._execute(
+            """
+            update campaign_ops_milestones
+            set is_active = false, updated_by = %s
+            where id = %s and is_active = true
+            """,
+            (actor_user_id, milestone_id),
+        )
+
+    def reactivate_milestone(self, milestone_id: str, actor_user_id: str | None = None) -> Milestone:
+        return self._write_returning(
+            """
+            update campaign_ops_milestones
+            set is_active = true, updated_by = %s
+            where id = %s and is_active = false
+            returning *
+            """,
+            (actor_user_id, milestone_id),
+            Milestone,
+        )
+
+    def _milestone_list_row_from_db(self, row: dict[str, Any]) -> MilestoneListRow:
+        normalized = normalize_row(row)
+        return MilestoneListRow(
+            id=str(normalized["id"]),
+            program_id=str(normalized["program_id"]),
+            title=str(normalized["title"]),
+            status=str(normalized["status"]),
+            workstream_id=normalize_id(normalized.get("workstream_id")),
+            workstream_type=normalized.get("workstream_type"),
+            milestone_type=normalized.get("milestone_type"),
+            target_date=normalized.get("target_date"),
+            start_date=normalized.get("start_date"),
+            end_date=normalized.get("end_date"),
+            owner_user_id=normalize_id(normalized.get("owner_user_id")),
+            owner_user_name=normalized.get("owner_user_name"),
+            hard_deadline=bool(normalized.get("hard_deadline", False)),
+            completed_at=normalized.get("completed_at"),
+            is_active=bool(normalized.get("is_active", True)),
+            created_at=normalized.get("created_at"),
+            updated_at=normalized.get("updated_at"),
+        )
+
+    def list_milestone_rows_by_program(
+        self,
+        program_id: str,
+        include_inactive: bool = False,
+    ) -> list[MilestoneListRow]:
+        clauses = ["m.program_id = %s"]
+        params: list[Any] = [program_id]
+        if not include_inactive:
+            clauses.append("m.is_active = true")
+        query = f"""
+            select
+                m.*,
+                w.workstream_type,
+                u.display_name as owner_user_name
+            from campaign_ops_milestones m
+            left join campaign_ops_workstreams w on w.id = m.workstream_id
+            left join campaign_ops_users u on u.id = m.owner_user_id
+            where {' and '.join(clauses)}
+            order by coalesce(m.target_date, m.start_date, m.end_date) asc nulls last,
+                     m.created_at asc
+        """
+        return [
+            self._milestone_list_row_from_db(row)
+            for row in self._fetch_raw_all(query, tuple(params))
+        ]
+
     def create_resource(
         self,
         program_id: str,
@@ -1370,8 +1544,26 @@ class CampaignOpsRepository:
         return self._fetch_all(
             """
             select * from campaign_ops_resources
-            where program_id = %s
+            where program_id = %s and is_active = true
             order by created_at asc
+            """,
+            (program_id,),
+            Resource,
+        )
+
+    def get_resource(self, resource_id: str) -> Resource | None:
+        return self._fetch_one(
+            "select * from campaign_ops_resources where id = %s",
+            (resource_id,),
+            Resource,
+        )
+
+    def list_all_resources_by_program(self, program_id: str) -> list[Resource]:
+        return self._fetch_all(
+            """
+            select * from campaign_ops_resources
+            where program_id = %s
+            order by is_active desc, created_at asc
             """,
             (program_id,),
             Resource,
@@ -1382,6 +1574,8 @@ class CampaignOpsRepository:
         resource_id: str,
         actor_user_id: str | None = None,
         title: str | None = None,
+        resource_type: str | None = None,
+        workstream_id: str | None = None,
         url: str | None = None,
         notes: str | None = None,
         is_required: bool | None = None,
@@ -1391,8 +1585,10 @@ class CampaignOpsRepository:
             update campaign_ops_resources
             set
                 title = coalesce(%s, title),
-                url = coalesce(%s, url),
-                notes = coalesce(%s, notes),
+                resource_type = coalesce(%s, resource_type),
+                workstream_id = %s,
+                url = %s,
+                notes = %s,
                 is_required = coalesce(%s, is_required),
                 updated_by = %s
             where id = %s
@@ -1400,6 +1596,8 @@ class CampaignOpsRepository:
             """,
             (
                 require_text(title, "title") if title is not None else None,
+                require_text(resource_type, "resource_type") if resource_type is not None else None,
+                workstream_id,
                 url,
                 notes,
                 is_required,
@@ -1408,6 +1606,66 @@ class CampaignOpsRepository:
             ),
             Resource,
         )
+
+    def deactivate_resource(self, resource_id: str, actor_user_id: str | None = None) -> None:
+        self._execute(
+            """
+            update campaign_ops_resources
+            set is_active = false, updated_by = %s
+            where id = %s and is_active = true
+            """,
+            (actor_user_id, resource_id),
+        )
+
+    def reactivate_resource(self, resource_id: str, actor_user_id: str | None = None) -> Resource:
+        return self._write_returning(
+            """
+            update campaign_ops_resources
+            set is_active = true, updated_by = %s
+            where id = %s and is_active = false
+            returning *
+            """,
+            (actor_user_id, resource_id),
+            Resource,
+        )
+
+    def _resource_list_row_from_db(self, row: dict[str, Any]) -> ResourceListRow:
+        normalized = normalize_row(row)
+        return ResourceListRow(
+            id=str(normalized["id"]),
+            program_id=str(normalized["program_id"]),
+            title=str(normalized["title"]),
+            resource_type=str(normalized["resource_type"]),
+            workstream_id=normalize_id(normalized.get("workstream_id")),
+            workstream_type=normalized.get("workstream_type"),
+            url=normalized.get("url"),
+            notes=normalized.get("notes"),
+            is_required=bool(normalized.get("is_required", False)),
+            is_active=bool(normalized.get("is_active", True)),
+            created_at=normalized.get("created_at"),
+            updated_at=normalized.get("updated_at"),
+        )
+
+    def list_resource_rows_by_program(
+        self,
+        program_id: str,
+        include_inactive: bool = False,
+    ) -> list[ResourceListRow]:
+        clauses = ["r.program_id = %s"]
+        params: list[Any] = [program_id]
+        if not include_inactive:
+            clauses.append("r.is_active = true")
+        query = f"""
+            select r.*, w.workstream_type
+            from campaign_ops_resources r
+            left join campaign_ops_workstreams w on w.id = r.workstream_id
+            where {' and '.join(clauses)}
+            order by r.updated_at desc, r.title asc
+        """
+        return [
+            self._resource_list_row_from_db(row)
+            for row in self._fetch_raw_all(query, tuple(params))
+        ]
 
     def append_note(
         self,
@@ -1450,6 +1708,52 @@ class CampaignOpsRepository:
             (program_id,),
             ProgramNote,
         )
+
+    def _note_list_row_from_db(self, row: dict[str, Any]) -> NoteListRow:
+        normalized = normalize_row(row)
+        return NoteListRow(
+            id=str(normalized["id"]),
+            program_id=str(normalized["program_id"]),
+            workstream_id=normalize_id(normalized.get("workstream_id")),
+            workstream_type=normalized.get("workstream_type"),
+            task_id=normalize_id(normalized.get("task_id")),
+            task_title=normalized.get("task_title"),
+            author_user_id=normalize_id(normalized.get("author_user_id")),
+            author_display_name=normalized.get("author_display_name"),
+            note_text=str(normalized["note_text"]),
+            note_type=normalized.get("note_type"),
+            is_internal=bool(normalized.get("is_internal", True)),
+            created_at=normalized.get("created_at"),
+        )
+
+    def list_note_rows_by_program(
+        self,
+        program_id: str,
+        include_internal: bool = True,
+        newest_first: bool = True,
+    ) -> list[NoteListRow]:
+        clauses = ["n.program_id = %s"]
+        params: list[Any] = [program_id]
+        if not include_internal:
+            clauses.append("n.is_internal = false")
+        order = "desc" if newest_first else "asc"
+        query = f"""
+            select
+                n.*,
+                w.workstream_type,
+                t.title as task_title,
+                u.display_name as author_display_name
+            from campaign_ops_notes n
+            left join campaign_ops_workstreams w on w.id = n.workstream_id
+            left join campaign_ops_tasks t on t.id = n.task_id
+            left join campaign_ops_users u on u.id = n.author_user_id
+            where {' and '.join(clauses)}
+            order by n.created_at {order}
+        """
+        return [
+            self._note_list_row_from_db(row)
+            for row in self._fetch_raw_all(query, tuple(params))
+        ]
 
     def append_event(
         self,
