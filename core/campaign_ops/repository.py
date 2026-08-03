@@ -35,6 +35,8 @@ from core.campaign_ops.models import (
     ProgramAssignment,
     ProgramPortfolioRow,
     ProgramNote,
+    ReportingRequestListRow,
+    ReportingRequestRecord,
     Resource,
     ResourceListRow,
     Task,
@@ -1754,6 +1756,234 @@ class CampaignOpsRepository:
             self._note_list_row_from_db(row)
             for row in self._fetch_raw_all(query, tuple(params))
         ]
+
+    def create_reporting_request(
+        self,
+        actor_user_id: str | None = None,
+        **kwargs: Any,
+    ) -> ReportingRequestRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_reporting_requests (
+                program_id, workstream_id, request_category, request_type, am_user_id,
+                assigned_user_id, due_date, recap_date_with_client, recap_date_text,
+                brief_url, brief_status_text, delivered, review_required,
+                review_complete, approval_required, approved, questions_requested,
+                special_requests, status, risk, waiting_on, completed_at,
+                created_by_user_id
+            )
+            values (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            returning *
+            """,
+            (
+                kwargs["program_id"],
+                kwargs.get("workstream_id"),
+                kwargs["request_category"],
+                require_text(kwargs.get("request_type"), "request_type"),
+                kwargs["am_user_id"],
+                kwargs.get("assigned_user_id"),
+                kwargs.get("due_date"),
+                kwargs.get("recap_date_with_client"),
+                kwargs.get("recap_date_text"),
+                kwargs.get("brief_url"),
+                kwargs.get("brief_status_text"),
+                bool(kwargs.get("delivered", False)),
+                bool(kwargs.get("review_required", False)),
+                bool(kwargs.get("review_complete", False)),
+                bool(kwargs.get("approval_required", False)),
+                bool(kwargs.get("approved", False)),
+                kwargs.get("questions_requested"),
+                kwargs.get("special_requests"),
+                kwargs.get("status"),
+                kwargs.get("risk"),
+                kwargs.get("waiting_on"),
+                kwargs.get("completed_at"),
+                actor_user_id,
+            ),
+            ReportingRequestRecord,
+        )
+
+    def get_reporting_request(self, request_id: str) -> ReportingRequestRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_reporting_requests where id = %s",
+            (request_id,),
+            ReportingRequestRecord,
+        )
+
+    def update_reporting_request(
+        self,
+        request_id: str,
+        actor_user_id: str | None = None,
+        **kwargs: Any,
+    ) -> ReportingRequestRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_reporting_requests
+            set
+                program_id = %s,
+                workstream_id = %s,
+                request_category = %s,
+                request_type = %s,
+                am_user_id = %s,
+                assigned_user_id = %s,
+                due_date = %s,
+                recap_date_with_client = %s,
+                recap_date_text = %s,
+                brief_url = %s,
+                brief_status_text = %s,
+                delivered = %s,
+                review_required = %s,
+                review_complete = %s,
+                approval_required = %s,
+                approved = %s,
+                questions_requested = %s,
+                special_requests = %s,
+                status = %s,
+                risk = %s,
+                waiting_on = %s,
+                completed_at = %s
+            where id = %s
+            returning *
+            """,
+            (
+                kwargs["program_id"],
+                kwargs.get("workstream_id"),
+                kwargs["request_category"],
+                require_text(kwargs.get("request_type"), "request_type"),
+                kwargs["am_user_id"],
+                kwargs.get("assigned_user_id"),
+                kwargs.get("due_date"),
+                kwargs.get("recap_date_with_client"),
+                kwargs.get("recap_date_text"),
+                kwargs.get("brief_url"),
+                kwargs.get("brief_status_text"),
+                bool(kwargs.get("delivered", False)),
+                bool(kwargs.get("review_required", False)),
+                bool(kwargs.get("review_complete", False)),
+                bool(kwargs.get("approval_required", False)),
+                bool(kwargs.get("approved", False)),
+                kwargs.get("questions_requested"),
+                kwargs.get("special_requests"),
+                kwargs["status"],
+                kwargs["risk"],
+                kwargs.get("waiting_on"),
+                kwargs.get("completed_at"),
+                request_id,
+            ),
+            ReportingRequestRecord,
+        )
+
+    def deactivate_reporting_request(self, request_id: str) -> None:
+        self._execute(
+            """
+            update campaign_ops_reporting_requests
+            set is_active = false
+            where id = %s and is_active = true
+            """,
+            (request_id,),
+        )
+
+    def reactivate_reporting_request(self, request_id: str) -> ReportingRequestRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_reporting_requests
+            set is_active = true
+            where id = %s and is_active = false
+            returning *
+            """,
+            (request_id,),
+            ReportingRequestRecord,
+        )
+
+    def _reporting_request_row_from_db(self, row: dict[str, Any]) -> ReportingRequestListRow:
+        normalized = normalize_row(row)
+        return ReportingRequestListRow(
+            id=str(normalized["id"]),
+            program_id=str(normalized["program_id"]),
+            program_name=str(normalized["program_name"]),
+            client_name=normalized.get("client_name"),
+            primary_workstream_type=normalized.get("primary_workstream_type"),
+            request_category=str(normalized["request_category"]),
+            request_type=str(normalized["request_type"]),
+            am_user_id=str(normalized["am_user_id"]),
+            am_display_name=str(normalized["am_display_name"]),
+            assigned_user_id=normalize_id(normalized.get("assigned_user_id")),
+            assigned_display_name=normalized.get("assigned_display_name"),
+            workstream_id=normalize_id(normalized.get("workstream_id")),
+            workstream_type=normalized.get("workstream_type"),
+            due_date=normalized.get("due_date"),
+            recap_date_with_client=normalized.get("recap_date_with_client"),
+            recap_date_text=normalized.get("recap_date_text"),
+            brief_url=normalized.get("brief_url"),
+            brief_status_text=normalized.get("brief_status_text"),
+            delivered=bool(normalized.get("delivered", False)),
+            review_required=bool(normalized.get("review_required", False)),
+            review_complete=bool(normalized.get("review_complete", False)),
+            approval_required=bool(normalized.get("approval_required", False)),
+            approved=bool(normalized.get("approved", False)),
+            questions_requested=normalized.get("questions_requested"),
+            special_requests=normalized.get("special_requests"),
+            status=str(normalized["status"]),
+            risk=str(normalized["risk"]),
+            waiting_on=normalized.get("waiting_on"),
+            completed_at=normalized.get("completed_at"),
+            is_active=bool(normalized.get("is_active", True)),
+            created_at=normalized.get("created_at"),
+            updated_at=normalized.get("updated_at"),
+        )
+
+    def list_reporting_requests(
+        self,
+        include_inactive: bool = False,
+        program_id: str | None = None,
+    ) -> list[ReportingRequestListRow]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_inactive:
+            clauses.append("rr.is_active = true")
+        if program_id:
+            clauses.append("rr.program_id = %s")
+            params.append(program_id)
+        where_clause = "where " + " and ".join(clauses) if clauses else ""
+        query = f"""
+            select
+                rr.*,
+                p.program_name,
+                p.primary_workstream_type,
+                c.name as client_name,
+                am.display_name as am_display_name,
+                assigned.display_name as assigned_display_name,
+                w.workstream_type
+            from campaign_ops_reporting_requests rr
+            join campaign_ops_programs p on p.id = rr.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            join campaign_ops_users am on am.id = rr.am_user_id
+            left join campaign_ops_users assigned on assigned.id = rr.assigned_user_id
+            left join campaign_ops_workstreams w on w.id = rr.workstream_id
+            {where_clause}
+            order by rr.due_date asc nulls last, rr.updated_at desc
+        """
+        return [
+            self._reporting_request_row_from_db(row)
+            for row in self._fetch_raw_all(query, tuple(params))
+        ]
+
+    def get_reporting_request_detail(self, request_id: str) -> ReportingRequestListRow | None:
+        rows = [
+            row for row in self.list_reporting_requests(include_inactive=True)
+            if row.id == request_id
+        ]
+        return rows[0] if rows else None
+
+    def list_requests_by_program(
+        self,
+        program_id: str,
+        include_inactive: bool = False,
+    ) -> list[ReportingRequestListRow]:
+        return self.list_reporting_requests(include_inactive=include_inactive, program_id=program_id)
 
     def append_event(
         self,

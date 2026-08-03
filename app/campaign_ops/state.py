@@ -53,6 +53,12 @@ SESSION_KEYS = {
     "campaign_ops_note_create_open",
     "campaign_ops_note_filters",
     "campaign_ops_note_sort_order",
+    "campaign_ops_requests_view",
+    "campaign_ops_selected_request_id",
+    "campaign_ops_request_filters",
+    "campaign_ops_request_create_open",
+    "campaign_ops_request_edit_id",
+    "campaign_ops_request_show_inactive",
 }
 
 

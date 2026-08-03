@@ -33,6 +33,9 @@ from core.campaign_ops.models import (
     ProgramPortfolioRow,
     ProgramWorkspaceSummary,
     ProgramNote,
+    ReportingRequestDetail,
+    ReportingRequestListRow,
+    ReportingRequestRecord,
     Resource,
     ResourceListRow,
     Task,
@@ -56,6 +59,18 @@ from core.campaign_ops.permissions import (
     can_view_internal_notes,
     can_view_program,
 )
+from core.campaign_ops.reporting_requests import (
+    REQUEST_CATEGORY_REPORT,
+    REQUEST_CATEGORY_SURVEY,
+    REQUEST_STATUS_COMPLETED,
+    REQUEST_STATUS_DELIVERED,
+    REQUEST_STATUS_READY_FOR_REVIEW,
+    REQUEST_STATUS_REQUESTED,
+    REQUEST_STATUS_WAITING_FOR_APPROVAL,
+    normalize_am_name,
+    validate_request_category,
+    validate_request_status,
+)
 from core.campaign_ops.repository import CampaignOpsRepository
 
 WAITING_TASK_STATUSES = {
@@ -65,6 +80,30 @@ WAITING_TASK_STATUSES = {
 }
 
 ALLOWED_RESOURCE_URL_SCHEMES = {"http", "https"}
+REPORTING_REQUEST_EDITABLE_FIELDS = {
+    "program_id",
+    "workstream_id",
+    "request_category",
+    "request_type",
+    "am_user_id",
+    "assigned_user_id",
+    "due_date",
+    "recap_date_with_client",
+    "recap_date_text",
+    "brief_url",
+    "brief_status_text",
+    "delivered",
+    "review_required",
+    "review_complete",
+    "approval_required",
+    "approved",
+    "questions_requested",
+    "special_requests",
+    "status",
+    "risk",
+    "waiting_on",
+    "completed_at",
+}
 
 ALLOWED_TASK_TRANSITIONS = {
     TaskStatus.NOT_STARTED.value: {
@@ -2174,6 +2213,329 @@ class CampaignOpsService:
             raise CampaignOpsPermissionError("You cannot view another user's tasks.")
         repository = self.repository or CampaignOpsRepository()
         return repository.list_task_rows_by_assigned_user(user_id, include_inactive=include_inactive)
+
+    def resolve_reporting_request_am(
+        self,
+        repository: CampaignOpsRepository,
+        am_name: str | None,
+    ) -> CampaignOpsUser:
+        display_name = normalize_am_name(am_name)
+        user = repository.get_user_by_display_name(display_name)
+        if user is None or not user.is_active:
+            raise CampaignOpsValidationError("AM must resolve to an active Campaign Operations user.")
+        return user
+
+    def _require_reporting_request(
+        self,
+        repository: CampaignOpsRepository,
+        request_id: str,
+    ) -> ReportingRequestRecord:
+        request = repository.get_reporting_request(request_id)
+        if request is None:
+            raise CampaignOpsNotFoundError("Reporting request was not found.")
+        return request
+
+    def _validate_reporting_request_access(
+        self,
+        repository: CampaignOpsRepository,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+    ) -> Program:
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this request program.")
+        if not program.is_active:
+            raise CampaignOpsValidationError("Archived programs cannot have request changes.")
+        return program
+
+    def _normalize_reporting_request_payload(
+        self,
+        repository: CampaignOpsRepository,
+        actor: CampaignOpsUser | None,
+        payload: dict[str, Any],
+        before: ReportingRequestRecord | None = None,
+    ) -> dict[str, Any]:
+        program_id = payload.get("program_id") or (before.program_id if before else None)
+        if not program_id:
+            raise CampaignOpsValidationError("Program is required.")
+        self._validate_reporting_request_access(repository, actor, str(program_id))
+        category = validate_request_category(payload.get("request_category") or (before.request_category if before else None))
+        request_type = require_text(payload.get("request_type") or (before.request_type if before else None), "Request type")
+        if payload.get("am_user_id"):
+            am_user = self._require_active_user(repository, str(payload["am_user_id"]), "AM")
+        else:
+            am_user = self.resolve_reporting_request_am(
+                repository,
+                payload.get("am_name") or (None if before is None else before.am_user_id),
+            ) if before is None or payload.get("am_name") else self._require_active_user(repository, before.am_user_id, "AM")
+        assigned_user_id = payload.get("assigned_user_id") if "assigned_user_id" in payload else (before.assigned_user_id if before else None)
+        if assigned_user_id:
+            self._require_active_user(repository, str(assigned_user_id), "Assigned reporting owner")
+        workstream_id = payload.get("workstream_id") if "workstream_id" in payload else (before.workstream_id if before else None)
+        if workstream_id:
+            self._require_workstream(repository, str(program_id), str(workstream_id))
+        brief_url = payload.get("brief_url") if "brief_url" in payload else (before.brief_url if before else None)
+        brief_url = self._validate_resource_url(brief_url)
+        status = validate_request_status(payload.get("status") or (before.status if before else REQUEST_STATUS_REQUESTED))
+        risk = enum_value(RiskLevel, payload.get("risk") or (before.risk if before else RiskLevel.UNRATED.value), "risk")
+        waiting_on = payload.get("waiting_on") if "waiting_on" in payload else (before.waiting_on if before else None)
+        if waiting_on:
+            waiting_on = enum_value(WaitingOn, waiting_on, "waiting_on")
+        delivered = bool(payload.get("delivered", before.delivered if before else False))
+        review_required = bool(payload.get("review_required", before.review_required if before else False))
+        review_complete = bool(payload.get("review_complete", before.review_complete if before else False))
+        approval_required = bool(payload.get("approval_required", before.approval_required if before else False))
+        approved = bool(payload.get("approved", before.approved if before else False))
+        if review_complete and not review_required:
+            raise CampaignOpsValidationError("Review complete requires review required.")
+        if approved and not approval_required:
+            raise CampaignOpsValidationError("Approved requires approval required.")
+        if category == REQUEST_CATEGORY_SURVEY:
+            approval_required = False
+            approved = False
+        if category == REQUEST_CATEGORY_REPORT:
+            review_required = False
+            review_complete = False
+        if delivered and status == REQUEST_STATUS_REQUESTED:
+            status = REQUEST_STATUS_DELIVERED
+        if review_required and not review_complete and status == REQUEST_STATUS_REQUESTED:
+            status = REQUEST_STATUS_READY_FOR_REVIEW
+        if approval_required and not approved and status == REQUEST_STATUS_REQUESTED:
+            status = REQUEST_STATUS_WAITING_FOR_APPROVAL
+        completed_at = payload.get("completed_at") if "completed_at" in payload else (before.completed_at if before else None)
+        if status == REQUEST_STATUS_COMPLETED and completed_at is None:
+            completed_at = datetime.now(UTC)
+        if status != REQUEST_STATUS_COMPLETED:
+            completed_at = None
+        return {
+            "program_id": str(program_id),
+            "workstream_id": str(workstream_id) if workstream_id else None,
+            "request_category": category,
+            "request_type": request_type,
+            "am_user_id": am_user.id,
+            "assigned_user_id": str(assigned_user_id) if assigned_user_id else None,
+            "due_date": payload.get("due_date") if "due_date" in payload else (before.due_date if before else None),
+            "recap_date_with_client": payload.get("recap_date_with_client") if "recap_date_with_client" in payload else (before.recap_date_with_client if before else None),
+            "recap_date_text": self._clean_optional_text(payload.get("recap_date_text") if "recap_date_text" in payload else (before.recap_date_text if before else None)),
+            "brief_url": brief_url,
+            "brief_status_text": self._clean_optional_text(payload.get("brief_status_text") if "brief_status_text" in payload else (before.brief_status_text if before else None)),
+            "delivered": delivered,
+            "review_required": review_required,
+            "review_complete": review_complete,
+            "approval_required": approval_required,
+            "approved": approved,
+            "questions_requested": self._clean_optional_text(payload.get("questions_requested") if "questions_requested" in payload else (before.questions_requested if before else None)),
+            "special_requests": self._clean_optional_text(payload.get("special_requests") if "special_requests" in payload else (before.special_requests if before else None)),
+            "status": status,
+            "risk": risk,
+            "waiting_on": waiting_on,
+            "completed_at": completed_at,
+        }
+
+    def _clean_optional_text(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    def _request_activity_message(
+        self,
+        actor: CampaignOpsUser | None,
+        field: str,
+        before: Any,
+        after: Any,
+        request: ReportingRequestRecord,
+    ) -> str:
+        actor_name = actor.display_name if actor else "System"
+        if field == "delivered":
+            return f"{actor_name} marked {request.request_type} as {'delivered' if after else 'not delivered'}."
+        if field == "approved":
+            return f"{actor_name} {'approved' if after else 'unapproved'} {request.request_type}."
+        if field == "due_date":
+            return f"{actor_name} changed the due date from {before or '-'} to {after or '-'}."
+        if field == "questions_requested":
+            return f"{actor_name} changed questions for {request.request_type}."
+        if field == "special_requests":
+            return f"{actor_name} changed special requests for {request.request_type}."
+        return f"{actor_name} changed {field.replace('_', ' ')} from {before or '-'} to {after or '-'}."
+
+    def create_reporting_request(
+        self,
+        actor: CampaignOpsUser | None,
+        **kwargs: Any,
+    ) -> ReportingRequestRecord:
+        def operation(repository: CampaignOpsRepository) -> ReportingRequestRecord:
+            payload = self._normalize_reporting_request_payload(repository, actor, kwargs)
+            request = repository.create_reporting_request(actor_user_id=actor.id if actor else None, **payload)
+            program = self._require_program(repository, request.program_id)
+            repository.append_event(
+                event_type="reporting_request_created",
+                entity_type="reporting_request",
+                entity_id=request.id,
+                program_id=request.program_id,
+                workstream_id=request.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                new_value_json={"request_type": request.request_type, "request_category": request.request_category},
+                message=f"{actor.display_name if actor else 'System'} created {request.request_type} request for {program.program_name}.",
+            )
+            return request
+
+        return self._transaction(operation)
+
+    def update_reporting_request(
+        self,
+        actor: CampaignOpsUser | None,
+        request_id: str,
+        **kwargs: Any,
+    ) -> ReportingRequestRecord:
+        def operation(repository: CampaignOpsRepository) -> ReportingRequestRecord:
+            before = self._require_reporting_request(repository, request_id)
+            payload = self._normalize_reporting_request_payload(repository, actor, kwargs, before)
+            changes = {
+                field: value
+                for field, value in payload.items()
+                if field in REPORTING_REQUEST_EDITABLE_FIELDS and getattr(before, field) != value
+            }
+            if not changes:
+                return before
+            merged = {field: getattr(before, field) for field in REPORTING_REQUEST_EDITABLE_FIELDS}
+            merged.update(changes)
+            updated = repository.update_reporting_request(request_id, actor_user_id=actor.id if actor else None, **merged)
+            for field, value in changes.items():
+                repository.append_event(
+                    event_type=f"reporting_request_{field}_changed",
+                    entity_type="reporting_request",
+                    entity_id=request_id,
+                    program_id=updated.program_id,
+                    workstream_id=updated.workstream_id,
+                    actor_user_id=actor.id if actor else None,
+                    old_value_json={field: self._activity_value(getattr(before, field))},
+                    new_value_json={field: self._activity_value(value)},
+                    message=self._request_activity_message(actor, field, getattr(before, field), value, updated),
+                )
+            return updated
+
+        return self._transaction(operation)
+
+    def set_request_delivered(
+        self,
+        actor: CampaignOpsUser | None,
+        request_id: str,
+        delivered: bool,
+    ) -> ReportingRequestRecord:
+        status = REQUEST_STATUS_DELIVERED if delivered else REQUEST_STATUS_REQUESTED
+        return self.update_reporting_request(actor, request_id, delivered=delivered, status=status)
+
+    def set_request_review_state(
+        self,
+        actor: CampaignOpsUser | None,
+        request_id: str,
+        review_required: bool,
+        review_complete: bool,
+    ) -> ReportingRequestRecord:
+        status = REQUEST_STATUS_READY_FOR_REVIEW if review_required and not review_complete else None
+        payload: dict[str, Any] = {"review_required": review_required, "review_complete": review_complete}
+        if status:
+            payload["status"] = status
+        return self.update_reporting_request(actor, request_id, **payload)
+
+    def set_request_approval_state(
+        self,
+        actor: CampaignOpsUser | None,
+        request_id: str,
+        approval_required: bool,
+        approved: bool,
+    ) -> ReportingRequestRecord:
+        status = REQUEST_STATUS_WAITING_FOR_APPROVAL if approval_required and not approved else None
+        payload: dict[str, Any] = {"approval_required": approval_required, "approved": approved}
+        if status:
+            payload["status"] = status
+        return self.update_reporting_request(actor, request_id, **payload)
+
+    def deactivate_reporting_request(self, actor: CampaignOpsUser | None, request_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            request = self._require_reporting_request(repository, request_id)
+            self._validate_reporting_request_access(repository, actor, request.program_id)
+            repository.deactivate_reporting_request(request_id)
+            repository.append_event(
+                event_type="reporting_request_deactivated",
+                entity_type="reporting_request",
+                entity_id=request_id,
+                program_id=request.program_id,
+                workstream_id=request.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} deactivated {request.request_type} request.",
+            )
+
+        self._transaction(operation)
+
+    def reactivate_reporting_request(
+        self,
+        actor: CampaignOpsUser | None,
+        request_id: str,
+    ) -> ReportingRequestRecord:
+        def operation(repository: CampaignOpsRepository) -> ReportingRequestRecord:
+            request = self._require_reporting_request(repository, request_id)
+            self._validate_reporting_request_access(repository, actor, request.program_id)
+            updated = repository.reactivate_reporting_request(request_id)
+            repository.append_event(
+                event_type="reporting_request_reactivated",
+                entity_type="reporting_request",
+                entity_id=request_id,
+                program_id=request.program_id,
+                workstream_id=request.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} reactivated {request.request_type} request.",
+            )
+            return updated
+
+        return self._transaction(operation)
+
+    def list_reporting_requests(
+        self,
+        actor: CampaignOpsUser | None,
+        include_inactive: bool = False,
+    ) -> list[ReportingRequestListRow]:
+        repository = self.repository or CampaignOpsRepository()
+        rows = repository.list_reporting_requests(include_inactive=include_inactive)
+        if can_access_admin(actor):
+            return rows
+        visible: list[ReportingRequestListRow] = []
+        for row in rows:
+            program = self._require_program(repository, row.program_id)
+            assignments = repository.list_assignments_by_program(row.program_id)
+            if can_view_program(actor, program, assignments):
+                visible.append(row)
+        return visible
+
+    def list_requests_by_program(
+        self,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+        include_inactive: bool = False,
+    ) -> list[ReportingRequestListRow]:
+        repository = self.repository or CampaignOpsRepository()
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this program requests.")
+        return repository.list_requests_by_program(program_id, include_inactive=include_inactive)
+
+    def get_reporting_request_detail(
+        self,
+        actor: CampaignOpsUser | None,
+        request_id: str,
+    ) -> ReportingRequestDetail:
+        repository = self.repository or CampaignOpsRepository()
+        detail = repository.get_reporting_request_detail(request_id)
+        if detail is None:
+            raise CampaignOpsNotFoundError("Reporting request was not found.")
+        program = self._require_program(repository, detail.program_id)
+        assignments = repository.list_assignments_by_program(detail.program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this request.")
+        return detail
 
     def group_user_tasks(
         self,

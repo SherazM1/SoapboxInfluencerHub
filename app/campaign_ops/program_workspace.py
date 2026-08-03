@@ -564,6 +564,7 @@ def render_activity(summary: ProgramWorkspaceSummary) -> None:
             "Milestone changes",
             "Resource changes",
             "Notes",
+            "Reporting Requests",
             "Assignment changes",
             "Ownership changes",
             "Archive activity",
@@ -608,6 +609,8 @@ def activity_matches_filter(event_type: str, filter_label: str) -> bool:
         return event_type.startswith("resource_")
     if filter_label == "Notes":
         return "note" in event_type
+    if filter_label == "Reporting Requests":
+        return event_type.startswith("reporting_request_")
     if filter_label == "Ownership changes":
         return "owner" in event_type or "lead" in event_type
     if filter_label == "Archive activity":

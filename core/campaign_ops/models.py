@@ -389,3 +389,76 @@ class NoteListRow:
     note_type: str | None
     is_internal: bool
     created_at: datetime | None
+
+
+@dataclass(slots=True)
+class ReportingRequestRecord:
+    id: str
+    program_id: str
+    request_category: str
+    request_type: str
+    am_user_id: str
+    workstream_id: str | None = None
+    assigned_user_id: str | None = None
+    due_date: date | None = None
+    recap_date_with_client: date | None = None
+    recap_date_text: str | None = None
+    brief_url: str | None = None
+    brief_status_text: str | None = None
+    delivered: bool = False
+    review_required: bool = False
+    review_complete: bool = False
+    approval_required: bool = False
+    approved: bool = False
+    questions_requested: str | None = None
+    special_requests: str | None = None
+    status: str = "requested"
+    risk: str = RiskLevel.UNRATED.value
+    waiting_on: str | None = None
+    completed_at: datetime | None = None
+    is_active: bool = True
+    created_by_user_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.request_type = require_text(self.request_type, "request_type")
+
+
+@dataclass(slots=True)
+class ReportingRequestListRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    primary_workstream_type: str | None
+    request_category: str
+    request_type: str
+    am_user_id: str
+    am_display_name: str
+    assigned_user_id: str | None
+    assigned_display_name: str | None
+    workstream_id: str | None
+    workstream_type: str | None
+    due_date: date | None
+    recap_date_with_client: date | None
+    recap_date_text: str | None
+    brief_url: str | None
+    brief_status_text: str | None
+    delivered: bool
+    review_required: bool
+    review_complete: bool
+    approval_required: bool
+    approved: bool
+    questions_requested: str | None
+    special_requests: str | None
+    status: str
+    risk: str
+    waiting_on: str | None
+    completed_at: datetime | None
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+ReportingRequestDetail = ReportingRequestListRow

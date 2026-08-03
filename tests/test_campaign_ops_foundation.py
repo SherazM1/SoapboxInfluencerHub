@@ -31,6 +31,7 @@ from core.campaign_ops.enums import (
 )
 from core.campaign_ops.exceptions import (
     CampaignOpsDatabaseError,
+    CampaignOpsError,
     CampaignOpsNotFoundError,
     CampaignOpsPermissionError,
     CampaignOpsSetupRequiredError,
@@ -54,6 +55,8 @@ from core.campaign_ops.models import (
     Program,
     ProgramAssignment,
     ProgramNote,
+    ReportingRequestListRow,
+    ReportingRequestRecord,
     Resource,
     ResourceListRow,
     Workstream,
@@ -70,6 +73,7 @@ from core.campaign_ops.permissions import (
 from core.campaign_ops.seed_data import get_seed_users
 from core.campaign_ops.service import CampaignOpsService
 from core.campaign_ops.repository import CampaignOpsRepository
+from core.campaign_ops.reporting_requests import normalize_am_name
 
 
 class FakeCursor:
@@ -203,6 +207,7 @@ class FakePrompt4ARepository:
         self.milestones: list[Milestone] = []
         self.resources: list[Resource] = []
         self.notes: list[ProgramNote] = []
+        self.reporting_requests: list[ReportingRequestRecord] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -214,6 +219,9 @@ class FakePrompt4ARepository:
 
     def get_user_by_id(self, user_id: str) -> CampaignOpsUser | None:
         return next((user for user in self.users if user.id == user_id), None)
+
+    def get_user_by_display_name(self, display_name: str) -> CampaignOpsUser | None:
+        return next((user for user in self.users if user.is_active and user.display_name.lower() == display_name.lower()), None)
 
     def get_client(self, client_id: str) -> Client | None:
         return next((client for client in self.clients if client.id == client_id), None)
@@ -529,6 +537,95 @@ class FakePrompt4ARepository:
                 created_at=note.created_at,
             ))
         return list(reversed(rows)) if newest_first else rows
+
+    def create_reporting_request(self, actor_user_id: str | None = None, **kwargs: object) -> ReportingRequestRecord:
+        request = ReportingRequestRecord(
+            id=f"77777777-7777-4777-8777-{len(self.reporting_requests) + 1:012d}",
+            created_by_user_id=actor_user_id,
+            **kwargs,
+        )
+        self.reporting_requests.append(request)
+        return request
+
+    def get_reporting_request(self, request_id: str) -> ReportingRequestRecord | None:
+        return next((request for request in self.reporting_requests if request.id == request_id), None)
+
+    def update_reporting_request(self, request_id: str, actor_user_id: str | None = None, **kwargs: object) -> ReportingRequestRecord:
+        request = self.get_reporting_request(request_id)
+        if request is None:
+            raise CampaignOpsNotFoundError("Reporting request was not found.")
+        for key, value in kwargs.items():
+            setattr(request, key, value)
+        return request
+
+    def deactivate_reporting_request(self, request_id: str) -> None:
+        request = self.get_reporting_request(request_id)
+        if request is None or not request.is_active:
+            raise CampaignOpsNotFoundError("Reporting request was not found.")
+        request.is_active = False
+
+    def reactivate_reporting_request(self, request_id: str) -> ReportingRequestRecord:
+        request = self.get_reporting_request(request_id)
+        if request is None or request.is_active:
+            raise CampaignOpsNotFoundError("Reporting request was not found.")
+        request.is_active = True
+        return request
+
+    def _reporting_request_row(self, request: ReportingRequestRecord) -> ReportingRequestListRow:
+        program = self.get_program(request.program_id)
+        client = self.get_program_client(request.program_id)
+        workstream = self.get_workstream(request.workstream_id) if request.workstream_id else None
+        am = self.get_user_by_id(request.am_user_id)
+        assigned = self.get_user_by_id(request.assigned_user_id) if request.assigned_user_id else None
+        return ReportingRequestListRow(
+            id=request.id,
+            program_id=request.program_id,
+            program_name=program.program_name if program else "",
+            client_name=client.name if client else None,
+            primary_workstream_type=program.primary_workstream_type if program else None,
+            request_category=request.request_category,
+            request_type=request.request_type,
+            am_user_id=request.am_user_id,
+            am_display_name=am.display_name if am else "",
+            assigned_user_id=request.assigned_user_id,
+            assigned_display_name=assigned.display_name if assigned else None,
+            workstream_id=request.workstream_id,
+            workstream_type=workstream.workstream_type if workstream else None,
+            due_date=request.due_date,
+            recap_date_with_client=request.recap_date_with_client,
+            recap_date_text=request.recap_date_text,
+            brief_url=request.brief_url,
+            brief_status_text=request.brief_status_text,
+            delivered=request.delivered,
+            review_required=request.review_required,
+            review_complete=request.review_complete,
+            approval_required=request.approval_required,
+            approved=request.approved,
+            questions_requested=request.questions_requested,
+            special_requests=request.special_requests,
+            status=request.status,
+            risk=request.risk,
+            waiting_on=request.waiting_on,
+            completed_at=request.completed_at,
+            is_active=request.is_active,
+            created_at=request.created_at,
+            updated_at=request.updated_at,
+        )
+
+    def list_reporting_requests(self, include_inactive: bool = False, program_id: str | None = None) -> list[ReportingRequestListRow]:
+        rows = [
+            self._reporting_request_row(request)
+            for request in self.reporting_requests
+            if (include_inactive or request.is_active) and (program_id is None or request.program_id == program_id)
+        ]
+        return rows
+
+    def get_reporting_request_detail(self, request_id: str) -> ReportingRequestListRow | None:
+        request = self.get_reporting_request(request_id)
+        return self._reporting_request_row(request) if request else None
+
+    def list_requests_by_program(self, program_id: str, include_inactive: bool = False) -> list[ReportingRequestListRow]:
+        return self.list_reporting_requests(include_inactive=include_inactive, program_id=program_id)
 
     def _task_list_row(self, task: Task) -> TaskListRow:
         program = self.get_program(task.program_id)
@@ -1844,6 +1941,163 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         event_types = [event["event_type"] for event in repository.events]
         self.assertIn("note_added", event_types)
         self.assertIn("internal_note_added", event_types)
+
+    def test_prompt5a_am_mapping_is_centralized_and_normalized(self) -> None:
+        self.assertEqual(normalize_am_name("Taylor"), "T")
+        self.assertEqual(normalize_am_name(" Lauren "), "L")
+        self.assertEqual(normalize_am_name("bailey"), "Bailey")
+        self.assertEqual(normalize_am_name(" t "), "T")
+        self.assertEqual(normalize_am_name("l"), "L")
+        with self.assertRaises(CampaignOpsValidationError):
+            normalize_am_name("Unknown")
+
+    def test_prompt5a_request_validation_crud_lifecycle_and_activity(self) -> None:
+        from core.campaign_ops.reporting_requests import (
+            REQUEST_CATEGORY_REPORT,
+            REQUEST_CATEGORY_SURVEY,
+            REQUEST_STATUS_COMPLETED,
+            REQUEST_STATUS_DELIVERED,
+        )
+
+        repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_reporting_request(bailey, request_category=REQUEST_CATEGORY_SURVEY, request_type=" ", program_id=program_id, am_name="Taylor")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_reporting_request(bailey, request_category=REQUEST_CATEGORY_SURVEY, request_type="EOP Survey", am_name="Taylor")
+        with self.assertRaises(CampaignOpsError):
+            service.create_reporting_request(bailey, request_category=REQUEST_CATEGORY_SURVEY, request_type="EOP Survey", program_id="missing", am_name="Taylor")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_reporting_request(bailey, request_category=REQUEST_CATEGORY_SURVEY, request_type="EOP Survey", program_id=program_id, am_name="Taylor", brief_url="javascript:bad")
+
+        survey = service.create_reporting_request(
+            bailey,
+            request_category=REQUEST_CATEGORY_SURVEY,
+            request_type="TEST - Prompt 5A EOP Survey",
+            program_id=program_id,
+            workstream_id=influencer.id,
+            am_name="Taylor",
+            assigned_user_id=t_user.id,
+            due_date=date(2026, 8, 10),
+            brief_url="https://example.com/brief",
+            brief_status_text="Sent to Tori",
+            review_required=True,
+            questions_requested="overall performance",
+            special_requests="comment analysis slide",
+        )
+        self.assertEqual(survey.am_user_id, t_user.id)
+        self.assertEqual(survey.status, "ready_for_review")
+        report = service.create_reporting_request(
+            bailey,
+            request_category=REQUEST_CATEGORY_REPORT,
+            request_type="TEST - Prompt 5A Program Recap",
+            program_id=program_id,
+            am_name="Lauren",
+            due_date=date(2026, 8, 11),
+            recap_date_with_client=date(2026, 8, 12),
+            recap_date_text="Week of 8/10",
+            approval_required=True,
+            special_requests="same format as previous VeSync recaps",
+        )
+        self.assertEqual(report.am_user_id, l_user.id)
+        self.assertEqual(report.status, "waiting_for_approval")
+
+        event_count = len(repository.events)
+        unchanged = service.update_reporting_request(bailey, survey.id, request_type=survey.request_type)
+        self.assertEqual(unchanged.request_type, survey.request_type)
+        self.assertEqual(len(repository.events), event_count)
+        service.update_reporting_request(bailey, survey.id, due_date=date(2026, 8, 12))
+        service.update_reporting_request(bailey, survey.id, questions_requested="performance broken out by retailer")
+        service.update_reporting_request(bailey, survey.id, special_requests="brand ambassador information")
+        delivered = service.set_request_delivered(bailey, survey.id, True)
+        self.assertTrue(delivered.delivered)
+        self.assertEqual(delivered.status, REQUEST_STATUS_DELIVERED)
+        reviewed = service.set_request_review_state(bailey, survey.id, True, True)
+        self.assertTrue(reviewed.review_complete)
+        approved = service.set_request_approval_state(bailey, report.id, True, True)
+        self.assertTrue(approved.approved)
+        completed = service.update_reporting_request(bailey, report.id, status=REQUEST_STATUS_COMPLETED, delivered=True, approval_required=True, approved=True)
+        self.assertIsNotNone(completed.completed_at)
+        reopened = service.update_reporting_request(bailey, report.id, status=REQUEST_STATUS_DELIVERED)
+        self.assertIsNone(reopened.completed_at)
+        service.deactivate_reporting_request(bailey, survey.id)
+        self.assertFalse(repository.get_reporting_request(survey.id).is_active)
+        service.reactivate_reporting_request(bailey, survey.id)
+        self.assertTrue(repository.get_reporting_request(survey.id).is_active)
+        rows = service.list_reporting_requests(bailey)
+        self.assertEqual({row.id for row in rows}, {survey.id, report.id})
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("reporting_request_created", event_types)
+        self.assertIn("reporting_request_due_date_changed", event_types)
+        self.assertTrue(any(event_type.startswith("reporting_request_delivered") for event_type in event_types))
+        self.assertIn("reporting_request_questions_requested_changed", event_types)
+        self.assertIn("reporting_request_special_requests_changed", event_types)
+
+    def test_prompt5a_display_column_order_and_labels(self) -> None:
+        from app.campaign_ops.reporting_requests.formatting import (
+            REPORTING_COLUMNS,
+            SURVEY_COLUMNS,
+            reporting_request_rows,
+            survey_request_rows,
+        )
+        from core.campaign_ops.reporting_requests import REQUEST_CATEGORY_REPORT, REQUEST_CATEGORY_SURVEY
+
+        base = ReportingRequestListRow(
+            id="request-1",
+            program_id="program-1",
+            program_name="Program",
+            client_name="Client",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            request_category=REQUEST_CATEGORY_SURVEY,
+            request_type="EOP Survey",
+            am_user_id="user-1",
+            am_display_name="T",
+            assigned_user_id=None,
+            assigned_display_name=None,
+            workstream_id=None,
+            workstream_type=None,
+            due_date=date(2026, 8, 10),
+            recap_date_with_client=None,
+            recap_date_text=None,
+            brief_url=None,
+            brief_status_text="Sent to Tori",
+            delivered=False,
+            review_required=True,
+            review_complete=False,
+            approval_required=False,
+            approved=False,
+            questions_requested="Questions You'd Like Included",
+            special_requests="Special Requests",
+            status="requested",
+            risk=RiskLevel.UNRATED.value,
+            waiting_on=None,
+            completed_at=None,
+            is_active=True,
+            created_at=None,
+            updated_at=None,
+        )
+        survey_rows = survey_request_rows([base])
+        self.assertEqual(list(survey_rows[0]), SURVEY_COLUMNS)
+        report = replace(
+            base,
+            id="request-2",
+            request_category=REQUEST_CATEGORY_REPORT,
+            request_type="Program Recap",
+            recap_date_text="Week of 8/10",
+            review_required=False,
+            approval_required=True,
+        )
+        reporting_rows = reporting_request_rows([report])
+        self.assertEqual(list(reporting_rows[0]), REPORTING_COLUMNS)
+        self.assertIn("Questions You'd Like Included", base.questions_requested or "")
+        self.assertIn("Special Requests", base.special_requests or "")
+
+    def test_prompt5a_state_keys_are_namespaced_and_stale_request_clears(self) -> None:
+        self.assertTrue(all(key.startswith("campaign_ops_") for key in SESSION_KEYS))
+        state: dict[str, object] = {"campaign_ops_selected_request_id": "missing"}
+        visible_ids: set[str] = set()
+        if state.get("campaign_ops_selected_request_id") not in visible_ids:
+            state.pop("campaign_ops_selected_request_id", None)
+        self.assertNotIn("campaign_ops_selected_request_id", state)
 
 
 if __name__ == "__main__":
