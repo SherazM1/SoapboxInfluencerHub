@@ -1656,6 +1656,40 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertNotIn("old-completed", grouped_ids)
         self.assertNotIn("inactive", grouped_ids)
 
+    def test_prompt4c_task_table_rows_formats_waiting_fields(self) -> None:
+        from app.campaign_ops.task_views import task_table_rows
+
+        task = TaskListRow(
+            id="task-1",
+            program_id="program-1",
+            program_name="Program",
+            client_name="Client",
+            title="Task",
+            description=None,
+            workstream_id=None,
+            workstream_type=None,
+            assigned_user_id=None,
+            assigned_user_name=None,
+            responsible_party=WaitingOn.INTERNAL_TEAM.value,
+            status=TaskStatus.NOT_STARTED.value,
+            risk_level=RiskLevel.UNRATED.value,
+            waiting_on=WaitingOn.CLIENT.value,
+            due_date=None,
+            start_date=None,
+            completed_at=None,
+            hard_deadline=False,
+            priority=None,
+            sort_order=0,
+            is_active=True,
+            created_at=None,
+            updated_at=None,
+        )
+
+        rows = task_table_rows([task])
+
+        self.assertEqual(rows[0]["Responsible party"], "Internal Team")
+        self.assertEqual(rows[0]["Waiting on"], "Client")
+
     def test_prompt4d_milestone_validation_lifecycle_permissions_and_activity(self) -> None:
         repository, service, bailey, t_user, l_user, program_id, influencer, retail = self._prompt4c_fixture()
 

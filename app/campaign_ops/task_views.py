@@ -269,6 +269,12 @@ def _waiting_labels() -> dict[str, str]:
     return {item.value: item.value.replace("_", " ").title() for item in WaitingOn}
 
 
+def _waiting_label(value: str | None) -> str:
+    if not value:
+        return "-"
+    return _waiting_labels().get(value, str(value).replace("_", " ").title())
+
+
 def _enum_filter(container: object, label: str, label_map: dict[str, str], key: str) -> str:
     labels = ["Any", *label_map.values()]
     values = {"Any": "", **{display: value for value, display in label_map.items()}}
