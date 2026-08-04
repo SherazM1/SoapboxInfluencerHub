@@ -25,6 +25,10 @@ from core.campaign_ops.migrations import connect_to_database
 from core.campaign_ops.models import (
     CampaignOpsUser,
     Client,
+    InsightsObjectiveRecord,
+    InsightsPortfolioRow,
+    InsightsProjectDetail,
+    InsightsProjectRecord,
     Milestone,
     MilestoneListRow,
     NoteListRow,
@@ -70,6 +74,11 @@ from core.campaign_ops.reporting_requests import (
     normalize_am_name,
     validate_request_category,
     validate_request_status,
+)
+from core.campaign_ops.insights import (
+    INSIGHTS_RESOURCE_TYPES,
+    INSIGHTS_STATUS_NOT_STARTED,
+    validate_insights_status,
 )
 from core.campaign_ops.repository import CampaignOpsRepository
 
@@ -1464,6 +1473,7 @@ class CampaignOpsService:
                 owner_user_id=kwargs.get("owner_user_id"),
                 hard_deadline=bool(kwargs.get("hard_deadline", False)),
                 completed_at=completed_at,
+                is_highlighted=bool(kwargs.get("is_highlighted", False)),
             )
             repository.append_event(
                 event_type="milestone_created",
@@ -1524,6 +1534,7 @@ class CampaignOpsService:
                 "owner_user_id",
                 "hard_deadline",
                 "completed_at",
+                "is_highlighted",
             }
             changes = {
                 field: value
@@ -1543,6 +1554,7 @@ class CampaignOpsService:
                 "owner_user_id": before.owner_user_id,
                 "hard_deadline": before.hard_deadline,
                 "completed_at": before.completed_at,
+                "is_highlighted": before.is_highlighted,
             }
             merged.update(changes)
             updated = repository.update_milestone(
@@ -1669,6 +1681,375 @@ class CampaignOpsService:
         if not can_view_program(actor, program, assignments):
             raise CampaignOpsPermissionError("You do not have permission to view program milestones.")
         return repository.list_milestone_rows_by_program(program_id, include_inactive=include_inactive)
+
+    def _require_insights_project(
+        self,
+        repository: CampaignOpsRepository,
+        project_id: str,
+    ) -> InsightsProjectRecord:
+        project = repository.get_insights_project(project_id)
+        if project is None:
+            raise CampaignOpsNotFoundError("Insights project was not found.")
+        return project
+
+    def _validate_insights_project_access(
+        self,
+        repository: CampaignOpsRepository,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+    ) -> Program:
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this Insights program.")
+        if not program.is_active:
+            raise CampaignOpsValidationError("Archived programs cannot have Insights changes.")
+        return program
+
+    def _validate_insights_payload(
+        self,
+        repository: CampaignOpsRepository,
+        actor: CampaignOpsUser | None,
+        payload: dict[str, Any],
+        before: InsightsProjectRecord | None = None,
+    ) -> dict[str, Any]:
+        program_id = payload.get("program_id") or (before.program_id if before else None)
+        if not program_id:
+            raise CampaignOpsValidationError("Program is required.")
+        self._validate_insights_project_access(repository, actor, str(program_id))
+        project_title = require_text(payload.get("project_title") or (before.project_title if before else None), "Project title")
+        workstream_id = payload.get("workstream_id") if "workstream_id" in payload else (before.workstream_id if before else None)
+        if workstream_id:
+            workstream = self._require_workstream(repository, str(program_id), str(workstream_id))
+            if not workstream.is_active:
+                raise CampaignOpsValidationError("Inactive workstreams cannot receive active Insights changes.")
+        owner_user_id = payload.get("owner_user_id") if "owner_user_id" in payload else (before.owner_user_id if before else None)
+        if owner_user_id:
+            self._require_active_user(repository, str(owner_user_id), "Owner")
+        total_program_cost = self._non_negative_number(payload.get("total_program_cost") if "total_program_cost" in payload else (before.total_program_cost if before else None), "Total program cost")
+        budget = self._non_negative_number(payload.get("budget") if "budget" in payload else (before.budget if before else None), "Budget")
+        sample_size = self._non_negative_int(payload.get("sample_size") if "sample_size" in payload else (before.sample_size if before else None), "Sample size")
+        return {
+            "program_id": str(program_id),
+            "workstream_id": str(workstream_id) if workstream_id else None,
+            "job_number": self._clean_optional_text(payload.get("job_number") if "job_number" in payload else (before.job_number if before else None)),
+            "project_title": project_title,
+            "insights_status": validate_insights_status(payload.get("insights_status") or (before.insights_status if before else INSIGHTS_STATUS_NOT_STARTED)),
+            "latest_update": self._clean_optional_text(payload.get("latest_update") if "latest_update" in payload else (before.latest_update if before else None)),
+            "total_program_cost": total_program_cost,
+            "sample_size": sample_size,
+            "budget": budget,
+            "owner_user_id": str(owner_user_id) if owner_user_id else None,
+        }
+
+    def _non_negative_number(self, value: Any, field_name: str) -> float | None:
+        if value in (None, ""):
+            return None
+        number = float(value)
+        if number < 0:
+            raise CampaignOpsValidationError(f"{field_name} must be non-negative.")
+        return number
+
+    def _non_negative_int(self, value: Any, field_name: str) -> int | None:
+        if value in (None, ""):
+            return None
+        number = int(value)
+        if number < 0:
+            raise CampaignOpsValidationError(f"{field_name} must be non-negative.")
+        return number
+
+    def create_insights_project(
+        self,
+        actor: CampaignOpsUser | None,
+        **kwargs: Any,
+    ) -> InsightsProjectRecord:
+        def operation(repository: CampaignOpsRepository) -> InsightsProjectRecord:
+            payload = self._validate_insights_payload(repository, actor, kwargs)
+            for resource_type, url in (kwargs.get("initial_resources") or {}).items():
+                if resource_type in INSIGHTS_RESOURCE_TYPES and url:
+                    self._validate_resource_url(str(url))
+            workstream_id = payload.get("workstream_id")
+            if not workstream_id:
+                workstreams = repository.list_all_workstreams_by_program(payload["program_id"])
+                existing_insights = next((w for w in workstreams if w.workstream_type == WorkstreamType.INSIGHTS.value and w.is_active), None)
+                if existing_insights:
+                    workstream_id = existing_insights.id
+                else:
+                    workstream = repository.create_workstream(
+                        payload["program_id"],
+                        WorkstreamType.INSIGHTS.value,
+                        actor_user_id=actor.id if actor else None,
+                        owner_user_id=payload.get("owner_user_id"),
+                    )
+                    workstream_id = workstream.id
+            payload["workstream_id"] = workstream_id
+            project = repository.create_insights_project(actor_user_id=actor.id if actor else None, **payload)
+            for resource_type, url in (kwargs.get("initial_resources") or {}).items():
+                if resource_type in INSIGHTS_RESOURCE_TYPES and url:
+                    resource = repository.create_resource(
+                        program_id=project.program_id,
+                        workstream_id=project.workstream_id,
+                        resource_type=resource_type,
+                        title=resource_type,
+                        url=self._validate_resource_url(url),
+                        actor_user_id=actor.id if actor else None,
+                    )
+                    repository.append_event(
+                        event_type="resource_created",
+                        entity_type="resource",
+                        entity_id=resource.id,
+                        program_id=project.program_id,
+                        workstream_id=project.workstream_id,
+                        actor_user_id=actor.id if actor else None,
+                        new_value_json={"title": resource.title, "resource_type": resource.resource_type, "url": resource.url},
+                        message=f"{actor.display_name if actor else 'System'} added {resource.resource_type} for Insights project {project.project_title}.",
+                    )
+            for index, objective in enumerate(kwargs.get("initial_objectives") or []):
+                if self._clean_optional_text(objective):
+                    objective_record = repository.create_insights_objective(project.id, str(objective), actor_user_id=actor.id if actor else None, sort_order=index)
+                    repository.append_event(
+                        event_type="insights_objective_created",
+                        entity_type="insights_objective",
+                        entity_id=objective_record.id,
+                        program_id=project.program_id,
+                        workstream_id=project.workstream_id,
+                        actor_user_id=actor.id if actor else None,
+                        new_value_json={"objective_text": objective_record.objective_text, "sort_order": objective_record.sort_order},
+                        message=f"{actor.display_name if actor else 'System'} added an Insights research objective.",
+                    )
+            repository.append_event(
+                event_type="insights_project_created",
+                entity_type="insights_project",
+                entity_id=project.id,
+                program_id=project.program_id,
+                workstream_id=project.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                new_value_json={"project_title": project.project_title},
+                message=f"{actor.display_name if actor else 'System'} created Insights project {project.project_title}.",
+            )
+            return project
+
+        return self._transaction(operation)
+
+    def update_insights_project(
+        self,
+        actor: CampaignOpsUser | None,
+        project_id: str,
+        **kwargs: Any,
+    ) -> InsightsProjectRecord:
+        def operation(repository: CampaignOpsRepository) -> InsightsProjectRecord:
+            before = self._require_insights_project(repository, project_id)
+            payload = self._validate_insights_payload(repository, actor, kwargs, before)
+            changes = {field: value for field, value in payload.items() if field != "program_id" and getattr(before, field) != value}
+            if not changes:
+                return before
+            merged = {
+                "workstream_id": before.workstream_id,
+                "job_number": before.job_number,
+                "project_title": before.project_title,
+                "insights_status": before.insights_status,
+                "latest_update": before.latest_update,
+                "total_program_cost": before.total_program_cost,
+                "sample_size": before.sample_size,
+                "budget": before.budget,
+                "owner_user_id": before.owner_user_id,
+            }
+            merged.update(changes)
+            updated = repository.update_insights_project(project_id, **merged)
+            for field, value in changes.items():
+                repository.append_event(
+                    event_type=f"insights_project_{field}_changed",
+                    entity_type="insights_project",
+                    entity_id=project_id,
+                    program_id=updated.program_id,
+                    workstream_id=updated.workstream_id,
+                    actor_user_id=actor.id if actor else None,
+                    old_value_json={field: self._activity_value(getattr(before, field))},
+                    new_value_json={field: self._activity_value(value)},
+                    message=f"{actor.display_name if actor else 'System'} changed {field.replace('_', ' ')} from {getattr(before, field) or '-'} to {value or '-'}.",
+                )
+            return updated
+
+        return self._transaction(operation)
+
+    def list_insights_projects(
+        self,
+        actor: CampaignOpsUser | None,
+        include_inactive: bool = False,
+    ) -> list[InsightsPortfolioRow]:
+        repository = self.repository or CampaignOpsRepository()
+        rows = repository.list_insights_projects(include_inactive=include_inactive)
+        if can_access_admin(actor):
+            return rows
+        visible: list[InsightsPortfolioRow] = []
+        for row in rows:
+            program = self._require_program(repository, row.program_id)
+            assignments = repository.list_assignments_by_program(row.program_id)
+            if can_view_program(actor, program, assignments):
+                visible.append(row)
+        return visible
+
+    def get_insights_project_detail(
+        self,
+        actor: CampaignOpsUser | None,
+        project_id: str,
+    ) -> InsightsProjectDetail:
+        repository = self.repository or CampaignOpsRepository()
+        detail = repository.get_insights_project_detail(project_id)
+        if detail is None:
+            raise CampaignOpsNotFoundError("Insights project was not found.")
+        program = self._require_program(repository, detail.program_id)
+        assignments = repository.list_assignments_by_program(detail.program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this Insights project.")
+        return detail
+
+    def deactivate_insights_project(self, actor: CampaignOpsUser | None, project_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            project = self._require_insights_project(repository, project_id)
+            self._validate_insights_project_access(repository, actor, project.program_id)
+            repository.deactivate_insights_project(project_id)
+            repository.append_event(
+                event_type="insights_project_deactivated",
+                entity_type="insights_project",
+                entity_id=project_id,
+                program_id=project.program_id,
+                workstream_id=project.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} deactivated Insights project {project.project_title}.",
+            )
+
+        self._transaction(operation)
+
+    def reactivate_insights_project(self, actor: CampaignOpsUser | None, project_id: str) -> InsightsProjectRecord:
+        def operation(repository: CampaignOpsRepository) -> InsightsProjectRecord:
+            project = self._require_insights_project(repository, project_id)
+            self._validate_insights_project_access(repository, actor, project.program_id)
+            updated = repository.reactivate_insights_project(project_id)
+            repository.append_event(
+                event_type="insights_project_reactivated",
+                entity_type="insights_project",
+                entity_id=project_id,
+                program_id=project.program_id,
+                workstream_id=project.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} reactivated Insights project {project.project_title}.",
+            )
+            return updated
+
+        return self._transaction(operation)
+
+    def list_insights_objectives(
+        self,
+        actor: CampaignOpsUser | None,
+        project_id: str,
+        include_inactive: bool = False,
+    ) -> list[InsightsObjectiveRecord]:
+        detail = self.get_insights_project_detail(actor, project_id)
+        repository = self.repository or CampaignOpsRepository()
+        return repository.list_insights_objectives(detail.id, include_inactive=include_inactive)
+
+    def add_insights_objective(
+        self,
+        actor: CampaignOpsUser | None,
+        project_id: str,
+        objective_text: str,
+        sort_order: int = 0,
+    ) -> InsightsObjectiveRecord:
+        def operation(repository: CampaignOpsRepository) -> InsightsObjectiveRecord:
+            project = self._require_insights_project(repository, project_id)
+            self._validate_insights_project_access(repository, actor, project.program_id)
+            objective = repository.create_insights_objective(project_id, objective_text, actor_user_id=actor.id if actor else None, sort_order=sort_order)
+            repository.append_event(
+                event_type="insights_objective_created",
+                entity_type="insights_objective",
+                entity_id=objective.id,
+                program_id=project.program_id,
+                workstream_id=project.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} added research objective {objective.objective_text}.",
+            )
+            return objective
+
+        return self._transaction(operation)
+
+    def update_insights_objective(
+        self,
+        actor: CampaignOpsUser | None,
+        project_id: str,
+        objective_id: str,
+        objective_text: str,
+        sort_order: int,
+    ) -> InsightsObjectiveRecord:
+        def operation(repository: CampaignOpsRepository) -> InsightsObjectiveRecord:
+            project = self._require_insights_project(repository, project_id)
+            self._validate_insights_project_access(repository, actor, project.program_id)
+            before = next((item for item in repository.list_insights_objectives(project_id, include_inactive=True) if item.id == objective_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Insights objective was not found.")
+            if before.objective_text == require_text(objective_text, "Objective") and before.sort_order == sort_order:
+                return before
+            updated = repository.update_insights_objective(objective_id, objective_text, sort_order)
+            repository.append_event(
+                event_type="insights_objective_updated",
+                entity_type="insights_objective",
+                entity_id=objective_id,
+                program_id=project.program_id,
+                workstream_id=project.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} updated research objective {updated.objective_text}.",
+            )
+            return updated
+
+        return self._transaction(operation)
+
+    def reorder_insights_objectives(
+        self,
+        actor: CampaignOpsUser | None,
+        project_id: str,
+        ordered_ids: list[str],
+    ) -> list[InsightsObjectiveRecord]:
+        updated: list[InsightsObjectiveRecord] = []
+        for index, objective_id in enumerate(ordered_ids):
+            objective = next((item for item in self.list_insights_objectives(actor, project_id, include_inactive=True) if item.id == objective_id), None)
+            if objective:
+                updated.append(self.update_insights_objective(actor, project_id, objective.id, objective.objective_text, index))
+        return updated
+
+    def deactivate_insights_objective(self, actor: CampaignOpsUser | None, project_id: str, objective_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            project = self._require_insights_project(repository, project_id)
+            self._validate_insights_project_access(repository, actor, project.program_id)
+            repository.deactivate_insights_objective(objective_id)
+            repository.append_event(
+                event_type="insights_objective_deactivated",
+                entity_type="insights_objective",
+                entity_id=objective_id,
+                program_id=project.program_id,
+                workstream_id=project.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} deactivated a research objective.",
+            )
+
+        self._transaction(operation)
+
+    def reactivate_insights_objective(self, actor: CampaignOpsUser | None, project_id: str, objective_id: str) -> InsightsObjectiveRecord:
+        def operation(repository: CampaignOpsRepository) -> InsightsObjectiveRecord:
+            project = self._require_insights_project(repository, project_id)
+            self._validate_insights_project_access(repository, actor, project.program_id)
+            objective = repository.reactivate_insights_objective(objective_id)
+            repository.append_event(
+                event_type="insights_objective_reactivated",
+                entity_type="insights_objective",
+                entity_id=objective_id,
+                program_id=project.program_id,
+                workstream_id=project.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{actor.display_name if actor else 'System'} reactivated research objective {objective.objective_text}.",
+            )
+            return objective
+
+        return self._transaction(operation)
 
     def create_resource(
         self,

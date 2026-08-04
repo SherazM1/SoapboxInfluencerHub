@@ -192,6 +192,7 @@ class Milestone:
     owner_user_id: str | None = None
     hard_deadline: bool = False
     completed_at: datetime | None = None
+    is_highlighted: bool = False
     is_active: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -354,6 +355,7 @@ class MilestoneListRow:
     owner_user_name: str | None
     hard_deadline: bool
     completed_at: datetime | None
+    is_highlighted: bool
     is_active: bool
     created_at: datetime | None
     updated_at: datetime | None
@@ -462,3 +464,71 @@ class ReportingRequestListRow:
 
 
 ReportingRequestDetail = ReportingRequestListRow
+
+
+@dataclass(slots=True)
+class InsightsProjectRecord:
+    id: str
+    program_id: str
+    project_title: str
+    workstream_id: str | None = None
+    job_number: str | None = None
+    insights_status: str | None = None
+    latest_update: str | None = None
+    total_program_cost: float | None = None
+    sample_size: int | None = None
+    budget: float | None = None
+    owner_user_id: str | None = None
+    is_active: bool = True
+    created_by_user_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.project_title = require_text(self.project_title, "project_title")
+
+
+@dataclass(slots=True)
+class InsightsPortfolioRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    workstream_id: str | None
+    project_title: str
+    job_number: str | None
+    insights_status: str | None
+    latest_update: str | None
+    owner_user_id: str | None
+    owner_display_name: str | None
+    total_program_cost: float | None
+    sample_size: int | None
+    budget: float | None
+    program_status: str
+    program_risk: str
+    next_milestone: str | None
+    next_milestone_date: date | None
+    tracksheet_url: str | None
+    results_deck_url: str | None
+    raw_data_url: str | None
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+InsightsProjectDetail = InsightsPortfolioRow
+
+
+@dataclass(slots=True)
+class InsightsObjectiveRecord:
+    id: str
+    insights_project_id: str
+    objective_text: str
+    sort_order: int = 0
+    is_active: bool = True
+    created_by_user_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.objective_text = require_text(self.objective_text, "objective_text")

@@ -20,6 +20,7 @@ from app.campaign_ops.components import (
 from app.campaign_ops.program_forms import render_new_program_form
 from app.campaign_ops.program_list import render_all_programs, render_my_programs
 from app.campaign_ops.program_workspace import render_program_workspace
+from app.campaign_ops.insights.views import render_insights
 from app.campaign_ops.reporting_requests.views import render_reporting_requests
 from app.campaign_ops.personal_views import render_my_work
 from app.campaign_ops.state import (
@@ -175,6 +176,8 @@ def render_active_section(
         render_my_work(user, service, users)
     elif section == "Requests":
         render_reporting_requests(user, service, users)
+    elif section == "Insights":
+        render_insights(user, service, users)
     else:
         render_placeholder(section)
 

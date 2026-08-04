@@ -28,6 +28,9 @@ from core.campaign_ops.models import (
     ActivityEvent,
     CampaignOpsUser,
     Client,
+    InsightsObjectiveRecord,
+    InsightsPortfolioRow,
+    InsightsProjectRecord,
     Milestone,
     MilestoneListRow,
     NoteListRow,
@@ -1352,15 +1355,16 @@ class CampaignOpsRepository:
         owner_user_id: str | None = None,
         hard_deadline: bool = False,
         completed_at: Any | None = None,
+        is_highlighted: bool = False,
     ) -> Milestone:
         return self._write_returning(
             """
             insert into campaign_ops_milestones (
                 program_id, workstream_id, title, milestone_type, target_date,
                 start_date, end_date, status, owner_user_id, hard_deadline,
-                completed_at, created_by, updated_by
+                completed_at, is_highlighted, created_by, updated_by
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning *
             """,
             (
@@ -1375,6 +1379,7 @@ class CampaignOpsRepository:
                 owner_user_id,
                 hard_deadline,
                 completed_at,
+                is_highlighted,
                 actor_user_id,
                 actor_user_id,
             ),
@@ -1402,6 +1407,7 @@ class CampaignOpsRepository:
         owner_user_id: str | None = None,
         hard_deadline: bool | None = None,
         completed_at: Any | None = None,
+        is_highlighted: bool | None = None,
     ) -> Milestone:
         return self._write_returning(
             """
@@ -1417,6 +1423,7 @@ class CampaignOpsRepository:
                 owner_user_id = %s,
                 hard_deadline = coalesce(%s, hard_deadline),
                 completed_at = %s,
+                is_highlighted = coalesce(%s, is_highlighted),
                 updated_by = %s
             where id = %s
             returning *
@@ -1432,6 +1439,7 @@ class CampaignOpsRepository:
                 owner_user_id,
                 hard_deadline,
                 completed_at,
+                is_highlighted,
                 actor_user_id,
                 milestone_id,
             ),
@@ -1477,6 +1485,7 @@ class CampaignOpsRepository:
             owner_user_name=normalized.get("owner_user_name"),
             hard_deadline=bool(normalized.get("hard_deadline", False)),
             completed_at=normalized.get("completed_at"),
+            is_highlighted=bool(normalized.get("is_highlighted", False)),
             is_active=bool(normalized.get("is_active", True)),
             created_at=normalized.get("created_at"),
             updated_at=normalized.get("updated_at"),
@@ -1984,6 +1993,267 @@ class CampaignOpsRepository:
         include_inactive: bool = False,
     ) -> list[ReportingRequestListRow]:
         return self.list_reporting_requests(include_inactive=include_inactive, program_id=program_id)
+
+    def create_insights_project(
+        self,
+        actor_user_id: str | None = None,
+        **kwargs: Any,
+    ) -> InsightsProjectRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_insights_projects (
+                program_id, workstream_id, job_number, project_title, insights_status,
+                latest_update, total_program_cost, sample_size, budget, owner_user_id,
+                created_by_user_id
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                kwargs["program_id"],
+                kwargs.get("workstream_id"),
+                kwargs.get("job_number"),
+                require_text(kwargs.get("project_title"), "project_title"),
+                kwargs.get("insights_status"),
+                kwargs.get("latest_update"),
+                kwargs.get("total_program_cost"),
+                kwargs.get("sample_size"),
+                kwargs.get("budget"),
+                kwargs.get("owner_user_id"),
+                actor_user_id,
+            ),
+            InsightsProjectRecord,
+        )
+
+    def get_insights_project(self, project_id: str) -> InsightsProjectRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_insights_projects where id = %s",
+            (project_id,),
+            InsightsProjectRecord,
+        )
+
+    def get_insights_project_by_program(self, program_id: str) -> InsightsProjectRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_insights_projects where program_id = %s",
+            (program_id,),
+            InsightsProjectRecord,
+        )
+
+    def update_insights_project(
+        self,
+        project_id: str,
+        **kwargs: Any,
+    ) -> InsightsProjectRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_insights_projects
+            set
+                workstream_id = %s,
+                job_number = %s,
+                project_title = %s,
+                insights_status = %s,
+                latest_update = %s,
+                total_program_cost = %s,
+                sample_size = %s,
+                budget = %s,
+                owner_user_id = %s
+            where id = %s
+            returning *
+            """,
+            (
+                kwargs.get("workstream_id"),
+                kwargs.get("job_number"),
+                require_text(kwargs.get("project_title"), "project_title"),
+                kwargs.get("insights_status"),
+                kwargs.get("latest_update"),
+                kwargs.get("total_program_cost"),
+                kwargs.get("sample_size"),
+                kwargs.get("budget"),
+                kwargs.get("owner_user_id"),
+                project_id,
+            ),
+            InsightsProjectRecord,
+        )
+
+    def deactivate_insights_project(self, project_id: str) -> None:
+        self._execute(
+            """
+            update campaign_ops_insights_projects
+            set is_active = false
+            where id = %s and is_active = true
+            """,
+            (project_id,),
+        )
+
+    def reactivate_insights_project(self, project_id: str) -> InsightsProjectRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_insights_projects
+            set is_active = true
+            where id = %s and is_active = false
+            returning *
+            """,
+            (project_id,),
+            InsightsProjectRecord,
+        )
+
+    def _insights_portfolio_row_from_db(self, row: dict[str, Any]) -> InsightsPortfolioRow:
+        normalized = normalize_row(row)
+        return InsightsPortfolioRow(
+            id=str(normalized["id"]),
+            program_id=str(normalized["program_id"]),
+            program_name=str(normalized["program_name"]),
+            client_name=normalized.get("client_name"),
+            workstream_id=normalize_id(normalized.get("workstream_id")),
+            project_title=str(normalized["project_title"]),
+            job_number=normalized.get("job_number"),
+            insights_status=normalized.get("insights_status"),
+            latest_update=normalized.get("latest_update"),
+            owner_user_id=normalize_id(normalized.get("owner_user_id")),
+            owner_display_name=normalized.get("owner_display_name"),
+            total_program_cost=normalized.get("total_program_cost"),
+            sample_size=normalized.get("sample_size"),
+            budget=normalized.get("budget"),
+            program_status=str(normalized["program_status"]),
+            program_risk=str(normalized["program_risk"]),
+            next_milestone=normalized.get("next_milestone"),
+            next_milestone_date=normalized.get("next_milestone_date"),
+            tracksheet_url=normalized.get("tracksheet_url"),
+            results_deck_url=normalized.get("results_deck_url"),
+            raw_data_url=normalized.get("raw_data_url"),
+            is_active=bool(normalized.get("is_active", True)),
+            created_at=normalized.get("created_at"),
+            updated_at=normalized.get("updated_at"),
+        )
+
+    def list_insights_projects(self, include_inactive: bool = False) -> list[InsightsPortfolioRow]:
+        clauses = [] if include_inactive else ["ip.is_active = true"]
+        where_clause = "where " + " and ".join(clauses) if clauses else ""
+        query = f"""
+            with next_milestone as (
+                select distinct on (m.program_id)
+                    m.program_id,
+                    m.title,
+                    coalesce(m.target_date, m.start_date, m.end_date) as milestone_date
+                from campaign_ops_milestones m
+                where m.is_active = true
+                  and m.status <> %s
+                order by m.program_id, coalesce(m.target_date, m.start_date, m.end_date) asc nulls last, m.created_at asc
+            ),
+            resource_agg as (
+                select
+                    program_id,
+                    max(url) filter (where resource_type = 'Tracksheet' and is_active = true) as tracksheet_url,
+                    max(url) filter (where resource_type = 'Results Deck' and is_active = true) as results_deck_url,
+                    max(url) filter (where resource_type in ('Raw Data', 'Raw Data Key') and is_active = true) as raw_data_url
+                from campaign_ops_resources
+                group by program_id
+            )
+            select
+                ip.*,
+                p.program_name,
+                p.status as program_status,
+                p.risk_level as program_risk,
+                c.name as client_name,
+                u.display_name as owner_display_name,
+                nm.title as next_milestone,
+                nm.milestone_date as next_milestone_date,
+                ra.tracksheet_url,
+                ra.results_deck_url,
+                ra.raw_data_url
+            from campaign_ops_insights_projects ip
+            join campaign_ops_programs p on p.id = ip.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_users u on u.id = ip.owner_user_id
+            left join next_milestone nm on nm.program_id = ip.program_id
+            left join resource_agg ra on ra.program_id = ip.program_id
+            {where_clause}
+            order by ip.updated_at desc, ip.project_title asc
+        """
+        return [
+            self._insights_portfolio_row_from_db(row)
+            for row in self._fetch_raw_all(query, (TaskStatus.COMPLETED.value,))
+        ]
+
+    def get_insights_project_detail(self, project_id: str) -> InsightsPortfolioRow | None:
+        return next((row for row in self.list_insights_projects(include_inactive=True) if row.id == project_id), None)
+
+    def create_insights_objective(
+        self,
+        insights_project_id: str,
+        objective_text: str,
+        actor_user_id: str | None = None,
+        sort_order: int = 0,
+    ) -> InsightsObjectiveRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_insights_objectives (
+                insights_project_id, objective_text, sort_order, created_by_user_id
+            )
+            values (%s, %s, %s, %s)
+            returning *
+            """,
+            (insights_project_id, require_text(objective_text, "objective_text"), sort_order, actor_user_id),
+            InsightsObjectiveRecord,
+        )
+
+    def list_insights_objectives(
+        self,
+        insights_project_id: str,
+        include_inactive: bool = False,
+    ) -> list[InsightsObjectiveRecord]:
+        clauses = ["insights_project_id = %s"]
+        params: list[Any] = [insights_project_id]
+        if not include_inactive:
+            clauses.append("is_active = true")
+        return self._fetch_all(
+            f"""
+            select * from campaign_ops_insights_objectives
+            where {' and '.join(clauses)}
+            order by sort_order asc, created_at asc
+            """,
+            tuple(params),
+            InsightsObjectiveRecord,
+        )
+
+    def update_insights_objective(
+        self,
+        objective_id: str,
+        objective_text: str,
+        sort_order: int,
+    ) -> InsightsObjectiveRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_insights_objectives
+            set objective_text = %s, sort_order = %s
+            where id = %s
+            returning *
+            """,
+            (require_text(objective_text, "objective_text"), sort_order, objective_id),
+            InsightsObjectiveRecord,
+        )
+
+    def deactivate_insights_objective(self, objective_id: str) -> None:
+        self._execute(
+            """
+            update campaign_ops_insights_objectives
+            set is_active = false
+            where id = %s and is_active = true
+            """,
+            (objective_id,),
+        )
+
+    def reactivate_insights_objective(self, objective_id: str) -> InsightsObjectiveRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_insights_objectives
+            set is_active = true
+            where id = %s and is_active = false
+            returning *
+            """,
+            (objective_id,),
+            InsightsObjectiveRecord,
+        )
 
     def append_event(
         self,

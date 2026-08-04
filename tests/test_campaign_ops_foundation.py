@@ -49,6 +49,9 @@ from core.campaign_ops.migrations import (
 from core.campaign_ops.models import (
     CampaignOpsUser,
     Client,
+    InsightsObjectiveRecord,
+    InsightsPortfolioRow,
+    InsightsProjectRecord,
     Milestone,
     MilestoneListRow,
     NoteListRow,
@@ -73,6 +76,7 @@ from core.campaign_ops.permissions import (
 from core.campaign_ops.seed_data import get_seed_users
 from core.campaign_ops.service import CampaignOpsService
 from core.campaign_ops.repository import CampaignOpsRepository
+from core.campaign_ops.insights import INSIGHTS_STATUS_DRAFTING_SURVEY, INSIGHTS_STATUS_NOT_STARTED
 from core.campaign_ops.reporting_requests import normalize_am_name
 
 
@@ -208,6 +212,8 @@ class FakePrompt4ARepository:
         self.resources: list[Resource] = []
         self.notes: list[ProgramNote] = []
         self.reporting_requests: list[ReportingRequestRecord] = []
+        self.insights_projects: list[InsightsProjectRecord] = []
+        self.insights_objectives: list[InsightsObjectiveRecord] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -435,6 +441,7 @@ class FakePrompt4ARepository:
                 owner_user_name=owner.display_name if owner else None,
                 hard_deadline=milestone.hard_deadline,
                 completed_at=milestone.completed_at,
+                is_highlighted=milestone.is_highlighted,
                 is_active=milestone.is_active,
                 created_at=milestone.created_at,
                 updated_at=milestone.updated_at,
@@ -626,6 +633,138 @@ class FakePrompt4ARepository:
 
     def list_requests_by_program(self, program_id: str, include_inactive: bool = False) -> list[ReportingRequestListRow]:
         return self.list_reporting_requests(include_inactive=include_inactive, program_id=program_id)
+
+    def create_insights_project(self, actor_user_id: str | None = None, **kwargs: object) -> InsightsProjectRecord:
+        project = InsightsProjectRecord(
+            id=f"66666666-6666-4666-8666-{len(self.insights_projects) + 1:012d}",
+            created_by_user_id=actor_user_id,
+            **kwargs,
+        )
+        self.insights_projects.append(project)
+        return project
+
+    def get_insights_project(self, project_id: str) -> InsightsProjectRecord | None:
+        return next((project for project in self.insights_projects if project.id == project_id), None)
+
+    def get_insights_project_by_program(self, program_id: str) -> InsightsProjectRecord | None:
+        return next((project for project in self.insights_projects if project.program_id == program_id), None)
+
+    def update_insights_project(self, project_id: str, **kwargs: object) -> InsightsProjectRecord:
+        project = self.get_insights_project(project_id)
+        if project is None:
+            raise CampaignOpsNotFoundError("Insights project was not found.")
+        for key, value in kwargs.items():
+            setattr(project, key, value)
+        return project
+
+    def deactivate_insights_project(self, project_id: str) -> None:
+        project = self.get_insights_project(project_id)
+        if project is None or not project.is_active:
+            raise CampaignOpsNotFoundError("Insights project was not found.")
+        project.is_active = False
+
+    def reactivate_insights_project(self, project_id: str) -> InsightsProjectRecord:
+        project = self.get_insights_project(project_id)
+        if project is None or project.is_active:
+            raise CampaignOpsNotFoundError("Insights project was not found.")
+        project.is_active = True
+        return project
+
+    def _insights_portfolio_row(self, project: InsightsProjectRecord) -> InsightsPortfolioRow:
+        program = self.get_program(project.program_id)
+        client = self.get_program_client(project.program_id)
+        owner = self.get_user_by_id(project.owner_user_id) if project.owner_user_id else None
+        active_milestones = [
+            milestone
+            for milestone in self.milestones
+            if milestone.program_id == project.program_id
+            and milestone.is_active
+            and milestone.status != TaskStatus.COMPLETED.value
+            and (milestone.workstream_id == project.workstream_id or milestone.milestone_type == "Insights")
+        ]
+        active_milestones.sort(key=lambda milestone: ((milestone.target_date or milestone.start_date or milestone.end_date) is None, milestone.target_date or milestone.start_date or milestone.end_date or date.max, milestone.title))
+        next_milestone = active_milestones[0] if active_milestones else None
+        resources = [resource for resource in self.resources if resource.program_id == project.program_id and resource.is_active]
+        tracksheet = next((resource.url for resource in resources if resource.resource_type == "Tracksheet" and resource.url), None)
+        results_deck = next((resource.url for resource in resources if resource.resource_type == "Results Deck" and resource.url), None)
+        raw_data = next((resource.url for resource in resources if resource.resource_type in {"Raw Data", "Raw Data Key"} and resource.url), None)
+        return InsightsPortfolioRow(
+            id=project.id,
+            program_id=project.program_id,
+            program_name=program.program_name if program else "",
+            client_name=client.name if client else None,
+            workstream_id=project.workstream_id,
+            project_title=project.project_title,
+            job_number=project.job_number,
+            insights_status=project.insights_status,
+            latest_update=project.latest_update,
+            owner_user_id=project.owner_user_id,
+            owner_display_name=owner.display_name if owner else None,
+            total_program_cost=project.total_program_cost,
+            sample_size=project.sample_size,
+            budget=project.budget,
+            program_status=program.status if program else ProgramStatus.ACTIVE.value,
+            program_risk=program.risk_level if program else RiskLevel.UNRATED.value,
+            next_milestone=next_milestone.title if next_milestone else None,
+            next_milestone_date=next_milestone.target_date if next_milestone else None,
+            tracksheet_url=tracksheet,
+            results_deck_url=results_deck,
+            raw_data_url=raw_data,
+            is_active=project.is_active,
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+        )
+
+    def list_insights_projects(self, include_inactive: bool = False) -> list[InsightsPortfolioRow]:
+        return [
+            self._insights_portfolio_row(project)
+            for project in self.insights_projects
+            if include_inactive or project.is_active
+        ]
+
+    def get_insights_project_detail(self, project_id: str) -> InsightsPortfolioRow | None:
+        project = self.get_insights_project(project_id)
+        return self._insights_portfolio_row(project) if project else None
+
+    def create_insights_objective(self, insights_project_id: str, objective_text: str, actor_user_id: str | None = None, sort_order: int = 0) -> InsightsObjectiveRecord:
+        objective = InsightsObjectiveRecord(
+            id=f"55555555-5555-4555-8555-{len(self.insights_objectives) + 1:012d}",
+            insights_project_id=insights_project_id,
+            objective_text=objective_text,
+            sort_order=sort_order,
+            created_by_user_id=actor_user_id,
+        )
+        self.insights_objectives.append(objective)
+        return objective
+
+    def list_insights_objectives(self, insights_project_id: str, include_inactive: bool = False) -> list[InsightsObjectiveRecord]:
+        rows = [
+            objective
+            for objective in self.insights_objectives
+            if objective.insights_project_id == insights_project_id and (include_inactive or objective.is_active)
+        ]
+        return sorted(rows, key=lambda objective: (objective.sort_order, objective.created_at or datetime.min))
+
+    def update_insights_objective(self, objective_id: str, objective_text: str, sort_order: int) -> InsightsObjectiveRecord:
+        objective = next((item for item in self.insights_objectives if item.id == objective_id), None)
+        if objective is None:
+            raise CampaignOpsNotFoundError("Insights objective was not found.")
+        objective.objective_text = objective_text
+        objective.sort_order = sort_order
+        return objective
+
+    def deactivate_insights_objective(self, objective_id: str) -> None:
+        objective = next((item for item in self.insights_objectives if item.id == objective_id), None)
+        if objective is None or not objective.is_active:
+            raise CampaignOpsNotFoundError("Insights objective was not found.")
+        objective.is_active = False
+
+    def reactivate_insights_objective(self, objective_id: str) -> InsightsObjectiveRecord:
+        objective = next((item for item in self.insights_objectives if item.id == objective_id), None)
+        if objective is None or objective.is_active:
+            raise CampaignOpsNotFoundError("Insights objective was not found.")
+        objective.is_active = True
+        return objective
 
     def _task_list_row(self, task: Task) -> TaskListRow:
         program = self.get_program(task.program_id)
@@ -1860,6 +1999,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
             owner_user_name=None,
             hard_deadline=False,
             completed_at=None,
+            is_highlighted=False,
             is_active=True,
             created_at=None,
             updated_at=None,
@@ -2098,6 +2238,162 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         if state.get("campaign_ops_selected_request_id") not in visible_ids:
             state.pop("campaign_ops_selected_request_id", None)
         self.assertNotIn("campaign_ops_selected_request_id", state)
+
+    def test_prompt5b_insights_validation_crud_and_activity(self) -> None:
+        repository, service, bailey, t_user, _l_user, program_id, influencer, retail = self._prompt4c_fixture()
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_insights_project(bailey, program_id=program_id, project_title=" ")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_insights_project(bailey, project_title="TEST - Missing Program")
+        with self.assertRaises(CampaignOpsError):
+            service.create_insights_project(bailey, program_id="missing", project_title="TEST - Missing Program")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_insights_project(bailey, program_id=program_id, project_title="Bad owner", owner_user_id=repository.users[3].id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_insights_project(bailey, program_id=program_id, project_title="Bad status", insights_status="bad")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_insights_project(bailey, program_id=program_id, project_title="Bad cost", total_program_cost=-1)
+        repository.deactivate_workstream(retail.id, actor_user_id=bailey.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_insights_project(bailey, program_id=program_id, workstream_id=retail.id, project_title="Inactive workstream")
+        repository.reactivate_workstream(retail.id, actor_user_id=bailey.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_insights_project(
+                bailey,
+                program_id=program_id,
+                workstream_id=influencer.id,
+                project_title="Bad resource URL",
+                initial_resources={"Tracksheet": "javascript:bad"},
+            )
+
+        project = service.create_insights_project(
+            bailey,
+            program_id=program_id,
+            project_title="TEST - Insights Project",
+            job_number="JOB-123",
+            insights_status=INSIGHTS_STATUS_DRAFTING_SURVEY,
+            latest_update="Drafting survey",
+            total_program_cost=1200,
+            sample_size=300,
+            budget=1500,
+            owner_user_id=t_user.id,
+            initial_resources={
+                "Tracksheet": "https://example.com/tracksheet",
+                "Results Deck": "https://example.com/deck",
+                "Raw Data": "https://example.com/raw",
+            },
+            initial_objectives=["Assess overall performance", "Understand retailer breakouts"],
+        )
+        self.assertEqual(project.owner_user_id, t_user.id)
+        self.assertEqual(project.insights_status, INSIGHTS_STATUS_DRAFTING_SURVEY)
+        self.assertEqual(len(repository.insights_objectives), 2)
+        self.assertTrue(any(workstream.workstream_type == WorkstreamType.INSIGHTS.value for workstream in repository.workstreams))
+
+        event_count = len(repository.events)
+        unchanged = service.update_insights_project(bailey, project.id, project_title=project.project_title)
+        self.assertEqual(unchanged.project_title, project.project_title)
+        self.assertEqual(len(repository.events), event_count)
+        updated = service.update_insights_project(
+            bailey,
+            project.id,
+            project_title="TEST - Insights Project Updated",
+            latest_update="Client review",
+            insights_status="client_review",
+        )
+        self.assertEqual(updated.project_title, "TEST - Insights Project Updated")
+        self.assertEqual(updated.latest_update, "Client review")
+        service.deactivate_insights_project(bailey, project.id)
+        self.assertFalse(repository.get_insights_project(project.id).is_active)
+        self.assertEqual(service.list_insights_projects(bailey), [])
+        service.reactivate_insights_project(bailey, project.id)
+        self.assertTrue(repository.get_insights_project(project.id).is_active)
+
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("insights_project_created", event_types)
+        self.assertIn("insights_project_project_title_changed", event_types)
+        self.assertIn("insights_project_latest_update_changed", event_types)
+        self.assertIn("insights_project_deactivated", event_types)
+        self.assertIn("insights_project_reactivated", event_types)
+
+    def test_prompt5b_insights_portfolio_timeline_objectives_and_resources(self) -> None:
+        from app.campaign_ops.insights.formatting import PORTFOLIO_COLUMNS, portfolio_rows, timeline_date_label
+
+        repository, service, bailey, t_user, _l_user, program_id, _influencer, _retail = self._prompt4c_fixture()
+        project = service.create_insights_project(
+            bailey,
+            program_id=program_id,
+            project_title="TEST - Portfolio Project",
+            insights_status=INSIGHTS_STATUS_NOT_STARTED,
+            owner_user_id=t_user.id,
+        )
+        exact = service.create_milestone(
+            bailey,
+            program_id,
+            "TEST - Exact Date",
+            workstream_id=project.workstream_id,
+            milestone_type="Insights",
+            target_date=date(2026, 8, 10),
+            is_highlighted=True,
+        )
+        ranged = service.create_milestone(
+            bailey,
+            program_id,
+            "TEST - Date Range",
+            workstream_id=project.workstream_id,
+            milestone_type="Insights",
+            start_date=date(2026, 8, 12),
+            end_date=date(2026, 8, 14),
+        )
+        undated = service.create_milestone(bailey, program_id, "TEST - Undated", workstream_id=project.workstream_id, milestone_type="Insights")
+        service.create_resource(bailey, program_id, "Tracksheet", resource_type="Tracksheet", workstream_id=project.workstream_id, url="https://example.com/tracksheet")
+        service.create_resource(bailey, program_id, "Results Deck", resource_type="Results Deck", workstream_id=project.workstream_id, url="https://example.com/deck")
+        service.create_resource(bailey, program_id, "Raw Data Key", resource_type="Raw Data Key", workstream_id=project.workstream_id, url="https://example.com/raw-key")
+
+        rows = service.list_insights_projects(bailey)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].next_milestone, exact.title)
+        self.assertEqual(rows[0].tracksheet_url, "https://example.com/tracksheet")
+        self.assertEqual(rows[0].results_deck_url, "https://example.com/deck")
+        self.assertEqual(rows[0].raw_data_url, "https://example.com/raw-key")
+        display_rows = portfolio_rows(rows)
+        self.assertEqual(list(display_rows[0]), PORTFOLIO_COLUMNS)
+        self.assertEqual(display_rows[0]["Tracksheet"], "Available")
+        self.assertEqual(timeline_date_label(service.list_program_milestones(bailey, program_id)[0]), "8/10")
+        self.assertEqual(timeline_date_label(ranged), "8/12 - 8/14")
+        self.assertEqual(timeline_date_label(undated), "-")
+        self.assertTrue(repository.get_milestone(exact.id).is_highlighted)
+        service.update_milestone_details(bailey, exact.id, is_highlighted=False)
+        self.assertFalse(repository.get_milestone(exact.id).is_highlighted)
+        service.complete_milestone(bailey, exact.id)
+        self.assertIsNotNone(repository.get_milestone(exact.id).completed_at)
+        service.reopen_milestone(bailey, exact.id)
+        self.assertIsNone(repository.get_milestone(exact.id).completed_at)
+
+        objective = service.add_insights_objective(bailey, project.id, "Identify purchase barriers", sort_order=2)
+        changed = service.update_insights_objective(bailey, project.id, objective.id, "Identify purchase drivers", 1)
+        self.assertEqual(changed.sort_order, 1)
+        service.deactivate_insights_objective(bailey, project.id, objective.id)
+        self.assertEqual([item.id for item in service.list_insights_objectives(bailey, project.id)], repository.insights_objectives[:0])
+        service.reactivate_insights_objective(bailey, project.id, objective.id)
+        self.assertIn(objective.id, [item.id for item in service.list_insights_objectives(bailey, project.id)])
+
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("resource_created", event_types)
+        self.assertIn("milestone_field_changed", event_types)
+        self.assertIn("milestone_reopened", event_types)
+        self.assertIn("insights_objective_created", event_types)
+        self.assertIn("insights_objective_updated", event_types)
+        self.assertIn("insights_objective_deactivated", event_types)
+        self.assertIn("insights_objective_reactivated", event_types)
+
+    def test_prompt5b_state_keys_are_namespaced_and_stale_project_clears(self) -> None:
+        self.assertTrue(all(key.startswith("campaign_ops_") for key in SESSION_KEYS))
+        self.assertIn("campaign_ops_selected_insights_project_id", SESSION_KEYS)
+        state: dict[str, object] = {"campaign_ops_selected_insights_project_id": "missing"}
+        visible_ids: set[str] = set()
+        if state.get("campaign_ops_selected_insights_project_id") not in visible_ids:
+            state.pop("campaign_ops_selected_insights_project_id", None)
+        self.assertNotIn("campaign_ops_selected_insights_project_id", state)
 
 
 if __name__ == "__main__":

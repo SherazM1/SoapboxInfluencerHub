@@ -13,6 +13,7 @@ BAILEY_SECTIONS = [
     "Retail Media",
     "eCommerce / Content",
     "Requests",
+    "Insights",
     "Administration",
 ]
 
@@ -23,6 +24,7 @@ TEAM_MEMBER_SECTIONS = [
     "Retail Media",
     "eCommerce / Content",
     "Requests",
+    "Insights",
 ]
 
 SESSION_KEYS = {
@@ -59,6 +61,14 @@ SESSION_KEYS = {
     "campaign_ops_request_create_open",
     "campaign_ops_request_edit_id",
     "campaign_ops_request_show_inactive",
+    "campaign_ops_insights_view",
+    "campaign_ops_selected_insights_project_id",
+    "campaign_ops_insights_filters",
+    "campaign_ops_insights_create_open",
+    "campaign_ops_insights_edit_open",
+    "campaign_ops_insights_timeline_edit_id",
+    "campaign_ops_insights_objective_edit_id",
+    "campaign_ops_insights_show_inactive",
 }
 
 
