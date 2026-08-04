@@ -34,6 +34,13 @@ from core.campaign_ops.models import (
     ContentSkuGroupRecord,
     ContentSkuRecord,
     ContentSubmissionRecord,
+    InfluencerApprovalRoundRecord,
+    InfluencerCampaignDetail,
+    InfluencerCampaignRecord,
+    InfluencerContentRoundRecord,
+    InfluencerCreatorSummaryRecord,
+    InfluencerPlanningPortfolioRow,
+    InfluencerPlanningStepRecord,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectDetail,
@@ -107,6 +114,22 @@ from core.campaign_ops.content_management import (
     SUBMISSION_STATUSES,
     normalize_content_status,
     normalize_optional_status,
+)
+from core.campaign_ops.influencer import (
+    APPROVAL_STATUSES,
+    APPROVAL_TYPES,
+    CONTENT_ROUND_STATUSES,
+    CONTENT_ROUND_TYPES,
+    INFLUENCER_RESOURCE_TYPES,
+    INFLUENCER_STAGE_PLANNING,
+    PLANNING_STATUS_ON_HOLD,
+    PLANNING_STATUS_NOT_STARTED,
+    PLANNING_STEP_STATUSES,
+    RESPONSIBLE_PARTIES,
+    STANDARD_PLANNING_TEMPLATE,
+    normalize_influencer_stage,
+    normalize_optional_status as normalize_influencer_optional_status,
+    normalize_planning_status,
 )
 from core.campaign_ops.retail_media import (
     RETAIL_MEDIA_RESOURCE_TYPES,
@@ -2610,6 +2633,435 @@ class CampaignOpsService:
             "channel_budget_total": sum(channel.budget or 0 for channel in channels),
             "channel_spend_total": sum(channel.spend_to_date or 0 for channel in channels),
         }
+
+    def _influencer_actor_label(self, actor: CampaignOpsUser | None) -> str:
+        return actor.display_name if actor else "System"
+
+    def _require_influencer_campaign(self, repository: CampaignOpsRepository, campaign_id: str) -> InfluencerCampaignRecord:
+        campaign = repository.get_influencer_campaign(campaign_id)
+        if campaign is None:
+            raise CampaignOpsNotFoundError("Influencer campaign was not found.")
+        return campaign
+
+    def _validate_influencer_access(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, program_id: str) -> Program:
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this Influencer campaign.")
+        if not program.is_active:
+            raise CampaignOpsValidationError("Archived programs cannot have Influencer Planning changes.")
+        return program
+
+    def _non_negative_int(self, value: Any, label: str) -> int | None:
+        if value in (None, ""):
+            return None
+        number = int(value)
+        if number < 0:
+            raise CampaignOpsValidationError(f"{label} must be non-negative.")
+        return number
+
+    def _non_negative_float(self, value: Any, label: str) -> float | None:
+        if value in (None, ""):
+            return None
+        number = float(value)
+        if number < 0:
+            raise CampaignOpsValidationError(f"{label} must be non-negative.")
+        return number
+
+    def _validate_influencer_campaign_payload(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, payload: dict[str, Any], before: InfluencerCampaignRecord | None = None) -> dict[str, Any]:
+        program_id = payload.get("program_id") or (before.program_id if before else None)
+        if not program_id:
+            raise CampaignOpsValidationError("Program is required.")
+        self._validate_influencer_access(repository, actor, str(program_id))
+        title = require_text(payload.get("campaign_title") or (before.campaign_title if before else None), "Influencer Campaign title")
+        workstream_id = payload.get("workstream_id") if "workstream_id" in payload else (before.workstream_id if before else None)
+        if workstream_id:
+            workstream = self._require_workstream(repository, str(program_id), str(workstream_id))
+            if workstream.workstream_type != WorkstreamType.INFLUENCER.value:
+                raise CampaignOpsValidationError("Selected workstream must be an Influencer workstream.")
+            if not workstream.is_active:
+                raise CampaignOpsValidationError("Inactive workstreams cannot receive active Influencer Planning changes.")
+        manager_user_id = payload.get("manager_user_id") if "manager_user_id" in payload else (before.manager_user_id if before else None)
+        if manager_user_id:
+            self._require_active_user(repository, str(manager_user_id), "Manager")
+        launch = payload.get("launch_date") if "launch_date" in payload else (before.launch_date if before else None)
+        wrap = payload.get("wrap_date") if "wrap_date" in payload else (before.wrap_date if before else None)
+        if launch and wrap and wrap < launch:
+            raise CampaignOpsValidationError("Wrap date cannot precede launch date.")
+        is_on_hold = bool(payload.get("is_on_hold") if "is_on_hold" in payload else (before.is_on_hold if before else False))
+        hold_reason = self._clean_optional_text(payload.get("hold_reason") if "hold_reason" in payload else (before.hold_reason if before else None))
+        if is_on_hold and not hold_reason:
+            raise CampaignOpsValidationError("Hold reason is required when an Influencer campaign is On Hold.")
+        invoice_amount = self._non_negative_float(payload.get("invoice_amount") if "invoice_amount" in payload else (before.invoice_amount if before else None), "Invoice amount")
+        target = self._non_negative_int(payload.get("target_creator_count") if "target_creator_count" in payload else (before.target_creator_count if before else None), "Target creator count")
+        approved = self._non_negative_int(payload.get("approved_creator_count") if "approved_creator_count" in payload else (before.approved_creator_count if before else None), "Approved creator count")
+        contracted = self._non_negative_int(payload.get("contracted_creator_count") if "contracted_creator_count" in payload else (before.contracted_creator_count if before else None), "Contracted creator count")
+        return {
+            "program_id": str(program_id),
+            "workstream_id": str(workstream_id) if workstream_id else None,
+            "campaign_title": title,
+            "manager_user_id": str(manager_user_id) if manager_user_id else None,
+            "influencer_stage": normalize_influencer_stage(payload.get("influencer_stage") if "influencer_stage" in payload else (before.influencer_stage if before else INFLUENCER_STAGE_PLANNING)),
+            "planning_status": normalize_planning_status(payload.get("planning_status") if "planning_status" in payload else (before.planning_status if before else PLANNING_STATUS_NOT_STARTED)),
+            "latest_update": self._clean_optional_text(payload.get("latest_update") if "latest_update" in payload else (before.latest_update if before else None)),
+            "waiting_on": self._clean_optional_text(payload.get("waiting_on") if "waiting_on" in payload else (before.waiting_on if before else None)),
+            "is_on_hold": is_on_hold,
+            "hold_reason": hold_reason,
+            "application_open_date": payload.get("application_open_date") if "application_open_date" in payload else (before.application_open_date if before else None),
+            "application_close_date": payload.get("application_close_date") if "application_close_date" in payload else (before.application_close_date if before else None),
+            "influencer_approval_due_date": payload.get("influencer_approval_due_date") if "influencer_approval_due_date" in payload else (before.influencer_approval_due_date if before else None),
+            "scripts_due_date": payload.get("scripts_due_date") if "scripts_due_date" in payload else (before.scripts_due_date if before else None),
+            "first_content_due_date": payload.get("first_content_due_date") if "first_content_due_date" in payload else (before.first_content_due_date if before else None),
+            "launch_date": launch,
+            "wrap_date": wrap,
+            "invoice_date": payload.get("invoice_date") if "invoice_date" in payload else (before.invoice_date if before else None),
+            "invoice_status": self._clean_optional_text(payload.get("invoice_status") if "invoice_status" in payload else (before.invoice_status if before else None)),
+            "invoice_amount": invoice_amount,
+            "target_creator_count": target,
+            "approved_creator_count": approved,
+            "contracted_creator_count": contracted,
+        }
+
+    def create_influencer_campaign(self, actor: CampaignOpsUser | None, **kwargs: Any) -> InfluencerCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCampaignRecord:
+            payload = self._validate_influencer_campaign_payload(repository, actor, kwargs)
+            if repository.get_active_influencer_campaign_by_title(payload["program_id"], payload["campaign_title"]):
+                raise CampaignOpsValidationError("An active Influencer campaign with this title already exists for this shared program.")
+            for resource_type, url in (kwargs.get("initial_resources") or {}).items():
+                if resource_type in INFLUENCER_RESOURCE_TYPES and url:
+                    self._validate_resource_url(str(url))
+            if not payload.get("workstream_id"):
+                existing = next((w for w in repository.list_all_workstreams_by_program(payload["program_id"]) if w.workstream_type == WorkstreamType.INFLUENCER.value and w.is_active), None)
+                payload["workstream_id"] = existing.id if existing else repository.create_workstream(payload["program_id"], WorkstreamType.INFLUENCER.value, actor_user_id=actor.id if actor else None, owner_user_id=payload.get("manager_user_id")).id
+            campaign = repository.create_influencer_campaign(actor_user_id=actor.id if actor else None, **payload)
+            repository.create_or_update_influencer_creator_summary(
+                campaign.id,
+                target_creator_count=payload.get("target_creator_count"),
+                approved_count=payload.get("approved_creator_count"),
+                contracted_count=payload.get("contracted_creator_count"),
+                is_active=True,
+            )
+            if kwargs.get("use_standard_template"):
+                self._create_standard_influencer_steps(repository, actor, campaign)
+            for resource_type, url in (kwargs.get("initial_resources") or {}).items():
+                if resource_type in INFLUENCER_RESOURCE_TYPES:
+                    resource = repository.create_resource(program_id=campaign.program_id, workstream_id=campaign.workstream_id, resource_type=resource_type, title=resource_type, url=self._validate_resource_url(url) if url else None, actor_user_id=actor.id if actor else None)
+                    repository.append_event(event_type="resource_created", entity_type="resource", entity_id=resource.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added {resource.resource_type} for Influencer campaign {campaign.campaign_title}.")
+            repository.append_event(event_type="influencer_campaign_created", entity_type="influencer_campaign", entity_id=campaign.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} created Influencer campaign {campaign.campaign_title}.")
+            return campaign
+
+        return self._transaction(operation)
+
+    def update_influencer_campaign(self, actor: CampaignOpsUser | None, campaign_id: str, **kwargs: Any) -> InfluencerCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCampaignRecord:
+            before = self._require_influencer_campaign(repository, campaign_id)
+            payload = self._validate_influencer_campaign_payload(repository, actor, kwargs, before)
+            duplicate = repository.get_active_influencer_campaign_by_title(payload["program_id"], payload["campaign_title"])
+            if duplicate and duplicate.id != campaign_id:
+                raise CampaignOpsValidationError("An active Influencer campaign with this title already exists for this shared program.")
+            changes = {field: value for field, value in payload.items() if field != "program_id" and getattr(before, field) != value}
+            if not changes:
+                return before
+            merged = {field: getattr(before, field) for field in payload if field != "program_id"}
+            merged.update(changes)
+            updated = repository.update_influencer_campaign(campaign_id, **merged)
+            for field, value in changes.items():
+                event_type = f"influencer_campaign_{field}_changed"
+                message = f"{self._influencer_actor_label(actor)} changed {field.replace('_', ' ')} from {getattr(before, field) or '-'} to {value or '-'}."
+                if field == "is_on_hold":
+                    event_type = "influencer_campaign_placed_on_hold" if value else "influencer_campaign_resumed"
+                    message = f"{self._influencer_actor_label(actor)} {'placed ' + updated.campaign_title + ' on hold: ' + (updated.hold_reason or '-') if value else 'resumed ' + updated.campaign_title}."
+                repository.append_event(event_type=event_type, entity_type="influencer_campaign", entity_id=campaign_id, program_id=updated.program_id, workstream_id=updated.workstream_id, actor_user_id=actor.id if actor else None, old_value_json={field: self._activity_value(getattr(before, field))}, new_value_json={field: self._activity_value(value)}, message=message)
+            if any(field in changes for field in ("target_creator_count", "approved_creator_count", "contracted_creator_count")):
+                repository.create_or_update_influencer_creator_summary(campaign_id, target_creator_count=updated.target_creator_count, approved_count=updated.approved_creator_count, contracted_count=updated.contracted_creator_count, is_active=True)
+            return updated
+
+        return self._transaction(operation)
+
+    def place_influencer_campaign_on_hold(self, actor: CampaignOpsUser | None, campaign_id: str, hold_reason: str) -> InfluencerCampaignRecord:
+        return self.update_influencer_campaign(actor, campaign_id, is_on_hold=True, hold_reason=hold_reason, planning_status=PLANNING_STATUS_ON_HOLD)
+
+    def resume_influencer_campaign(self, actor: CampaignOpsUser | None, campaign_id: str, planning_status: str | None = None) -> InfluencerCampaignRecord:
+        return self.update_influencer_campaign(actor, campaign_id, is_on_hold=False, planning_status=planning_status or PLANNING_STATUS_NOT_STARTED)
+
+    def list_influencer_campaigns(self, actor: CampaignOpsUser | None, include_inactive: bool = False, manager_user_id: str | None = None, stage: str | None = INFLUENCER_STAGE_PLANNING) -> list[InfluencerPlanningPortfolioRow]:
+        repository = self.repository or CampaignOpsRepository()
+        rows = repository.list_influencer_campaigns(include_inactive=include_inactive, manager_user_id=manager_user_id, stage=stage)
+        if can_access_admin(actor):
+            return rows
+        return [row for row in rows if can_view_program(actor, self._require_program(repository, row.program_id), repository.list_assignments_by_program(row.program_id)) or row.manager_user_id == (actor.id if actor else None)]
+
+    def get_influencer_campaign_detail(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCampaignDetail:
+        repository = self.repository or CampaignOpsRepository()
+        detail = repository.get_influencer_campaign_detail(campaign_id)
+        if detail is None:
+            raise CampaignOpsNotFoundError("Influencer campaign was not found.")
+        if not (can_view_program(actor, self._require_program(repository, detail.program_id), repository.list_assignments_by_program(detail.program_id)) or detail.manager_user_id == (actor.id if actor else None) or can_access_admin(actor)):
+            raise CampaignOpsPermissionError("You do not have access to this Influencer campaign.")
+        return detail
+
+    def deactivate_influencer_campaign(self, actor: CampaignOpsUser | None, campaign_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._require_influencer_campaign(repository, campaign_id)
+            self._validate_influencer_access(repository, actor, campaign.program_id)
+            repository.deactivate_influencer_campaign(campaign_id)
+            repository.append_event(event_type="influencer_campaign_deactivated", entity_type="influencer_campaign", entity_id=campaign_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated Influencer campaign {campaign.campaign_title}.")
+        self._transaction(operation)
+
+    def reactivate_influencer_campaign(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCampaignRecord:
+            campaign = self._require_influencer_campaign(repository, campaign_id)
+            self._validate_influencer_access(repository, actor, campaign.program_id)
+            updated = repository.reactivate_influencer_campaign(campaign_id)
+            repository.append_event(event_type="influencer_campaign_reactivated", entity_type="influencer_campaign", entity_id=campaign_id, program_id=updated.program_id, workstream_id=updated.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated Influencer campaign {updated.campaign_title}.")
+            return updated
+        return self._transaction(operation)
+
+    def _create_standard_influencer_steps(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, campaign: InfluencerCampaignRecord) -> list[InfluencerPlanningStepRecord]:
+        existing = {step.step_title.lower() for step in repository.list_influencer_planning_steps(campaign.id, include_inactive=True)}
+        created: list[InfluencerPlanningStepRecord] = []
+        for index, title in enumerate(STANDARD_PLANNING_TEMPLATE, start=1):
+            if title.lower() in existing:
+                continue
+            step = repository.create_influencer_planning_step(campaign.id, title, step_type="standard_template", sequence_order=index, status="not_started")
+            repository.append_event(event_type="influencer_planning_step_created", entity_type="influencer_planning_step", entity_id=step.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added planning step {step.step_title}.")
+            created.append(step)
+        return created
+
+    def create_standard_influencer_planning_template(self, actor: CampaignOpsUser | None, campaign_id: str) -> list[InfluencerPlanningStepRecord]:
+        def operation(repository: CampaignOpsRepository) -> list[InfluencerPlanningStepRecord]:
+            campaign = self._require_influencer_campaign(repository, campaign_id)
+            self._validate_influencer_access(repository, actor, campaign.program_id)
+            return self._create_standard_influencer_steps(repository, actor, campaign)
+        return self._transaction(operation)
+
+    def _influencer_child_context(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCampaignRecord:
+        campaign = self._require_influencer_campaign(repository, campaign_id)
+        self._validate_influencer_access(repository, actor, campaign.program_id)
+        return campaign
+
+    def _planning_step_payload(self, repository: CampaignOpsRepository, campaign_id: str, kwargs: dict[str, Any], before: InfluencerPlanningStepRecord | None = None) -> dict[str, Any]:
+        assigned_user_id = kwargs.get("assigned_user_id") if "assigned_user_id" in kwargs else (before.assigned_user_id if before else None)
+        if assigned_user_id:
+            self._require_active_user(repository, str(assigned_user_id), "Assigned user")
+        start = kwargs.get("start_date") if "start_date" in kwargs else (before.start_date if before else None)
+        due = kwargs.get("due_date") if "due_date" in kwargs else (before.due_date if before else None)
+        if start and due and due < start:
+            raise CampaignOpsValidationError("Due date cannot precede start date.")
+        responsible = self._clean_optional_text(kwargs.get("responsible_party") if "responsible_party" in kwargs else (before.responsible_party if before else None))
+        if responsible and responsible not in RESPONSIBLE_PARTIES:
+            raise CampaignOpsValidationError("Responsible party is invalid.")
+        return {"step_type": self._clean_optional_text(kwargs.get("step_type") if "step_type" in kwargs else (before.step_type if before else None)), "step_title": require_text(kwargs.get("step_title") or (before.step_title if before else None), "Planning step title"), "step_description": self._clean_optional_text(kwargs.get("step_description") if "step_description" in kwargs else (before.step_description if before else None)), "sequence_order": self._non_negative_int(kwargs.get("sequence_order") if "sequence_order" in kwargs else (before.sequence_order if before else 0), "Sequence order") or 0, "responsible_party": responsible, "assigned_user_id": str(assigned_user_id) if assigned_user_id else None, "start_date": start, "due_date": due, "completed_date": kwargs.get("completed_date") if "completed_date" in kwargs else (before.completed_date if before else None), "status": normalize_influencer_optional_status(kwargs.get("status") if "status" in kwargs else (before.status if before else None), PLANNING_STEP_STATUSES, "Planning step status"), "hard_deadline": bool(kwargs.get("hard_deadline") if "hard_deadline" in kwargs else (before.hard_deadline if before else False)), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None))}
+
+    def create_influencer_planning_step(self, actor: CampaignOpsUser | None, campaign_id: str, step_title: str, **kwargs: Any) -> InfluencerPlanningStepRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerPlanningStepRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            payload = self._planning_step_payload(repository, campaign_id, {**kwargs, "step_title": step_title})
+            step = repository.create_influencer_planning_step(campaign_id, **payload)
+            repository.append_event(event_type="influencer_planning_step_created", entity_type="influencer_planning_step", entity_id=step.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added planning step {step.step_title}.")
+            return step
+        return self._transaction(operation)
+
+    def list_influencer_planning_steps(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerPlanningStepRecord]:
+        self.get_influencer_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_planning_steps(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_planning_step(self, actor: CampaignOpsUser | None, campaign_id: str, step_id: str, **kwargs: Any) -> InfluencerPlanningStepRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerPlanningStepRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            before = next((step for step in repository.list_influencer_planning_steps(campaign_id, include_inactive=True) if step.id == step_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Planning step was not found.")
+            payload = self._planning_step_payload(repository, campaign_id, kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            updated = repository.update_influencer_planning_step(step_id, **payload)
+            repository.append_event(event_type="influencer_planning_step_updated", entity_type="influencer_planning_step", entity_id=step_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated planning step {updated.step_title}.")
+            return updated
+        return self._transaction(operation)
+
+    def reorder_influencer_planning_steps(self, actor: CampaignOpsUser | None, campaign_id: str, ordered_ids: list[str]) -> list[InfluencerPlanningStepRecord]:
+        updated: list[InfluencerPlanningStepRecord] = []
+        for index, step_id in enumerate(ordered_ids, start=1):
+            updated.append(self.update_influencer_planning_step(actor, campaign_id, step_id, sequence_order=index))
+        return updated
+
+    def complete_influencer_planning_step(self, actor: CampaignOpsUser | None, campaign_id: str, step_id: str, completed_date: date | None = None) -> InfluencerPlanningStepRecord:
+        return self.update_influencer_planning_step(actor, campaign_id, step_id, status="complete", completed_date=completed_date or date.today())
+
+    def reopen_influencer_planning_step(self, actor: CampaignOpsUser | None, campaign_id: str, step_id: str) -> InfluencerPlanningStepRecord:
+        return self.update_influencer_planning_step(actor, campaign_id, step_id, status="in_progress", completed_date=None)
+
+    def deactivate_influencer_planning_step(self, actor: CampaignOpsUser | None, campaign_id: str, step_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_planning_step(step_id)
+            repository.append_event(event_type="influencer_planning_step_deactivated", entity_type="influencer_planning_step", entity_id=step_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a planning step.")
+        self._transaction(operation)
+
+    def reactivate_influencer_planning_step(self, actor: CampaignOpsUser | None, campaign_id: str, step_id: str) -> InfluencerPlanningStepRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerPlanningStepRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            step = repository.reactivate_influencer_planning_step(step_id)
+            repository.append_event(event_type="influencer_planning_step_reactivated", entity_type="influencer_planning_step", entity_id=step_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated planning step {step.step_title}.")
+            return step
+        return self._transaction(operation)
+
+    def _approval_payload(self, kwargs: dict[str, Any], before: InfluencerApprovalRoundRecord | None = None) -> dict[str, Any]:
+        round_number = int(kwargs.get("round_number") if "round_number" in kwargs else (before.round_number if before else 1))
+        if round_number <= 0:
+            raise CampaignOpsValidationError("Approval round number must be positive.")
+        requested = kwargs.get("requested_date") if "requested_date" in kwargs else (before.requested_date if before else None)
+        feedback_due = kwargs.get("feedback_due_date") if "feedback_due_date" in kwargs else (before.feedback_due_date if before else None)
+        feedback_received = kwargs.get("feedback_received_date") if "feedback_received_date" in kwargs else (before.feedback_received_date if before else None)
+        approved = kwargs.get("approved_date") if "approved_date" in kwargs else (before.approved_date if before else None)
+        if requested and any(item and item < requested for item in (feedback_due, feedback_received, approved)):
+            raise CampaignOpsValidationError("Approval dates cannot precede requested date.")
+        approval_type = require_text(kwargs.get("approval_type") or (before.approval_type if before else None), "Approval type")
+        if approval_type not in APPROVAL_TYPES:
+            raise CampaignOpsValidationError("Approval type is invalid.")
+        return {"approval_type": approval_type, "round_number": round_number, "approval_scope": self._clean_optional_text(kwargs.get("approval_scope") if "approval_scope" in kwargs else (before.approval_scope if before else None)), "requested_date": requested, "feedback_due_date": feedback_due, "feedback_received_date": feedback_received, "approved_date": approved, "status": normalize_influencer_optional_status(kwargs.get("status") if "status" in kwargs else (before.status if before else None), APPROVAL_STATUSES, "Approval status"), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None))}
+
+    def create_influencer_approval_round(self, actor: CampaignOpsUser | None, campaign_id: str, approval_type: str, **kwargs: Any) -> InfluencerApprovalRoundRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerApprovalRoundRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            approval = repository.create_influencer_approval_round(campaign_id, **self._approval_payload({**kwargs, "approval_type": approval_type}))
+            repository.append_event(event_type="influencer_approval_round_created", entity_type="influencer_approval_round", entity_id=approval.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added {approval.approval_type} approval.")
+            return approval
+        return self._transaction(operation)
+
+    def list_influencer_approval_rounds(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerApprovalRoundRecord]:
+        self.get_influencer_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_approval_rounds(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_approval_round(self, actor: CampaignOpsUser | None, campaign_id: str, approval_id: str, **kwargs: Any) -> InfluencerApprovalRoundRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerApprovalRoundRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            before = next((item for item in repository.list_influencer_approval_rounds(campaign_id, include_inactive=True) if item.id == approval_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Approval round was not found.")
+            payload = self._approval_payload(kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            updated = repository.update_influencer_approval_round(approval_id, **payload)
+            repository.append_event(event_type="influencer_approval_round_updated", entity_type="influencer_approval_round", entity_id=approval_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated {updated.approval_type} approval.")
+            return updated
+        return self._transaction(operation)
+
+    def mark_influencer_approval_sent(self, actor: CampaignOpsUser | None, campaign_id: str, approval_id: str, requested_date: date | None = None) -> InfluencerApprovalRoundRecord:
+        return self.update_influencer_approval_round(actor, campaign_id, approval_id, status="sent", requested_date=requested_date or date.today())
+
+    def mark_influencer_approval_feedback_received(self, actor: CampaignOpsUser | None, campaign_id: str, approval_id: str, feedback_received_date: date | None = None) -> InfluencerApprovalRoundRecord:
+        return self.update_influencer_approval_round(actor, campaign_id, approval_id, status="feedback_received", feedback_received_date=feedback_received_date or date.today())
+
+    def mark_influencer_approval_approved(self, actor: CampaignOpsUser | None, campaign_id: str, approval_id: str, approved_date: date | None = None) -> InfluencerApprovalRoundRecord:
+        return self.update_influencer_approval_round(actor, campaign_id, approval_id, status="approved", approved_date=approved_date or date.today())
+
+    def reopen_influencer_approval_round(self, actor: CampaignOpsUser | None, campaign_id: str, approval_id: str) -> InfluencerApprovalRoundRecord:
+        return self.update_influencer_approval_round(actor, campaign_id, approval_id, status="reopened", approved_date=None)
+
+    def deactivate_influencer_approval_round(self, actor: CampaignOpsUser | None, campaign_id: str, approval_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_approval_round(approval_id)
+            repository.append_event(event_type="influencer_approval_round_deactivated", entity_type="influencer_approval_round", entity_id=approval_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated an approval round.")
+        self._transaction(operation)
+
+    def reactivate_influencer_approval_round(self, actor: CampaignOpsUser | None, campaign_id: str, approval_id: str) -> InfluencerApprovalRoundRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerApprovalRoundRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            approval = repository.reactivate_influencer_approval_round(approval_id)
+            repository.append_event(event_type="influencer_approval_round_reactivated", entity_type="influencer_approval_round", entity_id=approval_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated {approval.approval_type} approval.")
+            return approval
+        return self._transaction(operation)
+
+    def _content_round_payload(self, kwargs: dict[str, Any], before: InfluencerContentRoundRecord | None = None) -> dict[str, Any]:
+        round_number = int(kwargs.get("round_number") if "round_number" in kwargs else (before.round_number if before else 1))
+        if round_number <= 0:
+            raise CampaignOpsValidationError("Content round number must be positive.")
+        content_type = self._clean_optional_text(kwargs.get("content_type") if "content_type" in kwargs else (before.content_type if before else None))
+        if content_type and content_type not in CONTENT_ROUND_TYPES:
+            raise CampaignOpsValidationError("Content type is invalid.")
+        sent = kwargs.get("client_review_sent_date") if "client_review_sent_date" in kwargs else (before.client_review_sent_date if before else None)
+        feedback_due = kwargs.get("client_feedback_due_date") if "client_feedback_due_date" in kwargs else (before.client_feedback_due_date if before else None)
+        feedback_received = kwargs.get("feedback_received_date") if "feedback_received_date" in kwargs else (before.feedback_received_date if before else None)
+        approved = kwargs.get("approved_date") if "approved_date" in kwargs else (before.approved_date if before else None)
+        if sent and any(item and item < sent for item in (feedback_due, feedback_received, approved)):
+            raise CampaignOpsValidationError("Content round dates cannot precede client review sent date.")
+        return {"round_number": round_number, "content_type": content_type, "internal_review_due_date": kwargs.get("internal_review_due_date") if "internal_review_due_date" in kwargs else (before.internal_review_due_date if before else None), "client_review_sent_date": sent, "client_feedback_due_date": feedback_due, "feedback_received_date": feedback_received, "resubmission_due_date": kwargs.get("resubmission_due_date") if "resubmission_due_date" in kwargs else (before.resubmission_due_date if before else None), "approved_date": approved, "status": normalize_influencer_optional_status(kwargs.get("status") if "status" in kwargs else (before.status if before else None), CONTENT_ROUND_STATUSES, "Content round status"), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None))}
+
+    def create_influencer_content_round(self, actor: CampaignOpsUser | None, campaign_id: str, round_number: int, **kwargs: Any) -> InfluencerContentRoundRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerContentRoundRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            content_round = repository.create_influencer_content_round(campaign_id, **self._content_round_payload({**kwargs, "round_number": round_number}))
+            repository.append_event(event_type="influencer_content_round_created", entity_type="influencer_content_round", entity_id=content_round.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added content round {content_round.round_number}.")
+            return content_round
+        return self._transaction(operation)
+
+    def list_influencer_content_rounds(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerContentRoundRecord]:
+        self.get_influencer_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_content_rounds(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_content_round(self, actor: CampaignOpsUser | None, campaign_id: str, content_round_id: str, **kwargs: Any) -> InfluencerContentRoundRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerContentRoundRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            before = next((item for item in repository.list_influencer_content_rounds(campaign_id, include_inactive=True) if item.id == content_round_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Content round was not found.")
+            payload = self._content_round_payload(kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            updated = repository.update_influencer_content_round(content_round_id, **payload)
+            repository.append_event(event_type="influencer_content_round_updated", entity_type="influencer_content_round", entity_id=content_round_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated content round {updated.round_number}.")
+            return updated
+        return self._transaction(operation)
+
+    def mark_influencer_content_round_sent_for_review(self, actor: CampaignOpsUser | None, campaign_id: str, content_round_id: str, sent_date: date | None = None) -> InfluencerContentRoundRecord:
+        return self.update_influencer_content_round(actor, campaign_id, content_round_id, status="sent_for_client_review", client_review_sent_date=sent_date or date.today())
+
+    def mark_influencer_content_round_feedback_received(self, actor: CampaignOpsUser | None, campaign_id: str, content_round_id: str, feedback_received_date: date | None = None) -> InfluencerContentRoundRecord:
+        return self.update_influencer_content_round(actor, campaign_id, content_round_id, status="feedback_received", feedback_received_date=feedback_received_date or date.today())
+
+    def mark_influencer_content_round_approved(self, actor: CampaignOpsUser | None, campaign_id: str, content_round_id: str, approved_date: date | None = None) -> InfluencerContentRoundRecord:
+        return self.update_influencer_content_round(actor, campaign_id, content_round_id, status="approved", approved_date=approved_date or date.today())
+
+    def reopen_influencer_content_round(self, actor: CampaignOpsUser | None, campaign_id: str, content_round_id: str) -> InfluencerContentRoundRecord:
+        return self.update_influencer_content_round(actor, campaign_id, content_round_id, status="reopened", approved_date=None)
+
+    def deactivate_influencer_content_round(self, actor: CampaignOpsUser | None, campaign_id: str, content_round_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_content_round(content_round_id)
+            repository.append_event(event_type="influencer_content_round_deactivated", entity_type="influencer_content_round", entity_id=content_round_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a content round.")
+        self._transaction(operation)
+
+    def reactivate_influencer_content_round(self, actor: CampaignOpsUser | None, campaign_id: str, content_round_id: str) -> InfluencerContentRoundRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerContentRoundRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            content_round = repository.reactivate_influencer_content_round(content_round_id)
+            repository.append_event(event_type="influencer_content_round_reactivated", entity_type="influencer_content_round", entity_id=content_round_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated content round {content_round.round_number}.")
+            return content_round
+        return self._transaction(operation)
+
+    def create_or_update_influencer_creator_summary(self, actor: CampaignOpsUser | None, campaign_id: str, **kwargs: Any) -> InfluencerCreatorSummaryRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCreatorSummaryRecord:
+            campaign = self._influencer_child_context(repository, actor, campaign_id)
+            before = repository.get_influencer_creator_summary(campaign_id)
+            fields = ["target_creator_count", "applicants_count", "vetted_count", "submitted_for_approval_count", "approved_count", "contracted_count", "content_submitted_count", "content_approved_count"]
+            payload = {field: self._non_negative_int(kwargs.get(field) if field in kwargs else (getattr(before, field) if before else None), field.replace("_", " ").title()) for field in fields}
+            payload["notes"] = self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None))
+            payload["is_active"] = bool(kwargs.get("is_active") if "is_active" in kwargs else (before.is_active if before else True))
+            if before and not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            summary = repository.create_or_update_influencer_creator_summary(campaign_id, **payload)
+            repository.append_event(event_type="influencer_creator_summary_updated", entity_type="influencer_creator_summary", entity_id=summary.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated creator summary for {campaign.campaign_title}.")
+            repository.update_influencer_campaign(campaign_id, workstream_id=campaign.workstream_id, campaign_title=campaign.campaign_title, manager_user_id=campaign.manager_user_id, influencer_stage=campaign.influencer_stage, planning_status=campaign.planning_status, latest_update=campaign.latest_update, waiting_on=campaign.waiting_on, is_on_hold=campaign.is_on_hold, hold_reason=campaign.hold_reason, application_open_date=campaign.application_open_date, application_close_date=campaign.application_close_date, influencer_approval_due_date=campaign.influencer_approval_due_date, scripts_due_date=campaign.scripts_due_date, first_content_due_date=campaign.first_content_due_date, launch_date=campaign.launch_date, wrap_date=campaign.wrap_date, invoice_date=campaign.invoice_date, invoice_status=campaign.invoice_status, invoice_amount=campaign.invoice_amount, target_creator_count=summary.target_creator_count, approved_creator_count=summary.approved_count, contracted_creator_count=summary.contracted_count)
+            return summary
+        return self._transaction(operation)
+
+    def get_influencer_creator_summary(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCreatorSummaryRecord | None:
+        self.get_influencer_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).get_influencer_creator_summary(campaign_id)
 
     def _content_actor_label(self, actor: CampaignOpsUser | None) -> str:
         return actor.display_name if actor else "System"

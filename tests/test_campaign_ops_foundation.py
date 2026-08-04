@@ -57,6 +57,12 @@ from core.campaign_ops.models import (
     ContentSkuGroupRecord,
     ContentSkuRecord,
     ContentSubmissionRecord,
+    InfluencerApprovalRoundRecord,
+    InfluencerCampaignRecord,
+    InfluencerContentRoundRecord,
+    InfluencerCreatorSummaryRecord,
+    InfluencerPlanningPortfolioRow,
+    InfluencerPlanningStepRecord,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectRecord,
@@ -94,6 +100,13 @@ from core.campaign_ops.content_management import (
     CONTENT_STATUS_CLIENT_REVIEW,
     CONTENT_STATUS_LIVE,
     CONTENT_STATUS_READY_TO_SUBMIT,
+)
+from core.campaign_ops.influencer import (
+    INFLUENCER_STAGE_PLANNING,
+    PLANNING_STATUS_BRIEF_DEVELOPMENT,
+    PLANNING_STATUS_INFLUENCER_LIST_REVIEW,
+    PLANNING_STATUS_ON_HOLD,
+    STANDARD_PLANNING_TEMPLATE,
 )
 from core.campaign_ops.insights import INSIGHTS_STATUS_DRAFTING_SURVEY, INSIGHTS_STATUS_NOT_STARTED
 from core.campaign_ops.retail_media import RETAIL_MEDIA_STATUS_LIVE, RETAIL_MEDIA_STATUS_PLANNING
@@ -246,6 +259,11 @@ class FakePrompt4ARepository:
         self.content_submissions: list[ContentSubmissionRecord] = []
         self.content_monitoring_updates: list[ContentMonitoringUpdateRecord] = []
         self.content_invoice_checkpoints: list[ContentInvoiceCheckpointRecord] = []
+        self.influencer_campaigns: list[InfluencerCampaignRecord] = []
+        self.influencer_planning_steps: list[InfluencerPlanningStepRecord] = []
+        self.influencer_approval_rounds: list[InfluencerApprovalRoundRecord] = []
+        self.influencer_content_rounds: list[InfluencerContentRoundRecord] = []
+        self.influencer_creator_summaries: list[InfluencerCreatorSummaryRecord] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -1197,6 +1215,183 @@ class FakePrompt4ARepository:
 
     def reactivate_content_invoice_checkpoint(self, checkpoint_id: str) -> ContentInvoiceCheckpointRecord:
         return self.update_content_invoice_checkpoint(checkpoint_id, is_active=True)
+
+    def create_influencer_campaign(self, actor_user_id: str | None = None, **kwargs: object) -> InfluencerCampaignRecord:
+        campaign = InfluencerCampaignRecord(id=f"22292929-2929-4929-8929-{len(self.influencer_campaigns) + 1:012d}", created_by_user_id=actor_user_id, **kwargs)
+        self.influencer_campaigns.append(campaign)
+        return campaign
+
+    def get_influencer_campaign(self, campaign_id: str) -> InfluencerCampaignRecord | None:
+        return next((item for item in self.influencer_campaigns if item.id == campaign_id), None)
+
+    def get_active_influencer_campaign_by_title(self, program_id: str, campaign_title: str) -> InfluencerCampaignRecord | None:
+        return next((item for item in self.influencer_campaigns if item.program_id == program_id and item.is_active and item.campaign_title.lower() == campaign_title.lower()), None)
+
+    def update_influencer_campaign(self, campaign_id: str, **kwargs: object) -> InfluencerCampaignRecord:
+        campaign = self.get_influencer_campaign(campaign_id)
+        if campaign is None:
+            raise CampaignOpsNotFoundError("Influencer campaign was not found.")
+        for key, value in kwargs.items():
+            setattr(campaign, key, value)
+        campaign.updated_at = datetime.now(UTC)
+        return campaign
+
+    def deactivate_influencer_campaign(self, campaign_id: str) -> None:
+        self.update_influencer_campaign(campaign_id, is_active=False)
+
+    def reactivate_influencer_campaign(self, campaign_id: str) -> InfluencerCampaignRecord:
+        return self.update_influencer_campaign(campaign_id, is_active=True)
+
+    def _influencer_portfolio_row(self, campaign: InfluencerCampaignRecord) -> InfluencerPlanningPortfolioRow:
+        program = self.get_program(campaign.program_id)
+        client = self.get_client(program.client_id) if program and program.client_id else None
+        manager = self.get_user_by_id(campaign.manager_user_id) if campaign.manager_user_id else None
+        summary = self.get_influencer_creator_summary(campaign.id)
+        steps = [step for step in self.influencer_planning_steps if step.influencer_campaign_id == campaign.id and step.is_active and step.status != "complete" and step.completed_date is None]
+        steps.sort(key=lambda item: (item.due_date or date.max, item.sequence_order, item.created_at or datetime.min))
+        resources = [resource for resource in self.resources if resource.program_id == campaign.program_id and resource.is_active]
+
+        def resource_url(resource_type: str) -> str | None:
+            return next((resource.url for resource in resources if resource.resource_type == resource_type and resource.url), None)
+
+        return InfluencerPlanningPortfolioRow(
+            id=campaign.id,
+            program_id=campaign.program_id,
+            program_name=program.program_name if program else "",
+            client_name=client.name if client else None,
+            workstream_id=campaign.workstream_id,
+            campaign_title=campaign.campaign_title,
+            manager_user_id=campaign.manager_user_id,
+            manager_display_name=manager.display_name if manager else None,
+            influencer_stage=campaign.influencer_stage,
+            planning_status=campaign.planning_status,
+            latest_update=campaign.latest_update,
+            waiting_on=campaign.waiting_on,
+            is_on_hold=campaign.is_on_hold,
+            hold_reason=campaign.hold_reason,
+            application_open_date=campaign.application_open_date,
+            application_close_date=campaign.application_close_date,
+            influencer_approval_due_date=campaign.influencer_approval_due_date,
+            scripts_due_date=campaign.scripts_due_date,
+            first_content_due_date=campaign.first_content_due_date,
+            launch_date=campaign.launch_date,
+            wrap_date=campaign.wrap_date,
+            invoice_date=campaign.invoice_date,
+            invoice_status=campaign.invoice_status,
+            invoice_amount=campaign.invoice_amount,
+            target_creator_count=(summary.target_creator_count if summary else campaign.target_creator_count),
+            approved_creator_count=(summary.approved_count if summary else campaign.approved_creator_count),
+            contracted_creator_count=(summary.contracted_count if summary else campaign.contracted_creator_count),
+            applicants_count=summary.applicants_count if summary else None,
+            vetted_count=summary.vetted_count if summary else None,
+            submitted_for_approval_count=summary.submitted_for_approval_count if summary else None,
+            content_submitted_count=summary.content_submitted_count if summary else None,
+            content_approved_count=summary.content_approved_count if summary else None,
+            creator_summary_notes=summary.notes if summary else None,
+            program_status=program.status if program else ProgramStatus.ACTIVE.value,
+            program_risk=program.risk_level if program else RiskLevel.UNRATED.value,
+            next_planning_step=steps[0].step_title if steps else None,
+            next_planning_step_due_date=steps[0].due_date if steps else None,
+            track_sheet_url=resource_url("Track Sheet"),
+            influencer_brief_url=resource_url("Influencer Brief"),
+            bitly_link_url=resource_url("Bitly Link"),
+            invoice_url=resource_url("Invoice"),
+            eop_survey_url=resource_url("EOP Survey"),
+            influencer_education_url=resource_url("Influencer Education"),
+            campaign_brief_url=resource_url("Campaign Brief"),
+            click2cart_link_url=resource_url("Click2Cart Link"),
+            content_folder_url=resource_url("Content Folder"),
+            application_link_url=resource_url("Application Link"),
+            is_active=campaign.is_active,
+            created_at=campaign.created_at,
+            updated_at=campaign.updated_at,
+        )
+
+    def list_influencer_campaigns(self, include_inactive: bool = False, manager_user_id: str | None = None, stage: str | None = None) -> list[InfluencerPlanningPortfolioRow]:
+        rows = [self._influencer_portfolio_row(item) for item in self.influencer_campaigns if (include_inactive or item.is_active) and (not manager_user_id or item.manager_user_id == manager_user_id) and (not stage or item.influencer_stage == stage)]
+        return rows
+
+    def get_influencer_campaign_detail(self, campaign_id: str) -> InfluencerPlanningPortfolioRow | None:
+        campaign = self.get_influencer_campaign(campaign_id)
+        return self._influencer_portfolio_row(campaign) if campaign else None
+
+    def create_influencer_planning_step(self, influencer_campaign_id: str, step_title: str, **kwargs: object) -> InfluencerPlanningStepRecord:
+        step = InfluencerPlanningStepRecord(id=f"21212121-2121-4121-8121-{len(self.influencer_planning_steps) + 1:012d}", influencer_campaign_id=influencer_campaign_id, step_title=step_title, **kwargs)
+        self.influencer_planning_steps.append(step)
+        return step
+
+    def list_influencer_planning_steps(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerPlanningStepRecord]:
+        return sorted([item for item in self.influencer_planning_steps if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.sequence_order, item.due_date or date.max))
+
+    def update_influencer_planning_step(self, step_id: str, **kwargs: object) -> InfluencerPlanningStepRecord:
+        step = next((item for item in self.influencer_planning_steps if item.id == step_id), None)
+        if step is None:
+            raise CampaignOpsNotFoundError("Planning step was not found.")
+        for key, value in kwargs.items():
+            setattr(step, key, value)
+        return step
+
+    def deactivate_influencer_planning_step(self, step_id: str) -> None:
+        self.update_influencer_planning_step(step_id, is_active=False)
+
+    def reactivate_influencer_planning_step(self, step_id: str) -> InfluencerPlanningStepRecord:
+        return self.update_influencer_planning_step(step_id, is_active=True)
+
+    def create_influencer_approval_round(self, influencer_campaign_id: str, approval_type: str, **kwargs: object) -> InfluencerApprovalRoundRecord:
+        approval = InfluencerApprovalRoundRecord(id=f"20202020-2020-4020-8020-{len(self.influencer_approval_rounds) + 1:012d}", influencer_campaign_id=influencer_campaign_id, approval_type=approval_type, **kwargs)
+        self.influencer_approval_rounds.append(approval)
+        return approval
+
+    def list_influencer_approval_rounds(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerApprovalRoundRecord]:
+        return [item for item in self.influencer_approval_rounds if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)]
+
+    def update_influencer_approval_round(self, approval_id: str, **kwargs: object) -> InfluencerApprovalRoundRecord:
+        approval = next((item for item in self.influencer_approval_rounds if item.id == approval_id), None)
+        if approval is None:
+            raise CampaignOpsNotFoundError("Approval round was not found.")
+        for key, value in kwargs.items():
+            setattr(approval, key, value)
+        return approval
+
+    def deactivate_influencer_approval_round(self, approval_id: str) -> None:
+        self.update_influencer_approval_round(approval_id, is_active=False)
+
+    def reactivate_influencer_approval_round(self, approval_id: str) -> InfluencerApprovalRoundRecord:
+        return self.update_influencer_approval_round(approval_id, is_active=True)
+
+    def create_influencer_content_round(self, influencer_campaign_id: str, round_number: int, **kwargs: object) -> InfluencerContentRoundRecord:
+        content_round = InfluencerContentRoundRecord(id=f"19191919-1919-4919-8919-{len(self.influencer_content_rounds) + 1:012d}", influencer_campaign_id=influencer_campaign_id, round_number=round_number, **kwargs)
+        self.influencer_content_rounds.append(content_round)
+        return content_round
+
+    def list_influencer_content_rounds(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerContentRoundRecord]:
+        return [item for item in self.influencer_content_rounds if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)]
+
+    def update_influencer_content_round(self, content_round_id: str, **kwargs: object) -> InfluencerContentRoundRecord:
+        content_round = next((item for item in self.influencer_content_rounds if item.id == content_round_id), None)
+        if content_round is None:
+            raise CampaignOpsNotFoundError("Content round was not found.")
+        for key, value in kwargs.items():
+            setattr(content_round, key, value)
+        return content_round
+
+    def deactivate_influencer_content_round(self, content_round_id: str) -> None:
+        self.update_influencer_content_round(content_round_id, is_active=False)
+
+    def reactivate_influencer_content_round(self, content_round_id: str) -> InfluencerContentRoundRecord:
+        return self.update_influencer_content_round(content_round_id, is_active=True)
+
+    def get_influencer_creator_summary(self, influencer_campaign_id: str) -> InfluencerCreatorSummaryRecord | None:
+        return next((item for item in self.influencer_creator_summaries if item.influencer_campaign_id == influencer_campaign_id), None)
+
+    def create_or_update_influencer_creator_summary(self, influencer_campaign_id: str, **kwargs: object) -> InfluencerCreatorSummaryRecord:
+        summary = self.get_influencer_creator_summary(influencer_campaign_id)
+        if summary is None:
+            summary = InfluencerCreatorSummaryRecord(id=f"18181818-1818-4818-8818-{len(self.influencer_creator_summaries) + 1:012d}", influencer_campaign_id=influencer_campaign_id)
+            self.influencer_creator_summaries.append(summary)
+        for key, value in kwargs.items():
+            setattr(summary, key, value)
+        return summary
 
     def _task_list_row(self, task: Task) -> TaskListRow:
         program = self.get_program(task.program_id)
@@ -3156,6 +3351,172 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("content_submission_created", event_types)
         self.assertIn("content_monitoring_update_created", event_types)
         self.assertIn("content_invoice_checkpoint_created", event_types)
+
+    def test_prompt8_influencer_campaign_validation_crud_manager_views_and_activity(self) -> None:
+        repository, service, bailey, t_user, l_user, program_id, influencer, retail = self._prompt4c_fixture()
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, campaign_title="Missing program")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, program_id=program_id, campaign_title=" ")
+        with self.assertRaises(CampaignOpsNotFoundError):
+            service.create_influencer_campaign(bailey, program_id="missing", campaign_title="Missing")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, program_id=program_id, campaign_title="Bad workstream", workstream_id=retail.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, program_id=program_id, campaign_title="Inactive manager", manager_user_id=repository.users[3].id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, program_id=program_id, campaign_title="Bad target", target_creator_count=-1)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, program_id=program_id, campaign_title="Bad dates", launch_date=date(2026, 9, 1), wrap_date=date(2026, 8, 1))
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, program_id=program_id, campaign_title="Held without reason", is_on_hold=True)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, program_id=program_id, campaign_title="Bad invoice", invoice_amount=-1)
+
+        campaign = service.create_influencer_campaign(
+            bailey,
+            program_id=program_id,
+            workstream_id=influencer.id,
+            campaign_title="TEST - Influencer Planning Campaign",
+            manager_user_id=t_user.id,
+            planning_status=PLANNING_STATUS_BRIEF_DEVELOPMENT,
+            latest_update="Brief approved.",
+            waiting_on="Client",
+            launch_date=date(2026, 8, 20),
+            wrap_date=date(2026, 9, 20),
+            invoice_date=date(2026, 10, 31),
+            invoice_status="Invoicing in full on 10/31",
+            invoice_amount=385000,
+            target_creator_count=20,
+            approved_creator_count=12,
+            contracted_creator_count=10,
+        )
+        self.assertEqual(campaign.influencer_stage, INFLUENCER_STAGE_PLANNING)
+        self.assertEqual(campaign.manager_user_id, t_user.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_campaign(bailey, program_id=program_id, campaign_title="TEST - Influencer Planning Campaign")
+
+        before_events = len(repository.events)
+        unchanged = service.update_influencer_campaign(bailey, campaign.id, campaign_title=campaign.campaign_title)
+        self.assertEqual(unchanged.id, campaign.id)
+        self.assertEqual(len(repository.events), before_events)
+
+        service.place_influencer_campaign_on_hold(bailey, campaign.id, "waiting on influencer approvals and ad creative approval")
+        held = repository.get_influencer_campaign(campaign.id)
+        self.assertTrue(held.is_on_hold)
+        self.assertEqual(held.planning_status, PLANNING_STATUS_ON_HOLD)
+        service.resume_influencer_campaign(bailey, campaign.id, PLANNING_STATUS_INFLUENCER_LIST_REVIEW)
+        service.update_influencer_campaign(bailey, campaign.id, manager_user_id=l_user.id, approved_creator_count=16, latest_update="Client approved influencer list.")
+
+        t_rows = service.list_influencer_campaigns(bailey, manager_user_id=t_user.id)
+        l_rows = service.list_influencer_campaigns(bailey, manager_user_id=l_user.id)
+        all_rows = service.list_influencer_campaigns(bailey)
+        self.assertNotIn(campaign.id, [row.id for row in t_rows])
+        self.assertIn(campaign.id, [row.id for row in l_rows])
+        self.assertEqual(1, len([row for row in all_rows if row.id == campaign.id]))
+
+        service.deactivate_influencer_campaign(bailey, campaign.id)
+        self.assertFalse(repository.get_influencer_campaign(campaign.id).is_active)
+        service.reactivate_influencer_campaign(bailey, campaign.id)
+        self.assertTrue(repository.get_influencer_campaign(campaign.id).is_active)
+
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("influencer_campaign_created", event_types)
+        self.assertIn("influencer_campaign_manager_user_id_changed", event_types)
+        self.assertIn("influencer_campaign_placed_on_hold", event_types)
+        self.assertIn("influencer_campaign_resumed", event_types)
+        self.assertIn("influencer_campaign_deactivated", event_types)
+        self.assertIn("influencer_campaign_reactivated", event_types)
+
+    def test_prompt8_influencer_children_template_portfolio_resources_state(self) -> None:
+        from app.campaign_ops.influencer.formatting import PORTFOLIO_COLUMNS, planning_portfolio_rows
+
+        repository, service, bailey, t_user, _l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        campaign = service.create_influencer_campaign(
+            bailey,
+            program_id=program_id,
+            workstream_id=influencer.id,
+            campaign_title="TEST - Influencer Planning Child Campaign",
+            manager_user_id=t_user.id,
+            planning_status=PLANNING_STATUS_BRIEF_DEVELOPMENT,
+            target_creator_count=10,
+            approved_creator_count=4,
+            contracted_creator_count=2,
+            initial_resources={
+                "Track Sheet": "https://example.com/track",
+                "Influencer Brief": "https://example.com/brief",
+                "Bitly Link": "https://example.com/bitly",
+                "Invoice": "https://example.com/invoice",
+                "EOP Survey": "https://example.com/eop",
+                "Campaign Brief": "https://example.com/campaign-brief",
+                "Click2Cart Link": "https://example.com/click2cart",
+            },
+        )
+        created = service.create_standard_influencer_planning_template(bailey, campaign.id)
+        self.assertEqual(len(STANDARD_PLANNING_TEMPLATE), len(created))
+        created_again = service.create_standard_influencer_planning_template(bailey, campaign.id)
+        self.assertEqual([], created_again)
+        steps = service.list_influencer_planning_steps(bailey, campaign.id)
+        self.assertEqual(STANDARD_PLANNING_TEMPLATE[0], steps[0].step_title)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_planning_step(bailey, campaign.id, "Bad date", start_date=date(2026, 9, 1), due_date=date(2026, 8, 1))
+        custom = service.create_influencer_planning_step(bailey, campaign.id, "TEST - Custom planning action", responsible_party="Client", due_date=date(2026, 8, 10), sequence_order=0)
+        service.complete_influencer_planning_step(bailey, campaign.id, custom.id, date(2026, 8, 9))
+        service.reopen_influencer_planning_step(bailey, campaign.id, custom.id)
+        service.reorder_influencer_planning_steps(bailey, campaign.id, [custom.id, steps[0].id])
+        service.deactivate_influencer_planning_step(bailey, campaign.id, custom.id)
+        service.reactivate_influencer_planning_step(bailey, campaign.id, custom.id)
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_approval_round(bailey, campaign.id, "Influencer List", round_number=0)
+        approval = service.create_influencer_approval_round(bailey, campaign.id, "Influencer List", requested_date=date(2026, 8, 5), feedback_due_date=date(2026, 8, 8))
+        service.mark_influencer_approval_sent(bailey, campaign.id, approval.id, date(2026, 8, 5))
+        service.mark_influencer_approval_feedback_received(bailey, campaign.id, approval.id, date(2026, 8, 7))
+        service.mark_influencer_approval_approved(bailey, campaign.id, approval.id, date(2026, 8, 8))
+        service.reopen_influencer_approval_round(bailey, campaign.id, approval.id)
+        service.deactivate_influencer_approval_round(bailey, campaign.id, approval.id)
+        service.reactivate_influencer_approval_round(bailey, campaign.id, approval.id)
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_content_round(bailey, campaign.id, 0)
+        scripts = service.create_influencer_content_round(bailey, campaign.id, 1, content_type="Scripts and Captions", internal_review_due_date=date(2026, 8, 12))
+        first = service.create_influencer_content_round(bailey, campaign.id, 2, content_type="First Round Content", client_review_sent_date=date(2026, 8, 15), client_feedback_due_date=date(2026, 8, 18))
+        service.mark_influencer_content_round_sent_for_review(bailey, campaign.id, first.id, date(2026, 8, 15))
+        service.mark_influencer_content_round_feedback_received(bailey, campaign.id, first.id, date(2026, 8, 17))
+        service.mark_influencer_content_round_approved(bailey, campaign.id, first.id, date(2026, 8, 18))
+        service.reopen_influencer_content_round(bailey, campaign.id, first.id)
+        service.deactivate_influencer_content_round(bailey, campaign.id, scripts.id)
+        service.reactivate_influencer_content_round(bailey, campaign.id, scripts.id)
+
+        summary = service.create_or_update_influencer_creator_summary(bailey, campaign.id, target_creator_count=10, applicants_count=30, vetted_count=20, submitted_for_approval_count=15, approved_count=8, contracted_count=6, content_submitted_count=4, content_approved_count=2, notes="Creator counts validated.")
+        self.assertEqual(8, summary.approved_count)
+        exact = service.create_milestone(bailey, program_id, "Influencer launch", workstream_id=campaign.workstream_id, milestone_type="Influencer Planning", target_date=date(2026, 8, 20))
+        ranged = service.create_milestone(bailey, program_id, "Influencer flight", workstream_id=campaign.workstream_id, milestone_type="Influencer Planning", start_date=date(2026, 8, 20), end_date=date(2026, 9, 20))
+        service.complete_milestone(bailey, exact.id)
+        service.reopen_milestone(bailey, exact.id)
+        self.assertEqual("Influencer Planning", ranged.milestone_type)
+        service.append_program_note(bailey, program_id, "Influencer campaign note", workstream_id=campaign.workstream_id, note_type="Influencer Planning")
+
+        detail = service.get_influencer_campaign_detail(bailey, campaign.id)
+        self.assertEqual("TEST - Custom planning action", detail.next_planning_step)
+        self.assertEqual(8, detail.approved_creator_count)
+        self.assertEqual("https://example.com/track", detail.track_sheet_url)
+        self.assertEqual(PORTFOLIO_COLUMNS[:4], ["Influencer Campaign", "Client", "Shared Program", "Manager"])
+        rendered = planning_portfolio_rows([detail])[0]
+        self.assertEqual(list(rendered), PORTFOLIO_COLUMNS)
+
+        self.assertIn("campaign_ops_selected_influencer_campaign_id", SESSION_KEYS)
+        state: dict[str, object] = {"campaign_ops_selected_influencer_campaign_id": "missing"}
+        if state.get("campaign_ops_selected_influencer_campaign_id") not in {campaign.id}:
+            state.pop("campaign_ops_selected_influencer_campaign_id", None)
+        self.assertNotIn("campaign_ops_selected_influencer_campaign_id", state)
+
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("influencer_planning_step_created", event_types)
+        self.assertIn("influencer_approval_round_created", event_types)
+        self.assertIn("influencer_content_round_created", event_types)
+        self.assertIn("influencer_creator_summary_updated", event_types)
 
 
 if __name__ == "__main__":

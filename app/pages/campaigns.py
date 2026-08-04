@@ -21,6 +21,7 @@ from app.campaign_ops.program_forms import render_new_program_form
 from app.campaign_ops.program_list import render_all_programs, render_my_programs
 from app.campaign_ops.program_workspace import render_program_workspace
 from app.campaign_ops.content_management.views import render_content_management
+from app.campaign_ops.influencer.views import render_influencer
 from app.campaign_ops.insights.views import render_insights
 from app.campaign_ops.retail_media.views import render_retail_media
 from app.campaign_ops.reporting_requests.views import render_reporting_requests
@@ -176,6 +177,8 @@ def render_active_section(
         render_new_program_form(user, service, users, clients)
     elif section == "My Work":
         render_my_work(user, service, users)
+    elif section == "Influencer":
+        render_influencer(user, service, users)
     elif section == "Requests":
         render_reporting_requests(user, service, users)
     elif section == "Retail Media":

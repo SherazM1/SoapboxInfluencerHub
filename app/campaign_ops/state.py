@@ -91,6 +91,17 @@ SESSION_KEYS = {
     "campaign_ops_content_monitoring_edit_id",
     "campaign_ops_content_invoice_edit_id",
     "campaign_ops_content_show_inactive",
+    "campaign_ops_influencer_view",
+    "campaign_ops_influencer_planning_view",
+    "campaign_ops_influencer_planning_manager_filter",
+    "campaign_ops_selected_influencer_campaign_id",
+    "campaign_ops_influencer_filters",
+    "campaign_ops_influencer_create_open",
+    "campaign_ops_influencer_edit_open",
+    "campaign_ops_influencer_step_edit_id",
+    "campaign_ops_influencer_approval_edit_id",
+    "campaign_ops_influencer_content_round_edit_id",
+    "campaign_ops_influencer_show_inactive",
 }
 
 

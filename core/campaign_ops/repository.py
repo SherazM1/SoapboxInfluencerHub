@@ -36,6 +36,12 @@ from core.campaign_ops.models import (
     ContentSkuGroupRecord,
     ContentSkuRecord,
     ContentSubmissionRecord,
+    InfluencerApprovalRoundRecord,
+    InfluencerCampaignRecord,
+    InfluencerContentRoundRecord,
+    InfluencerCreatorSummaryRecord,
+    InfluencerPlanningPortfolioRow,
+    InfluencerPlanningStepRecord,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectRecord,
@@ -2990,6 +2996,220 @@ class CampaignOpsRepository:
 
     def reactivate_content_invoice_checkpoint(self, checkpoint_id: str) -> ContentInvoiceCheckpointRecord:
         return self._write_returning("update campaign_ops_content_invoice_checkpoints set is_active = true where id = %s and is_active = false returning *", (checkpoint_id,), ContentInvoiceCheckpointRecord)
+
+    def create_influencer_campaign(self, actor_user_id: str | None = None, **kwargs: Any) -> InfluencerCampaignRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_influencer_campaigns (
+                program_id, workstream_id, campaign_title, manager_user_id,
+                influencer_stage, planning_status, latest_update, waiting_on,
+                is_on_hold, hold_reason, application_open_date, application_close_date,
+                influencer_approval_due_date, scripts_due_date, first_content_due_date,
+                launch_date, wrap_date, invoice_date, invoice_status, invoice_amount,
+                target_creator_count, approved_creator_count, contracted_creator_count,
+                created_by_user_id
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                kwargs["program_id"], kwargs.get("workstream_id"), require_text(kwargs.get("campaign_title"), "campaign_title"),
+                kwargs.get("manager_user_id"), kwargs.get("influencer_stage"), kwargs.get("planning_status"), kwargs.get("latest_update"),
+                kwargs.get("waiting_on"), bool(kwargs.get("is_on_hold", False)), kwargs.get("hold_reason"),
+                kwargs.get("application_open_date"), kwargs.get("application_close_date"), kwargs.get("influencer_approval_due_date"),
+                kwargs.get("scripts_due_date"), kwargs.get("first_content_due_date"), kwargs.get("launch_date"), kwargs.get("wrap_date"),
+                kwargs.get("invoice_date"), kwargs.get("invoice_status"), kwargs.get("invoice_amount"), kwargs.get("target_creator_count"),
+                kwargs.get("approved_creator_count"), kwargs.get("contracted_creator_count"), actor_user_id,
+            ),
+            InfluencerCampaignRecord,
+        )
+
+    def get_influencer_campaign(self, campaign_id: str) -> InfluencerCampaignRecord | None:
+        return self._fetch_one("select * from campaign_ops_influencer_campaigns where id = %s", (campaign_id,), InfluencerCampaignRecord)
+
+    def get_active_influencer_campaign_by_title(self, program_id: str, campaign_title: str) -> InfluencerCampaignRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_influencer_campaigns where program_id = %s and lower(campaign_title) = lower(%s) and is_active = true",
+            (program_id, campaign_title),
+            InfluencerCampaignRecord,
+        )
+
+    def update_influencer_campaign(self, campaign_id: str, **kwargs: Any) -> InfluencerCampaignRecord:
+        fields = [
+            "workstream_id", "campaign_title", "manager_user_id", "influencer_stage", "planning_status", "latest_update",
+            "waiting_on", "is_on_hold", "hold_reason", "application_open_date", "application_close_date",
+            "influencer_approval_due_date", "scripts_due_date", "first_content_due_date", "launch_date", "wrap_date",
+            "invoice_date", "invoice_status", "invoice_amount", "target_creator_count", "approved_creator_count",
+            "contracted_creator_count",
+        ]
+        return self._write_returning(
+            f"update campaign_ops_influencer_campaigns set {', '.join(f'{field} = %s' for field in fields)} where id = %s returning *",
+            (*tuple(kwargs.get(field) for field in fields), campaign_id),
+            InfluencerCampaignRecord,
+        )
+
+    def deactivate_influencer_campaign(self, campaign_id: str) -> None:
+        self._execute("update campaign_ops_influencer_campaigns set is_active = false where id = %s and is_active = true", (campaign_id,))
+
+    def reactivate_influencer_campaign(self, campaign_id: str) -> InfluencerCampaignRecord:
+        return self._write_returning("update campaign_ops_influencer_campaigns set is_active = true where id = %s and is_active = false returning *", (campaign_id,), InfluencerCampaignRecord)
+
+    def _influencer_portfolio_row_from_db(self, row: dict[str, Any]) -> InfluencerPlanningPortfolioRow:
+        normalized = normalize_row(row)
+        return InfluencerPlanningPortfolioRow(
+            id=str(normalized["id"]), program_id=str(normalized["program_id"]), program_name=str(normalized["program_name"]),
+            client_name=normalized.get("client_name"), workstream_id=normalize_id(normalized.get("workstream_id")),
+            campaign_title=str(normalized["campaign_title"]), manager_user_id=normalize_id(normalized.get("manager_user_id")),
+            manager_display_name=normalized.get("manager_display_name"), influencer_stage=str(normalized["influencer_stage"]),
+            planning_status=normalized.get("planning_status"), latest_update=normalized.get("latest_update"),
+            waiting_on=normalized.get("waiting_on"), is_on_hold=bool(normalized.get("is_on_hold", False)),
+            hold_reason=normalized.get("hold_reason"), application_open_date=normalized.get("application_open_date"),
+            application_close_date=normalized.get("application_close_date"), influencer_approval_due_date=normalized.get("influencer_approval_due_date"),
+            scripts_due_date=normalized.get("scripts_due_date"), first_content_due_date=normalized.get("first_content_due_date"),
+            launch_date=normalized.get("launch_date"), wrap_date=normalized.get("wrap_date"), invoice_date=normalized.get("invoice_date"),
+            invoice_status=normalized.get("invoice_status"), invoice_amount=normalized.get("invoice_amount"),
+            target_creator_count=normalized.get("target_creator_count"), approved_creator_count=normalized.get("approved_creator_count"),
+            contracted_creator_count=normalized.get("contracted_creator_count"), applicants_count=normalized.get("applicants_count"),
+            vetted_count=normalized.get("vetted_count"), submitted_for_approval_count=normalized.get("submitted_for_approval_count"),
+            content_submitted_count=normalized.get("content_submitted_count"), content_approved_count=normalized.get("content_approved_count"),
+            creator_summary_notes=normalized.get("creator_summary_notes"), program_status=str(normalized["program_status"]),
+            program_risk=str(normalized["program_risk"]), next_planning_step=normalized.get("next_planning_step"),
+            next_planning_step_due_date=normalized.get("next_planning_step_due_date"), track_sheet_url=normalized.get("track_sheet_url"),
+            influencer_brief_url=normalized.get("influencer_brief_url"), bitly_link_url=normalized.get("bitly_link_url"),
+            invoice_url=normalized.get("invoice_url"), eop_survey_url=normalized.get("eop_survey_url"),
+            influencer_education_url=normalized.get("influencer_education_url"), campaign_brief_url=normalized.get("campaign_brief_url"),
+            click2cart_link_url=normalized.get("click2cart_link_url"), content_folder_url=normalized.get("content_folder_url"),
+            application_link_url=normalized.get("application_link_url"), is_active=bool(normalized.get("is_active", True)),
+            created_at=normalized.get("created_at"), updated_at=normalized.get("updated_at"),
+        )
+
+    def list_influencer_campaigns(self, include_inactive: bool = False, manager_user_id: str | None = None, stage: str | None = None) -> list[InfluencerPlanningPortfolioRow]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_inactive:
+            clauses.append("ic.is_active = true")
+        if manager_user_id:
+            clauses.append("ic.manager_user_id = %s")
+            params.append(manager_user_id)
+        if stage:
+            clauses.append("ic.influencer_stage = %s")
+            params.append(stage)
+        where_clause = f"where {' and '.join(clauses)}" if clauses else ""
+        query = f"""
+            with next_step as (
+                select distinct on (influencer_campaign_id) influencer_campaign_id, step_title, due_date
+                from campaign_ops_influencer_planning_steps
+                where is_active = true and coalesce(status, '') <> 'complete' and completed_date is null
+                order by influencer_campaign_id, due_date asc nulls last, sequence_order asc, created_at asc
+            ), resource_agg as (
+                select program_id,
+                    max(url) filter (where resource_type = 'Track Sheet' and is_active = true) as track_sheet_url,
+                    max(url) filter (where resource_type = 'Influencer Brief' and is_active = true) as influencer_brief_url,
+                    max(url) filter (where resource_type = 'Bitly Link' and is_active = true) as bitly_link_url,
+                    max(url) filter (where resource_type = 'Invoice' and is_active = true) as invoice_url,
+                    max(url) filter (where resource_type = 'EOP Survey' and is_active = true) as eop_survey_url,
+                    max(url) filter (where resource_type = 'Influencer Education' and is_active = true) as influencer_education_url,
+                    max(url) filter (where resource_type = 'Campaign Brief' and is_active = true) as campaign_brief_url,
+                    max(url) filter (where resource_type = 'Click2Cart Link' and is_active = true) as click2cart_link_url,
+                    max(url) filter (where resource_type = 'Content Folder' and is_active = true) as content_folder_url,
+                    max(url) filter (where resource_type = 'Application Link' and is_active = true) as application_link_url
+                from campaign_ops_resources group by program_id
+            )
+            select ic.*, p.program_name, p.status as program_status, p.risk_level as program_risk,
+                   c.name as client_name, u.display_name as manager_display_name,
+                   cs.applicants_count, cs.vetted_count, cs.submitted_for_approval_count,
+                   cs.content_submitted_count, cs.content_approved_count, cs.notes as creator_summary_notes,
+                   coalesce(cs.target_creator_count, ic.target_creator_count) as target_creator_count,
+                   coalesce(cs.approved_count, ic.approved_creator_count) as approved_creator_count,
+                   coalesce(cs.contracted_count, ic.contracted_creator_count) as contracted_creator_count,
+                   ns.step_title as next_planning_step, ns.due_date as next_planning_step_due_date,
+                   ra.track_sheet_url, ra.influencer_brief_url, ra.bitly_link_url, ra.invoice_url,
+                   ra.eop_survey_url, ra.influencer_education_url, ra.campaign_brief_url,
+                   ra.click2cart_link_url, ra.content_folder_url, ra.application_link_url
+            from campaign_ops_influencer_campaigns ic
+            join campaign_ops_programs p on p.id = ic.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_users u on u.id = ic.manager_user_id
+            left join campaign_ops_influencer_creator_summary cs on cs.influencer_campaign_id = ic.id and cs.is_active = true
+            left join next_step ns on ns.influencer_campaign_id = ic.id
+            left join resource_agg ra on ra.program_id = ic.program_id
+            {where_clause}
+            order by ic.updated_at desc, ic.campaign_title asc
+        """
+        return [self._influencer_portfolio_row_from_db(row) for row in self._fetch_raw_all(query, tuple(params))]
+
+    def get_influencer_campaign_detail(self, campaign_id: str) -> InfluencerPlanningPortfolioRow | None:
+        return next((row for row in self.list_influencer_campaigns(include_inactive=True) if row.id == campaign_id), None)
+
+    def create_influencer_planning_step(self, influencer_campaign_id: str, step_title: str, **kwargs: Any) -> InfluencerPlanningStepRecord:
+        fields = ["influencer_campaign_id", "step_type", "step_title", "step_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes"]
+        return self._create_content_child("campaign_ops_influencer_planning_steps", InfluencerPlanningStepRecord, fields, (influencer_campaign_id, kwargs.get("step_type"), require_text(step_title, "step_title"), kwargs.get("step_description"), kwargs.get("sequence_order", 0), kwargs.get("responsible_party"), kwargs.get("assigned_user_id"), kwargs.get("start_date"), kwargs.get("due_date"), kwargs.get("completed_date"), kwargs.get("status"), bool(kwargs.get("hard_deadline", False)), kwargs.get("waiting_on"), kwargs.get("notes")))
+
+    def list_influencer_planning_steps(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerPlanningStepRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_planning_steps where influencer_campaign_id = %s {clause} order by sequence_order asc, due_date asc nulls last, created_at asc", (influencer_campaign_id,), InfluencerPlanningStepRecord)
+
+    def update_influencer_planning_step(self, step_id: str, **kwargs: Any) -> InfluencerPlanningStepRecord:
+        fields = ["step_type", "step_title", "step_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes"]
+        return self._update_content_child("campaign_ops_influencer_planning_steps", InfluencerPlanningStepRecord, step_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_planning_step(self, step_id: str) -> None:
+        self._execute("update campaign_ops_influencer_planning_steps set is_active = false where id = %s and is_active = true", (step_id,))
+
+    def reactivate_influencer_planning_step(self, step_id: str) -> InfluencerPlanningStepRecord:
+        return self._write_returning("update campaign_ops_influencer_planning_steps set is_active = true where id = %s and is_active = false returning *", (step_id,), InfluencerPlanningStepRecord)
+
+    def create_influencer_approval_round(self, influencer_campaign_id: str, approval_type: str, **kwargs: Any) -> InfluencerApprovalRoundRecord:
+        fields = ["influencer_campaign_id", "approval_type", "round_number", "approval_scope", "requested_date", "feedback_due_date", "feedback_received_date", "approved_date", "status", "waiting_on", "notes"]
+        return self._create_content_child("campaign_ops_influencer_approval_rounds", InfluencerApprovalRoundRecord, fields, (influencer_campaign_id, require_text(approval_type, "approval_type"), kwargs.get("round_number", 1), kwargs.get("approval_scope"), kwargs.get("requested_date"), kwargs.get("feedback_due_date"), kwargs.get("feedback_received_date"), kwargs.get("approved_date"), kwargs.get("status"), kwargs.get("waiting_on"), kwargs.get("notes")))
+
+    def list_influencer_approval_rounds(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerApprovalRoundRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_approval_rounds where influencer_campaign_id = %s {clause} order by approval_type asc, round_number asc, created_at asc", (influencer_campaign_id,), InfluencerApprovalRoundRecord)
+
+    def update_influencer_approval_round(self, approval_id: str, **kwargs: Any) -> InfluencerApprovalRoundRecord:
+        fields = ["approval_type", "round_number", "approval_scope", "requested_date", "feedback_due_date", "feedback_received_date", "approved_date", "status", "waiting_on", "notes"]
+        return self._update_content_child("campaign_ops_influencer_approval_rounds", InfluencerApprovalRoundRecord, approval_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_approval_round(self, approval_id: str) -> None:
+        self._execute("update campaign_ops_influencer_approval_rounds set is_active = false where id = %s and is_active = true", (approval_id,))
+
+    def reactivate_influencer_approval_round(self, approval_id: str) -> InfluencerApprovalRoundRecord:
+        return self._write_returning("update campaign_ops_influencer_approval_rounds set is_active = true where id = %s and is_active = false returning *", (approval_id,), InfluencerApprovalRoundRecord)
+
+    def create_influencer_content_round(self, influencer_campaign_id: str, round_number: int, **kwargs: Any) -> InfluencerContentRoundRecord:
+        fields = ["influencer_campaign_id", "round_number", "content_type", "internal_review_due_date", "client_review_sent_date", "client_feedback_due_date", "feedback_received_date", "resubmission_due_date", "approved_date", "status", "waiting_on", "notes"]
+        return self._create_content_child("campaign_ops_influencer_content_rounds", InfluencerContentRoundRecord, fields, (influencer_campaign_id, round_number, kwargs.get("content_type"), kwargs.get("internal_review_due_date"), kwargs.get("client_review_sent_date"), kwargs.get("client_feedback_due_date"), kwargs.get("feedback_received_date"), kwargs.get("resubmission_due_date"), kwargs.get("approved_date"), kwargs.get("status"), kwargs.get("waiting_on"), kwargs.get("notes")))
+
+    def list_influencer_content_rounds(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerContentRoundRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_content_rounds where influencer_campaign_id = %s {clause} order by round_number asc, created_at asc", (influencer_campaign_id,), InfluencerContentRoundRecord)
+
+    def update_influencer_content_round(self, content_round_id: str, **kwargs: Any) -> InfluencerContentRoundRecord:
+        fields = ["round_number", "content_type", "internal_review_due_date", "client_review_sent_date", "client_feedback_due_date", "feedback_received_date", "resubmission_due_date", "approved_date", "status", "waiting_on", "notes"]
+        return self._update_content_child("campaign_ops_influencer_content_rounds", InfluencerContentRoundRecord, content_round_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_content_round(self, content_round_id: str) -> None:
+        self._execute("update campaign_ops_influencer_content_rounds set is_active = false where id = %s and is_active = true", (content_round_id,))
+
+    def reactivate_influencer_content_round(self, content_round_id: str) -> InfluencerContentRoundRecord:
+        return self._write_returning("update campaign_ops_influencer_content_rounds set is_active = true where id = %s and is_active = false returning *", (content_round_id,), InfluencerContentRoundRecord)
+
+    def get_influencer_creator_summary(self, influencer_campaign_id: str) -> InfluencerCreatorSummaryRecord | None:
+        return self._fetch_one("select * from campaign_ops_influencer_creator_summary where influencer_campaign_id = %s", (influencer_campaign_id,), InfluencerCreatorSummaryRecord)
+
+    def create_or_update_influencer_creator_summary(self, influencer_campaign_id: str, **kwargs: Any) -> InfluencerCreatorSummaryRecord:
+        fields = ["target_creator_count", "applicants_count", "vetted_count", "submitted_for_approval_count", "approved_count", "contracted_count", "content_submitted_count", "content_approved_count", "notes", "is_active"]
+        return self._write_returning(
+            f"""
+            insert into campaign_ops_influencer_creator_summary (influencer_campaign_id, {', '.join(fields)})
+            values (%s, {', '.join(['%s'] * len(fields))})
+            on conflict (influencer_campaign_id) do update set {', '.join(f'{field} = excluded.{field}' for field in fields)}
+            returning *
+            """,
+            (influencer_campaign_id, *tuple(kwargs.get(field) for field in fields)),
+            InfluencerCreatorSummaryRecord,
+        )
 
     def append_event(
         self,

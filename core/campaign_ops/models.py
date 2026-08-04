@@ -880,3 +880,180 @@ class ContentInvoiceCheckpointRecord:
 
     def __post_init__(self) -> None:
         self.checkpoint_name = require_text(self.checkpoint_name, "checkpoint_name")
+
+
+@dataclass(slots=True)
+class InfluencerCampaignRecord:
+    id: str
+    program_id: str
+    campaign_title: str
+    workstream_id: str | None = None
+    manager_user_id: str | None = None
+    influencer_stage: str = "planning"
+    planning_status: str | None = None
+    latest_update: str | None = None
+    waiting_on: str | None = None
+    is_on_hold: bool = False
+    hold_reason: str | None = None
+    application_open_date: date | None = None
+    application_close_date: date | None = None
+    influencer_approval_due_date: date | None = None
+    scripts_due_date: date | None = None
+    first_content_due_date: date | None = None
+    launch_date: date | None = None
+    wrap_date: date | None = None
+    invoice_date: date | None = None
+    invoice_status: str | None = None
+    invoice_amount: float | None = None
+    target_creator_count: int | None = None
+    approved_creator_count: int | None = None
+    contracted_creator_count: int | None = None
+    is_active: bool = True
+    created_by_user_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.campaign_title = require_text(self.campaign_title, "campaign_title")
+
+
+@dataclass(slots=True)
+class InfluencerPlanningPortfolioRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    workstream_id: str | None
+    campaign_title: str
+    manager_user_id: str | None
+    manager_display_name: str | None
+    influencer_stage: str
+    planning_status: str | None
+    latest_update: str | None
+    waiting_on: str | None
+    is_on_hold: bool
+    hold_reason: str | None
+    application_open_date: date | None
+    application_close_date: date | None
+    influencer_approval_due_date: date | None
+    scripts_due_date: date | None
+    first_content_due_date: date | None
+    launch_date: date | None
+    wrap_date: date | None
+    invoice_date: date | None
+    invoice_status: str | None
+    invoice_amount: float | None
+    target_creator_count: int | None
+    approved_creator_count: int | None
+    contracted_creator_count: int | None
+    applicants_count: int | None
+    vetted_count: int | None
+    submitted_for_approval_count: int | None
+    content_submitted_count: int | None
+    content_approved_count: int | None
+    creator_summary_notes: str | None
+    program_status: str
+    program_risk: str
+    next_planning_step: str | None
+    next_planning_step_due_date: date | None
+    track_sheet_url: str | None
+    influencer_brief_url: str | None
+    bitly_link_url: str | None
+    invoice_url: str | None
+    eop_survey_url: str | None
+    influencer_education_url: str | None
+    campaign_brief_url: str | None
+    click2cart_link_url: str | None
+    content_folder_url: str | None
+    application_link_url: str | None
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+InfluencerCampaignDetail = InfluencerPlanningPortfolioRow
+
+
+@dataclass(slots=True)
+class InfluencerPlanningStepRecord:
+    id: str
+    influencer_campaign_id: str
+    step_title: str
+    step_type: str | None = None
+    step_description: str | None = None
+    sequence_order: int = 0
+    responsible_party: str | None = None
+    assigned_user_id: str | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+    completed_date: date | None = None
+    status: str | None = None
+    hard_deadline: bool = False
+    waiting_on: str | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.step_title = require_text(self.step_title, "step_title")
+
+
+@dataclass(slots=True)
+class InfluencerApprovalRoundRecord:
+    id: str
+    influencer_campaign_id: str
+    approval_type: str
+    round_number: int = 1
+    approval_scope: str | None = None
+    requested_date: date | None = None
+    feedback_due_date: date | None = None
+    feedback_received_date: date | None = None
+    approved_date: date | None = None
+    status: str | None = None
+    waiting_on: str | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.approval_type = require_text(self.approval_type, "approval_type")
+
+
+@dataclass(slots=True)
+class InfluencerContentRoundRecord:
+    id: str
+    influencer_campaign_id: str
+    round_number: int
+    content_type: str | None = None
+    internal_review_due_date: date | None = None
+    client_review_sent_date: date | None = None
+    client_feedback_due_date: date | None = None
+    feedback_received_date: date | None = None
+    resubmission_due_date: date | None = None
+    approved_date: date | None = None
+    status: str | None = None
+    waiting_on: str | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class InfluencerCreatorSummaryRecord:
+    id: str
+    influencer_campaign_id: str
+    target_creator_count: int | None = None
+    applicants_count: int | None = None
+    vetted_count: int | None = None
+    submitted_for_approval_count: int | None = None
+    approved_count: int | None = None
+    contracted_count: int | None = None
+    content_submitted_count: int | None = None
+    content_approved_count: int | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
