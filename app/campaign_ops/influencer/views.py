@@ -8,6 +8,7 @@ import streamlit as st
 
 from app.campaign_ops.formatting import RISK_LABELS, format_date, format_datetime, safe_text, title_label
 from app.campaign_ops.influencer.formatting import PORTFOLIO_COLUMNS, planning_portfolio_rows, status_label
+from app.campaign_ops.influencer.live_views import render_live
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
 from app.campaign_ops.state import set_selected_program
@@ -44,7 +45,7 @@ def render_influencer(actor: CampaignOpsUser, service: CampaignOpsService, users
     st.subheader("Influencer")
     section = st.radio("Influencer workspace", ["Planning", "Live", "Recapping"], horizontal=True, key="campaign_ops_influencer_view")
     if section == "Live":
-        st.info("Influencer Live will use the shared Influencer campaign records in a later pass.")
+        render_live(actor, service, users)
         return
     if section == "Recapping":
         st.info("Influencer Recapping will extend the same Influencer campaign records in a later pass.")
@@ -325,6 +326,11 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         service.update_influencer_campaign(actor, campaign.id, campaign_title=title, manager_user_id=user_options[manager], influencer_stage=stage, planning_status=status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), is_on_hold=on_hold, hold_reason=trim_or_none(hold_reason), launch_date=launch, wrap_date=wrap, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status), invoice_amount=invoice_amount, target_creator_count=target, approved_creator_count=approved, contracted_creator_count=contracted)
         st.rerun()
     cols = st.columns(2)
+    if campaign.influencer_stage == "planning" and st.button("Move Campaign to Live", key=f"campaign_ops_influencer_move_live_{campaign.id}"):
+        service.transition_influencer_campaign_to_live(actor, campaign.id)
+        st.session_state["campaign_ops_selected_influencer_live_campaign_id"] = campaign.id
+        st.session_state.pop("campaign_ops_selected_influencer_campaign_id", None)
+        st.rerun()
     if campaign.is_active and cols[0].button("Deactivate Campaign", key=f"campaign_ops_influencer_deactivate_{campaign.id}"):
         service.deactivate_influencer_campaign(actor, campaign.id); st.rerun()
     if not campaign.is_active and cols[1].button("Reactivate Campaign", key=f"campaign_ops_influencer_reactivate_{campaign.id}"):

@@ -39,6 +39,12 @@ from core.campaign_ops.models import (
     InfluencerCampaignRecord,
     InfluencerContentRoundRecord,
     InfluencerCreatorSummaryRecord,
+    InfluencerCreatorWaveRecord,
+    InfluencerLiveCheckpointRecord,
+    InfluencerLiveCreatorRecord,
+    InfluencerLiveExceptionRecord,
+    InfluencerLivePortfolioRow,
+    InfluencerLiveWorkspaceSummary,
     InfluencerPlanningPortfolioRow,
     InfluencerPlanningStepRecord,
     InsightsObjectiveRecord,
@@ -121,13 +127,26 @@ from core.campaign_ops.influencer import (
     CONTENT_ROUND_STATUSES,
     CONTENT_ROUND_TYPES,
     INFLUENCER_RESOURCE_TYPES,
+    INFLUENCER_STAGE_LIVE,
     INFLUENCER_STAGE_PLANNING,
+    LIVE_CHECKPOINT_STATUSES,
+    LIVE_EXCEPTION_STATUSES,
+    LIVE_EXCEPTION_TYPES,
+    LIVE_RESOURCE_TYPES,
+    LIVE_STATUS_READY_TO_LAUNCH,
+    LIVE_STATUSES,
     PLANNING_STATUS_ON_HOLD,
     PLANNING_STATUS_NOT_STARTED,
     PLANNING_STEP_STATUSES,
     RESPONSIBLE_PARTIES,
+    STANDARD_LIVE_CHECKPOINT_TEMPLATE,
     STANDARD_PLANNING_TEMPLATE,
+    WAVE_STATUSES,
+    CREATOR_APPROVAL_STATUSES,
+    CREATOR_DRAFT_STATUSES,
+    CREATOR_LIVE_STATUSES,
     normalize_influencer_stage,
+    normalize_live_status,
     normalize_optional_status as normalize_influencer_optional_status,
     normalize_planning_status,
 )
@@ -2696,13 +2715,16 @@ class CampaignOpsService:
         target = self._non_negative_int(payload.get("target_creator_count") if "target_creator_count" in payload else (before.target_creator_count if before else None), "Target creator count")
         approved = self._non_negative_int(payload.get("approved_creator_count") if "approved_creator_count" in payload else (before.approved_creator_count if before else None), "Approved creator count")
         contracted = self._non_negative_int(payload.get("contracted_creator_count") if "contracted_creator_count" in payload else (before.contracted_creator_count if before else None), "Contracted creator count")
+        stage = normalize_influencer_stage(payload.get("influencer_stage") if "influencer_stage" in payload else (before.influencer_stage if before else INFLUENCER_STAGE_PLANNING))
+        status_value = payload.get("planning_status") if "planning_status" in payload else (before.planning_status if before else None)
+        status = normalize_live_status(status_value) if stage == INFLUENCER_STAGE_LIVE else normalize_planning_status(status_value)
         return {
             "program_id": str(program_id),
             "workstream_id": str(workstream_id) if workstream_id else None,
             "campaign_title": title,
             "manager_user_id": str(manager_user_id) if manager_user_id else None,
-            "influencer_stage": normalize_influencer_stage(payload.get("influencer_stage") if "influencer_stage" in payload else (before.influencer_stage if before else INFLUENCER_STAGE_PLANNING)),
-            "planning_status": normalize_planning_status(payload.get("planning_status") if "planning_status" in payload else (before.planning_status if before else PLANNING_STATUS_NOT_STARTED)),
+            "influencer_stage": stage,
+            "planning_status": status,
             "latest_update": self._clean_optional_text(payload.get("latest_update") if "latest_update" in payload else (before.latest_update if before else None)),
             "waiting_on": self._clean_optional_text(payload.get("waiting_on") if "waiting_on" in payload else (before.waiting_on if before else None)),
             "is_on_hold": is_on_hold,
@@ -3062,6 +3084,395 @@ class CampaignOpsService:
     def get_influencer_creator_summary(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCreatorSummaryRecord | None:
         self.get_influencer_campaign_detail(actor, campaign_id)
         return (self.repository or CampaignOpsRepository()).get_influencer_creator_summary(campaign_id)
+
+    def transition_influencer_campaign_to_live(self, actor: CampaignOpsUser | None, campaign_id: str, live_status: str | None = None) -> InfluencerCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCampaignRecord:
+            before = self._require_influencer_campaign(repository, campaign_id)
+            self._validate_influencer_access(repository, actor, before.program_id)
+            if not before.is_active:
+                raise CampaignOpsValidationError("Inactive Influencer campaigns cannot be moved to Live.")
+            if before.influencer_stage == INFLUENCER_STAGE_LIVE:
+                return before
+            updated = repository.update_influencer_campaign(
+                campaign_id,
+                workstream_id=before.workstream_id,
+                campaign_title=before.campaign_title,
+                manager_user_id=before.manager_user_id,
+                influencer_stage=INFLUENCER_STAGE_LIVE,
+                planning_status=normalize_live_status(live_status or LIVE_STATUS_READY_TO_LAUNCH),
+                latest_update=before.latest_update,
+                waiting_on=before.waiting_on,
+                is_on_hold=before.is_on_hold,
+                hold_reason=before.hold_reason,
+                application_open_date=before.application_open_date,
+                application_close_date=before.application_close_date,
+                influencer_approval_due_date=before.influencer_approval_due_date,
+                scripts_due_date=before.scripts_due_date,
+                first_content_due_date=before.first_content_due_date,
+                launch_date=before.launch_date,
+                wrap_date=before.wrap_date,
+                invoice_date=before.invoice_date,
+                invoice_status=before.invoice_status,
+                invoice_amount=before.invoice_amount,
+                target_creator_count=before.target_creator_count,
+                approved_creator_count=before.approved_creator_count,
+                contracted_creator_count=before.contracted_creator_count,
+            )
+            repository.append_event(event_type="influencer_stage_moved_to_live", entity_type="influencer_campaign", entity_id=campaign_id, program_id=updated.program_id, workstream_id=updated.workstream_id, actor_user_id=actor.id if actor else None, old_value_json={"stage": before.influencer_stage}, new_value_json={"stage": updated.influencer_stage}, message=f"{self._influencer_actor_label(actor)} moved {updated.campaign_title} from Planning to Live.")
+            return updated
+        return self._transaction(operation)
+
+    def list_influencer_live_campaigns(self, actor: CampaignOpsUser | None, include_inactive: bool = False, manager_user_id: str | None = None) -> list[InfluencerLivePortfolioRow]:
+        repository = self.repository or CampaignOpsRepository()
+        rows = repository.list_influencer_live_campaigns(include_inactive=include_inactive, manager_user_id=manager_user_id)
+        if can_access_admin(actor):
+            return rows
+        return [row for row in rows if can_view_program(actor, self._require_program(repository, row.program_id), repository.list_assignments_by_program(row.program_id)) or row.manager_user_id == (actor.id if actor else None)]
+
+    def get_influencer_live_campaign_detail(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerLivePortfolioRow:
+        repository = self.repository or CampaignOpsRepository()
+        detail = repository.get_influencer_live_campaign_detail(campaign_id)
+        if detail is None:
+            raise CampaignOpsNotFoundError("Influencer Live campaign was not found.")
+        if not (can_access_admin(actor) or can_view_program(actor, self._require_program(repository, detail.program_id), repository.list_assignments_by_program(detail.program_id)) or detail.manager_user_id == (actor.id if actor else None)):
+            raise CampaignOpsPermissionError("You do not have access to this Influencer Live campaign.")
+        return detail
+
+    def get_influencer_live_workspace_summary(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerLiveWorkspaceSummary:
+        campaign = self.get_influencer_live_campaign_detail(actor, campaign_id)
+        return InfluencerLiveWorkspaceSummary(
+            campaign=campaign,
+            planning_steps=self.list_influencer_planning_steps(actor, campaign_id, include_inactive=True),
+            approval_rounds=self.list_influencer_approval_rounds(actor, campaign_id, include_inactive=True),
+            content_rounds=self.list_influencer_content_rounds(actor, campaign_id, include_inactive=True),
+            creator_summary=self.get_influencer_creator_summary(actor, campaign_id),
+            checkpoints=self.list_influencer_live_checkpoints(actor, campaign_id, include_inactive=True),
+            waves=self.list_influencer_creator_waves(actor, campaign_id, include_inactive=True),
+            creators=self.list_influencer_live_creators(actor, campaign_id, include_inactive=True),
+            exceptions=self.list_influencer_live_exceptions(actor, campaign_id, include_inactive=True),
+            wrap_readiness=self.influencer_live_wrap_readiness(campaign, self.list_influencer_live_checkpoints(actor, campaign_id), self.list_influencer_creator_waves(actor, campaign_id), self.list_influencer_live_creators(actor, campaign_id), self.list_influencer_live_exceptions(actor, campaign_id)),
+        )
+
+    def _live_campaign_context(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCampaignRecord:
+        campaign = self._influencer_child_context(repository, actor, campaign_id)
+        if campaign.influencer_stage != INFLUENCER_STAGE_LIVE:
+            raise CampaignOpsValidationError("Campaign must be in Live stage for this action.")
+        return campaign
+
+    def update_influencer_live_overview(self, actor: CampaignOpsUser | None, campaign_id: str, **kwargs: Any) -> InfluencerCampaignRecord:
+        kwargs["influencer_stage"] = INFLUENCER_STAGE_LIVE
+        if "planning_status" in kwargs:
+            kwargs["planning_status"] = normalize_live_status(kwargs["planning_status"])
+        return self.update_influencer_campaign(actor, campaign_id, **kwargs)
+
+    def _live_checkpoint_payload(self, repository: CampaignOpsRepository, kwargs: dict[str, Any], before: InfluencerLiveCheckpointRecord | None = None) -> dict[str, Any]:
+        assigned_user_id = kwargs.get("assigned_user_id") if "assigned_user_id" in kwargs else (before.assigned_user_id if before else None)
+        if assigned_user_id:
+            self._require_active_user(repository, str(assigned_user_id), "Assigned user")
+        start = kwargs.get("start_date") if "start_date" in kwargs else (before.start_date if before else None)
+        due = kwargs.get("due_date") if "due_date" in kwargs else (before.due_date if before else None)
+        if start and due and due < start:
+            raise CampaignOpsValidationError("Due date cannot precede start date.")
+        responsible = self._clean_optional_text(kwargs.get("responsible_party") if "responsible_party" in kwargs else (before.responsible_party if before else None))
+        if responsible and responsible not in RESPONSIBLE_PARTIES:
+            raise CampaignOpsValidationError("Responsible party is invalid.")
+        return {"checkpoint_type": self._clean_optional_text(kwargs.get("checkpoint_type") if "checkpoint_type" in kwargs else (before.checkpoint_type if before else None)), "checkpoint_title": require_text(kwargs.get("checkpoint_title") or (before.checkpoint_title if before else None), "Checkpoint title"), "checkpoint_description": self._clean_optional_text(kwargs.get("checkpoint_description") if "checkpoint_description" in kwargs else (before.checkpoint_description if before else None)), "sequence_order": self._non_negative_int(kwargs.get("sequence_order") if "sequence_order" in kwargs else (before.sequence_order if before else 0), "Sequence order") or 0, "responsible_party": responsible, "assigned_user_id": str(assigned_user_id) if assigned_user_id else None, "start_date": start, "due_date": due, "completed_date": kwargs.get("completed_date") if "completed_date" in kwargs else (before.completed_date if before else None), "status": normalize_influencer_optional_status(kwargs.get("status") if "status" in kwargs else (before.status if before else None), LIVE_CHECKPOINT_STATUSES, "Live checkpoint status"), "hard_deadline": bool(kwargs.get("hard_deadline") if "hard_deadline" in kwargs else (before.hard_deadline if before else False)), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None))}
+
+    def create_influencer_live_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_title: str, **kwargs: Any) -> InfluencerLiveCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveCheckpointRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            checkpoint = repository.create_influencer_live_checkpoint(campaign_id, **self._live_checkpoint_payload(repository, {**kwargs, "checkpoint_title": checkpoint_title}))
+            repository.append_event(event_type="influencer_live_checkpoint_created", entity_type="influencer_live_checkpoint", entity_id=checkpoint.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added Live checkpoint {checkpoint.checkpoint_title}.")
+            return checkpoint
+        return self._transaction(operation)
+
+    def create_standard_influencer_live_template(self, actor: CampaignOpsUser | None, campaign_id: str) -> list[InfluencerLiveCheckpointRecord]:
+        def operation(repository: CampaignOpsRepository) -> list[InfluencerLiveCheckpointRecord]:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            existing = {item.checkpoint_title.lower() for item in repository.list_influencer_live_checkpoints(campaign_id, include_inactive=True)}
+            created = []
+            for index, title in enumerate(STANDARD_LIVE_CHECKPOINT_TEMPLATE, start=1):
+                if title.lower() in existing:
+                    continue
+                checkpoint = repository.create_influencer_live_checkpoint(campaign_id, title, checkpoint_type="standard_template", sequence_order=index, status="not_started")
+                repository.append_event(event_type="influencer_live_checkpoint_created", entity_type="influencer_live_checkpoint", entity_id=checkpoint.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added Live checkpoint {checkpoint.checkpoint_title}.")
+                created.append(checkpoint)
+            return created
+        return self._transaction(operation)
+
+    def list_influencer_live_checkpoints(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCheckpointRecord]:
+        self.get_influencer_live_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_live_checkpoints(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_live_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str, **kwargs: Any) -> InfluencerLiveCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveCheckpointRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            before = next((item for item in repository.list_influencer_live_checkpoints(campaign_id, include_inactive=True) if item.id == checkpoint_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Live checkpoint was not found.")
+            payload = self._live_checkpoint_payload(repository, kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            updated = repository.update_influencer_live_checkpoint(checkpoint_id, **payload)
+            repository.append_event(event_type="influencer_live_checkpoint_updated", entity_type="influencer_live_checkpoint", entity_id=checkpoint_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated Live checkpoint {updated.checkpoint_title}.")
+            return updated
+        return self._transaction(operation)
+
+    def reorder_influencer_live_checkpoints(self, actor: CampaignOpsUser | None, campaign_id: str, ordered_ids: list[str]) -> list[InfluencerLiveCheckpointRecord]:
+        return [self.update_influencer_live_checkpoint(actor, campaign_id, checkpoint_id, sequence_order=index) for index, checkpoint_id in enumerate(ordered_ids, start=1)]
+
+    def complete_influencer_live_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str, completed_date: date | None = None) -> InfluencerLiveCheckpointRecord:
+        return self.update_influencer_live_checkpoint(actor, campaign_id, checkpoint_id, status="complete", completed_date=completed_date or date.today())
+
+    def reopen_influencer_live_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str) -> InfluencerLiveCheckpointRecord:
+        return self.update_influencer_live_checkpoint(actor, campaign_id, checkpoint_id, status="in_progress", completed_date=None)
+
+    def deactivate_influencer_live_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_live_checkpoint(checkpoint_id)
+            repository.append_event(event_type="influencer_live_checkpoint_deactivated", entity_type="influencer_live_checkpoint", entity_id=checkpoint_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a Live checkpoint.")
+        self._transaction(operation)
+
+    def reactivate_influencer_live_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str) -> InfluencerLiveCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveCheckpointRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            checkpoint = repository.reactivate_influencer_live_checkpoint(checkpoint_id)
+            repository.append_event(event_type="influencer_live_checkpoint_reactivated", entity_type="influencer_live_checkpoint", entity_id=checkpoint_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated Live checkpoint {checkpoint.checkpoint_title}.")
+            return checkpoint
+        return self._transaction(operation)
+
+    def _wave_payload(self, repository: CampaignOpsRepository, campaign_id: str, kwargs: dict[str, Any], before: InfluencerCreatorWaveRecord | None = None) -> dict[str, Any]:
+        wave_number = int(kwargs.get("wave_number") if "wave_number" in kwargs else (before.wave_number if before else 1))
+        if wave_number <= 0:
+            raise CampaignOpsValidationError("Wave number must be positive.")
+        planned_start = kwargs.get("planned_start_date") if "planned_start_date" in kwargs else (before.planned_start_date if before else None)
+        planned_end = kwargs.get("planned_end_date") if "planned_end_date" in kwargs else (before.planned_end_date if before else None)
+        actual_start = kwargs.get("actual_start_date") if "actual_start_date" in kwargs else (before.actual_start_date if before else None)
+        actual_end = kwargs.get("actual_end_date") if "actual_end_date" in kwargs else (before.actual_end_date if before else None)
+        if planned_start and planned_end and planned_end < planned_start:
+            raise CampaignOpsValidationError("Planned end date cannot precede planned start date.")
+        if actual_start and actual_end and actual_end < actual_start:
+            raise CampaignOpsValidationError("Actual end date cannot precede actual start date.")
+        planned = self._non_negative_int(kwargs.get("planned_creator_count") if "planned_creator_count" in kwargs else (before.planned_creator_count if before else None), "Planned creator count")
+        live = self._non_negative_int(kwargs.get("live_creator_count") if "live_creator_count" in kwargs else (before.live_creator_count if before else None), "Live creator count")
+        completed = self._non_negative_int(kwargs.get("completed_creator_count") if "completed_creator_count" in kwargs else (before.completed_creator_count if before else None), "Completed creator count")
+        if completed is not None and live is not None and completed > live:
+            raise CampaignOpsValidationError("Completed creator count cannot exceed live creator count.")
+        if live is not None and planned is not None and live > planned:
+            raise CampaignOpsValidationError("Live creator count cannot exceed planned creator count.")
+        return {"wave_number": wave_number, "wave_name": self._clean_optional_text(kwargs.get("wave_name") if "wave_name" in kwargs else (before.wave_name if before else None)), "planned_start_date": planned_start, "planned_end_date": planned_end, "actual_start_date": actual_start, "actual_end_date": actual_end, "planned_creator_count": planned, "live_creator_count": live, "completed_creator_count": completed, "status": normalize_influencer_optional_status(kwargs.get("status") if "status" in kwargs else (before.status if before else None), WAVE_STATUSES, "Wave status"), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None))}
+
+    def create_influencer_creator_wave(self, actor: CampaignOpsUser | None, campaign_id: str, wave_number: int, **kwargs: Any) -> InfluencerCreatorWaveRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCreatorWaveRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            payload = self._wave_payload(repository, campaign_id, {**kwargs, "wave_number": wave_number})
+            if any(w.wave_number == payload["wave_number"] and w.is_active for w in repository.list_influencer_creator_waves(campaign_id, include_inactive=True)):
+                raise CampaignOpsValidationError("Duplicate active wave number is not allowed for one campaign.")
+            wave = repository.create_influencer_creator_wave(campaign_id, **payload)
+            repository.append_event(event_type="influencer_creator_wave_created", entity_type="influencer_creator_wave", entity_id=wave.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added Creator Wave {wave.wave_number}.")
+            return wave
+        return self._transaction(operation)
+
+    def list_influencer_creator_waves(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerCreatorWaveRecord]:
+        self.get_influencer_live_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_creator_waves(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_creator_wave(self, actor: CampaignOpsUser | None, campaign_id: str, wave_id: str, **kwargs: Any) -> InfluencerCreatorWaveRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCreatorWaveRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            before = next((w for w in repository.list_influencer_creator_waves(campaign_id, include_inactive=True) if w.id == wave_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Creator wave was not found.")
+            payload = self._wave_payload(repository, campaign_id, kwargs, before)
+            if payload["wave_number"] != before.wave_number and any(w.id != wave_id and w.wave_number == payload["wave_number"] and w.is_active for w in repository.list_influencer_creator_waves(campaign_id, include_inactive=True)):
+                raise CampaignOpsValidationError("Duplicate active wave number is not allowed for one campaign.")
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            wave = repository.update_influencer_creator_wave(wave_id, **payload)
+            repository.append_event(event_type="influencer_creator_wave_updated", entity_type="influencer_creator_wave", entity_id=wave_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated Creator Wave {wave.wave_number}.")
+            return wave
+        return self._transaction(operation)
+
+    def start_influencer_creator_wave(self, actor: CampaignOpsUser | None, campaign_id: str, wave_id: str, actual_start_date: date | None = None) -> InfluencerCreatorWaveRecord:
+        return self.update_influencer_creator_wave(actor, campaign_id, wave_id, status="in_progress", actual_start_date=actual_start_date or date.today())
+
+    def complete_influencer_creator_wave(self, actor: CampaignOpsUser | None, campaign_id: str, wave_id: str, actual_end_date: date | None = None) -> InfluencerCreatorWaveRecord:
+        return self.update_influencer_creator_wave(actor, campaign_id, wave_id, status="complete", actual_end_date=actual_end_date or date.today())
+
+    def reopen_influencer_creator_wave(self, actor: CampaignOpsUser | None, campaign_id: str, wave_id: str) -> InfluencerCreatorWaveRecord:
+        return self.update_influencer_creator_wave(actor, campaign_id, wave_id, status="reopened", actual_end_date=None)
+
+    def deactivate_influencer_creator_wave(self, actor: CampaignOpsUser | None, campaign_id: str, wave_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_creator_wave(wave_id)
+            repository.append_event(event_type="influencer_creator_wave_deactivated", entity_type="influencer_creator_wave", entity_id=wave_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a creator wave.")
+        self._transaction(operation)
+
+    def reactivate_influencer_creator_wave(self, actor: CampaignOpsUser | None, campaign_id: str, wave_id: str) -> InfluencerCreatorWaveRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCreatorWaveRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            wave = repository.reactivate_influencer_creator_wave(wave_id)
+            repository.append_event(event_type="influencer_creator_wave_reactivated", entity_type="influencer_creator_wave", entity_id=wave_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated Creator Wave {wave.wave_number}.")
+            return wave
+        return self._transaction(operation)
+
+    def _validate_live_wave(self, repository: CampaignOpsRepository, campaign_id: str, wave_id: str | None) -> None:
+        if not wave_id:
+            return
+        if not any(w.id == wave_id for w in repository.list_influencer_creator_waves(campaign_id, include_inactive=True)):
+            raise CampaignOpsValidationError("Selected creator wave is invalid.")
+
+    def _live_creator_payload(self, repository: CampaignOpsRepository, campaign_id: str, kwargs: dict[str, Any], before: InfluencerLiveCreatorRecord | None = None) -> dict[str, Any]:
+        wave_id = kwargs.get("wave_id") if "wave_id" in kwargs else (before.wave_id if before else None)
+        self._validate_live_wave(repository, campaign_id, str(wave_id) if wave_id else None)
+        def valid_url(field: str) -> str | None:
+            value = kwargs.get(field) if field in kwargs else (getattr(before, field) if before else None)
+            return self._validate_resource_url(value) if value else None
+        impressions = self._non_negative_int(kwargs.get("latest_impressions") if "latest_impressions" in kwargs else (before.latest_impressions if before else None), "Latest impressions")
+        return {"wave_id": str(wave_id) if wave_id else None, "creator_name": require_text(kwargs.get("creator_name") or (before.creator_name if before else None), "Creator name"), "creator_handle": self._clean_optional_text(kwargs.get("creator_handle") if "creator_handle" in kwargs else (before.creator_handle if before else None)), "platform": self._clean_optional_text(kwargs.get("platform") if "platform" in kwargs else (before.platform if before else None)), "live_status": normalize_influencer_optional_status(kwargs.get("live_status") if "live_status" in kwargs else (before.live_status if before else None), CREATOR_LIVE_STATUSES, "Creator live status"), "draft_status": normalize_influencer_optional_status(kwargs.get("draft_status") if "draft_status" in kwargs else (before.draft_status if before else None), CREATOR_DRAFT_STATUSES, "Creator draft status"), "approval_status": normalize_influencer_optional_status(kwargs.get("approval_status") if "approval_status" in kwargs else (before.approval_status if before else None), CREATOR_APPROVAL_STATUSES, "Creator approval status"), "scheduled_live_date": kwargs.get("scheduled_live_date") if "scheduled_live_date" in kwargs else (before.scheduled_live_date if before else None), "actual_live_date": kwargs.get("actual_live_date") if "actual_live_date" in kwargs else (before.actual_live_date if before else None), "paid_live_end_date": kwargs.get("paid_live_end_date") if "paid_live_end_date" in kwargs else (before.paid_live_end_date if before else None), "content_url": valid_url("content_url"), "click2cart_url": valid_url("click2cart_url"), "retailer_url": valid_url("retailer_url"), "impressions_reporting_required": bool(kwargs.get("impressions_reporting_required") if "impressions_reporting_required" in kwargs else (before.impressions_reporting_required if before else False)), "latest_impressions": impressions, "last_impressions_update_date": kwargs.get("last_impressions_update_date") if "last_impressions_update_date" in kwargs else (before.last_impressions_update_date if before else None), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "exception_status": self._clean_optional_text(kwargs.get("exception_status") if "exception_status" in kwargs else (before.exception_status if before else None)), "exception_notes": self._clean_optional_text(kwargs.get("exception_notes") if "exception_notes" in kwargs else (before.exception_notes if before else None))}
+
+    def create_influencer_live_creator(self, actor: CampaignOpsUser | None, campaign_id: str, creator_name: str, **kwargs: Any) -> InfluencerLiveCreatorRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveCreatorRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            creator = repository.create_influencer_live_creator(campaign_id, **self._live_creator_payload(repository, campaign_id, {**kwargs, "creator_name": creator_name}))
+            repository.append_event(event_type="influencer_live_creator_created", entity_type="influencer_live_creator", entity_id=creator.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added creator {creator.creator_name}.")
+            return creator
+        return self._transaction(operation)
+
+    def list_influencer_live_creators(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCreatorRecord]:
+        self.get_influencer_live_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_live_creators(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_live_creator(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str, **kwargs: Any) -> InfluencerLiveCreatorRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveCreatorRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            before = next((c for c in repository.list_influencer_live_creators(campaign_id, include_inactive=True) if c.id == creator_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Live creator was not found.")
+            payload = self._live_creator_payload(repository, campaign_id, kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            creator = repository.update_influencer_live_creator(creator_id, **payload)
+            event_type = "influencer_live_creator_impressions_updated" if "latest_impressions" in kwargs else "influencer_live_creator_updated"
+            repository.append_event(event_type=event_type, entity_type="influencer_live_creator", entity_id=creator_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated creator {creator.creator_name}.")
+            return creator
+        return self._transaction(operation)
+
+    def mark_influencer_live_creator_draft_submitted(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str) -> InfluencerLiveCreatorRecord:
+        return self.update_influencer_live_creator(actor, campaign_id, creator_id, draft_status="submitted")
+
+    def mark_influencer_live_creator_approved(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str) -> InfluencerLiveCreatorRecord:
+        return self.update_influencer_live_creator(actor, campaign_id, creator_id, approval_status="approved", live_status="approved")
+
+    def mark_influencer_live_creator_scheduled(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str, scheduled_live_date: date | None = None) -> InfluencerLiveCreatorRecord:
+        return self.update_influencer_live_creator(actor, campaign_id, creator_id, live_status="scheduled", scheduled_live_date=scheduled_live_date)
+
+    def mark_influencer_live_creator_live(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str, actual_live_date: date | None = None) -> InfluencerLiveCreatorRecord:
+        return self.update_influencer_live_creator(actor, campaign_id, creator_id, live_status="live", actual_live_date=actual_live_date or date.today())
+
+    def mark_influencer_live_creator_paid_live_complete(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str, paid_live_end_date: date | None = None) -> InfluencerLiveCreatorRecord:
+        return self.update_influencer_live_creator(actor, campaign_id, creator_id, live_status="paid_live_complete", paid_live_end_date=paid_live_end_date or date.today())
+
+    def update_influencer_live_creator_impressions(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str, latest_impressions: int, update_date: date | None = None) -> InfluencerLiveCreatorRecord:
+        return self.update_influencer_live_creator(actor, campaign_id, creator_id, impressions_reporting_required=True, latest_impressions=latest_impressions, last_impressions_update_date=update_date or date.today())
+
+    def deactivate_influencer_live_creator(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_live_creator(creator_id)
+            repository.append_event(event_type="influencer_live_creator_deactivated", entity_type="influencer_live_creator", entity_id=creator_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a Live creator.")
+        self._transaction(operation)
+
+    def reactivate_influencer_live_creator(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str) -> InfluencerLiveCreatorRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveCreatorRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            creator = repository.reactivate_influencer_live_creator(creator_id)
+            repository.append_event(event_type="influencer_live_creator_reactivated", entity_type="influencer_live_creator", entity_id=creator_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated creator {creator.creator_name}.")
+            return creator
+        return self._transaction(operation)
+
+    def _validate_live_creator_link(self, repository: CampaignOpsRepository, campaign_id: str, creator_id: str | None) -> None:
+        if not creator_id:
+            return
+        if not any(c.id == creator_id for c in repository.list_influencer_live_creators(campaign_id, include_inactive=True)):
+            raise CampaignOpsValidationError("Selected Live creator is invalid.")
+
+    def _live_exception_payload(self, repository: CampaignOpsRepository, campaign_id: str, kwargs: dict[str, Any], before: InfluencerLiveExceptionRecord | None = None) -> dict[str, Any]:
+        creator_id = kwargs.get("live_creator_id") if "live_creator_id" in kwargs else (before.live_creator_id if before else None)
+        self._validate_live_creator_link(repository, campaign_id, str(creator_id) if creator_id else None)
+        owner_id = kwargs.get("owner_user_id") if "owner_user_id" in kwargs else (before.owner_user_id if before else None)
+        if owner_id:
+            self._require_active_user(repository, str(owner_id), "Owner")
+        opened = kwargs.get("opened_date") if "opened_date" in kwargs else (before.opened_date if before else None)
+        due = kwargs.get("due_date") if "due_date" in kwargs else (before.due_date if before else None)
+        if opened and due and due < opened:
+            raise CampaignOpsValidationError("Exception due date cannot precede opened date.")
+        exception_type = self._clean_optional_text(kwargs.get("exception_type") if "exception_type" in kwargs else (before.exception_type if before else None))
+        if exception_type and exception_type not in LIVE_EXCEPTION_TYPES:
+            raise CampaignOpsValidationError("Exception type is invalid.")
+        return {"live_creator_id": str(creator_id) if creator_id else None, "exception_type": exception_type, "exception_title": require_text(kwargs.get("exception_title") or (before.exception_title if before else None), "Exception title"), "description": self._clean_optional_text(kwargs.get("description") if "description" in kwargs else (before.description if before else None)), "status": normalize_influencer_optional_status(kwargs.get("status") if "status" in kwargs else (before.status if before else None), LIVE_EXCEPTION_STATUSES, "Exception status"), "owner_user_id": str(owner_id) if owner_id else None, "opened_date": opened, "due_date": due, "resolved_date": kwargs.get("resolved_date") if "resolved_date" in kwargs else (before.resolved_date if before else None), "resolution_notes": self._clean_optional_text(kwargs.get("resolution_notes") if "resolution_notes" in kwargs else (before.resolution_notes if before else None)), "is_highlighted": bool(kwargs.get("is_highlighted") if "is_highlighted" in kwargs else (before.is_highlighted if before else False))}
+
+    def create_influencer_live_exception(self, actor: CampaignOpsUser | None, campaign_id: str, exception_title: str, **kwargs: Any) -> InfluencerLiveExceptionRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveExceptionRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            exception = repository.create_influencer_live_exception(campaign_id, **self._live_exception_payload(repository, campaign_id, {**kwargs, "exception_title": exception_title}))
+            repository.append_event(event_type="influencer_live_exception_created", entity_type="influencer_live_exception", entity_id=exception.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} opened exception {exception.exception_title}.")
+            return exception
+        return self._transaction(operation)
+
+    def list_influencer_live_exceptions(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveExceptionRecord]:
+        self.get_influencer_live_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_live_exceptions(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_live_exception(self, actor: CampaignOpsUser | None, campaign_id: str, exception_id: str, **kwargs: Any) -> InfluencerLiveExceptionRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveExceptionRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            before = next((e for e in repository.list_influencer_live_exceptions(campaign_id, include_inactive=True) if e.id == exception_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Live exception was not found.")
+            payload = self._live_exception_payload(repository, campaign_id, kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            exception = repository.update_influencer_live_exception(exception_id, **payload)
+            repository.append_event(event_type="influencer_live_exception_updated", entity_type="influencer_live_exception", entity_id=exception_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated exception {exception.exception_title}.")
+            return exception
+        return self._transaction(operation)
+
+    def resolve_influencer_live_exception(self, actor: CampaignOpsUser | None, campaign_id: str, exception_id: str, resolution_notes: str | None = None) -> InfluencerLiveExceptionRecord:
+        return self.update_influencer_live_exception(actor, campaign_id, exception_id, status="resolved", resolved_date=date.today(), resolution_notes=resolution_notes)
+
+    def reopen_influencer_live_exception(self, actor: CampaignOpsUser | None, campaign_id: str, exception_id: str) -> InfluencerLiveExceptionRecord:
+        return self.update_influencer_live_exception(actor, campaign_id, exception_id, status="reopened", resolved_date=None)
+
+    def deactivate_influencer_live_exception(self, actor: CampaignOpsUser | None, campaign_id: str, exception_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_live_exception(exception_id)
+            repository.append_event(event_type="influencer_live_exception_deactivated", entity_type="influencer_live_exception", entity_id=exception_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a Live exception.")
+        self._transaction(operation)
+
+    def reactivate_influencer_live_exception(self, actor: CampaignOpsUser | None, campaign_id: str, exception_id: str) -> InfluencerLiveExceptionRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerLiveExceptionRecord:
+            campaign = self._live_campaign_context(repository, actor, campaign_id)
+            exception = repository.reactivate_influencer_live_exception(exception_id)
+            repository.append_event(event_type="influencer_live_exception_reactivated", entity_type="influencer_live_exception", entity_id=exception_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated exception {exception.exception_title}.")
+            return exception
+        return self._transaction(operation)
+
+    def influencer_live_wrap_readiness(self, campaign: InfluencerLivePortfolioRow, checkpoints: list[InfluencerLiveCheckpointRecord], waves: list[InfluencerCreatorWaveRecord], creators: list[InfluencerLiveCreatorRecord], exceptions: list[InfluencerLiveExceptionRecord]) -> str:
+        open_checkpoints = [c for c in checkpoints if c.is_active and c.status != "complete"]
+        open_waves = [w for w in waves if w.is_active and w.status != "complete"]
+        open_creators = [c for c in creators if c.is_active and c.live_status not in ("live", "paid_live_complete", "complete")]
+        open_exceptions = [e for e in exceptions if e.is_active and e.status not in ("resolved", "cancelled")]
+        if open_exceptions or any(e.is_highlighted and e.status not in ("resolved", "cancelled") for e in exceptions if e.is_active):
+            return "Needs Attention"
+        if open_checkpoints or open_waves or open_creators:
+            return "Not Ready"
+        if campaign.wrap_date and campaign.wrap_date <= date.today():
+            return "Wrapped"
+        return "Ready to Wrap"
 
     def _content_actor_label(self, actor: CampaignOpsUser | None) -> str:
         return actor.display_name if actor else "System"

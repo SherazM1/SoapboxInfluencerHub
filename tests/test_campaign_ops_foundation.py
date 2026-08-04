@@ -61,6 +61,11 @@ from core.campaign_ops.models import (
     InfluencerCampaignRecord,
     InfluencerContentRoundRecord,
     InfluencerCreatorSummaryRecord,
+    InfluencerCreatorWaveRecord,
+    InfluencerLiveCheckpointRecord,
+    InfluencerLiveCreatorRecord,
+    InfluencerLiveExceptionRecord,
+    InfluencerLivePortfolioRow,
     InfluencerPlanningPortfolioRow,
     InfluencerPlanningStepRecord,
     InsightsObjectiveRecord,
@@ -103,10 +108,14 @@ from core.campaign_ops.content_management import (
 )
 from core.campaign_ops.influencer import (
     INFLUENCER_STAGE_PLANNING,
+    INFLUENCER_STAGE_LIVE,
+    LIVE_STATUS_LIVE,
+    LIVE_STATUS_READY_TO_LAUNCH,
     PLANNING_STATUS_BRIEF_DEVELOPMENT,
     PLANNING_STATUS_INFLUENCER_LIST_REVIEW,
     PLANNING_STATUS_ON_HOLD,
     STANDARD_PLANNING_TEMPLATE,
+    STANDARD_LIVE_CHECKPOINT_TEMPLATE,
 )
 from core.campaign_ops.insights import INSIGHTS_STATUS_DRAFTING_SURVEY, INSIGHTS_STATUS_NOT_STARTED
 from core.campaign_ops.retail_media import RETAIL_MEDIA_STATUS_LIVE, RETAIL_MEDIA_STATUS_PLANNING
@@ -264,6 +273,10 @@ class FakePrompt4ARepository:
         self.influencer_approval_rounds: list[InfluencerApprovalRoundRecord] = []
         self.influencer_content_rounds: list[InfluencerContentRoundRecord] = []
         self.influencer_creator_summaries: list[InfluencerCreatorSummaryRecord] = []
+        self.influencer_live_checkpoints: list[InfluencerLiveCheckpointRecord] = []
+        self.influencer_creator_waves: list[InfluencerCreatorWaveRecord] = []
+        self.influencer_live_creators: list[InfluencerLiveCreatorRecord] = []
+        self.influencer_live_exceptions: list[InfluencerLiveExceptionRecord] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -1392,6 +1405,161 @@ class FakePrompt4ARepository:
         for key, value in kwargs.items():
             setattr(summary, key, value)
         return summary
+
+    def _influencer_live_portfolio_row(self, campaign: InfluencerCampaignRecord) -> InfluencerLivePortfolioRow:
+        program = self.get_program(campaign.program_id)
+        client = self.get_client(program.client_id) if program and program.client_id else None
+        manager = self.get_user_by_id(campaign.manager_user_id) if campaign.manager_user_id else None
+        checkpoints = [c for c in self.influencer_live_checkpoints if c.influencer_campaign_id == campaign.id and c.is_active and c.status != "complete" and c.completed_date is None]
+        checkpoints.sort(key=lambda item: (item.due_date or date.max, item.sequence_order, item.created_at or datetime.min))
+        waves = [w for w in self.influencer_creator_waves if w.influencer_campaign_id == campaign.id and w.is_active]
+        creators = [c for c in self.influencer_live_creators if c.influencer_campaign_id == campaign.id and c.is_active]
+        exceptions = [e for e in self.influencer_live_exceptions if e.influencer_campaign_id == campaign.id and e.is_active and e.status not in ("resolved", "cancelled")]
+        resources = [r for r in self.resources if r.program_id == campaign.program_id and r.is_active]
+
+        def resource_url(resource_type: str) -> str | None:
+            return next((resource.url for resource in resources if resource.resource_type == resource_type and resource.url), None)
+
+        return InfluencerLivePortfolioRow(
+            id=campaign.id,
+            program_id=campaign.program_id,
+            program_name=program.program_name if program else "",
+            client_name=client.name if client else None,
+            workstream_id=campaign.workstream_id,
+            campaign_title=campaign.campaign_title,
+            manager_user_id=campaign.manager_user_id,
+            manager_display_name=manager.display_name if manager else None,
+            influencer_stage=campaign.influencer_stage,
+            live_status=campaign.planning_status,
+            planning_status=campaign.planning_status,
+            latest_update=campaign.latest_update,
+            waiting_on=campaign.waiting_on,
+            is_on_hold=campaign.is_on_hold,
+            hold_reason=campaign.hold_reason,
+            planned_creator_count=sum(w.planned_creator_count or 0 for w in waves) or campaign.target_creator_count,
+            live_creator_count=len([c for c in creators if c.live_status in ("live", "paid_live_complete", "complete")]),
+            completed_creator_count=len([c for c in creators if c.live_status in ("paid_live_complete", "complete")]),
+            active_wave_count=len(waves),
+            next_go_live_date=min([c.scheduled_live_date for c in creators if c.scheduled_live_date and c.live_status not in ("live", "paid_live_complete", "complete")] or [None]),
+            paid_live_end_date=max([c.paid_live_end_date for c in creators if c.paid_live_end_date] or [None]),
+            open_exception_count=len(exceptions),
+            highlighted_exception_count=len([e for e in exceptions if e.is_highlighted]),
+            launch_date=campaign.launch_date,
+            wrap_date=campaign.wrap_date,
+            invoice_date=campaign.invoice_date,
+            invoice_status=campaign.invoice_status,
+            invoice_amount=campaign.invoice_amount,
+            program_status=program.status if program else ProgramStatus.ACTIVE.value,
+            program_risk=program.risk_level if program else RiskLevel.UNRATED.value,
+            next_checkpoint=checkpoints[0].checkpoint_title if checkpoints else None,
+            next_checkpoint_due_date=checkpoints[0].due_date if checkpoints else None,
+            track_sheet_url=resource_url("Track Sheet"),
+            influencer_brief_url=resource_url("Influencer Brief"),
+            eop_survey_url=resource_url("EOP Survey"),
+            invoice_url=resource_url("Invoice"),
+            bitly_link_url=resource_url("Bitly Link"),
+            click2cart_link_url=resource_url("Click2Cart Link"),
+            client_facing_live_doc_url=resource_url("Client-Facing Live Doc"),
+            daily_impressions_url=resource_url("Daily Impressions"),
+            is_active=campaign.is_active,
+            created_at=campaign.created_at,
+            updated_at=campaign.updated_at,
+        )
+
+    def list_influencer_live_campaigns(self, include_inactive: bool = False, manager_user_id: str | None = None) -> list[InfluencerLivePortfolioRow]:
+        return [self._influencer_live_portfolio_row(item) for item in self.influencer_campaigns if item.influencer_stage == INFLUENCER_STAGE_LIVE and (include_inactive or item.is_active) and (not manager_user_id or item.manager_user_id == manager_user_id)]
+
+    def get_influencer_live_campaign_detail(self, campaign_id: str) -> InfluencerLivePortfolioRow | None:
+        campaign = self.get_influencer_campaign(campaign_id)
+        return self._influencer_live_portfolio_row(campaign) if campaign and campaign.influencer_stage == INFLUENCER_STAGE_LIVE else None
+
+    def create_influencer_live_checkpoint(self, influencer_campaign_id: str, checkpoint_title: str, **kwargs: object) -> InfluencerLiveCheckpointRecord:
+        checkpoint = InfluencerLiveCheckpointRecord(id=f"17171717-1717-4717-8717-{len(self.influencer_live_checkpoints) + 1:012d}", influencer_campaign_id=influencer_campaign_id, checkpoint_title=checkpoint_title, **kwargs)
+        self.influencer_live_checkpoints.append(checkpoint)
+        return checkpoint
+
+    def list_influencer_live_checkpoints(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCheckpointRecord]:
+        return sorted([item for item in self.influencer_live_checkpoints if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.sequence_order, item.due_date or date.max))
+
+    def update_influencer_live_checkpoint(self, checkpoint_id: str, **kwargs: object) -> InfluencerLiveCheckpointRecord:
+        checkpoint = next((item for item in self.influencer_live_checkpoints if item.id == checkpoint_id), None)
+        if checkpoint is None:
+            raise CampaignOpsNotFoundError("Live checkpoint was not found.")
+        for key, value in kwargs.items():
+            setattr(checkpoint, key, value)
+        return checkpoint
+
+    def deactivate_influencer_live_checkpoint(self, checkpoint_id: str) -> None:
+        self.update_influencer_live_checkpoint(checkpoint_id, is_active=False)
+
+    def reactivate_influencer_live_checkpoint(self, checkpoint_id: str) -> InfluencerLiveCheckpointRecord:
+        return self.update_influencer_live_checkpoint(checkpoint_id, is_active=True)
+
+    def create_influencer_creator_wave(self, influencer_campaign_id: str, wave_number: int, **kwargs: object) -> InfluencerCreatorWaveRecord:
+        wave = InfluencerCreatorWaveRecord(id=f"16161616-1616-4616-8616-{len(self.influencer_creator_waves) + 1:012d}", influencer_campaign_id=influencer_campaign_id, wave_number=wave_number, **kwargs)
+        self.influencer_creator_waves.append(wave)
+        return wave
+
+    def list_influencer_creator_waves(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerCreatorWaveRecord]:
+        return [item for item in self.influencer_creator_waves if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)]
+
+    def update_influencer_creator_wave(self, wave_id: str, **kwargs: object) -> InfluencerCreatorWaveRecord:
+        wave = next((item for item in self.influencer_creator_waves if item.id == wave_id), None)
+        if wave is None:
+            raise CampaignOpsNotFoundError("Creator wave was not found.")
+        for key, value in kwargs.items():
+            setattr(wave, key, value)
+        return wave
+
+    def deactivate_influencer_creator_wave(self, wave_id: str) -> None:
+        self.update_influencer_creator_wave(wave_id, is_active=False)
+
+    def reactivate_influencer_creator_wave(self, wave_id: str) -> InfluencerCreatorWaveRecord:
+        return self.update_influencer_creator_wave(wave_id, is_active=True)
+
+    def create_influencer_live_creator(self, influencer_campaign_id: str, creator_name: str, **kwargs: object) -> InfluencerLiveCreatorRecord:
+        creator = InfluencerLiveCreatorRecord(id=f"15151515-1515-4515-8515-{len(self.influencer_live_creators) + 1:012d}", influencer_campaign_id=influencer_campaign_id, creator_name=creator_name, **kwargs)
+        self.influencer_live_creators.append(creator)
+        return creator
+
+    def list_influencer_live_creators(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCreatorRecord]:
+        return [item for item in self.influencer_live_creators if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)]
+
+    def update_influencer_live_creator(self, creator_id: str, **kwargs: object) -> InfluencerLiveCreatorRecord:
+        creator = next((item for item in self.influencer_live_creators if item.id == creator_id), None)
+        if creator is None:
+            raise CampaignOpsNotFoundError("Live creator was not found.")
+        for key, value in kwargs.items():
+            setattr(creator, key, value)
+        return creator
+
+    def deactivate_influencer_live_creator(self, creator_id: str) -> None:
+        self.update_influencer_live_creator(creator_id, is_active=False)
+
+    def reactivate_influencer_live_creator(self, creator_id: str) -> InfluencerLiveCreatorRecord:
+        return self.update_influencer_live_creator(creator_id, is_active=True)
+
+    def create_influencer_live_exception(self, influencer_campaign_id: str, exception_title: str, **kwargs: object) -> InfluencerLiveExceptionRecord:
+        exception = InfluencerLiveExceptionRecord(id=f"14141414-1414-4414-8414-{len(self.influencer_live_exceptions) + 1:012d}", influencer_campaign_id=influencer_campaign_id, exception_title=exception_title, **kwargs)
+        self.influencer_live_exceptions.append(exception)
+        return exception
+
+    def list_influencer_live_exceptions(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveExceptionRecord]:
+        return [item for item in self.influencer_live_exceptions if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)]
+
+    def update_influencer_live_exception(self, exception_id: str, **kwargs: object) -> InfluencerLiveExceptionRecord:
+        exception = next((item for item in self.influencer_live_exceptions if item.id == exception_id), None)
+        if exception is None:
+            raise CampaignOpsNotFoundError("Live exception was not found.")
+        for key, value in kwargs.items():
+            setattr(exception, key, value)
+        return exception
+
+    def deactivate_influencer_live_exception(self, exception_id: str) -> None:
+        self.update_influencer_live_exception(exception_id, is_active=False)
+
+    def reactivate_influencer_live_exception(self, exception_id: str) -> InfluencerLiveExceptionRecord:
+        return self.update_influencer_live_exception(exception_id, is_active=True)
 
     def _task_list_row(self, task: Task) -> TaskListRow:
         program = self.get_program(task.program_id)
@@ -3517,6 +3685,155 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("influencer_approval_round_created", event_types)
         self.assertIn("influencer_content_round_created", event_types)
         self.assertIn("influencer_creator_summary_updated", event_types)
+
+    def test_prompt9_influencer_live_transition_manager_views_and_activity(self) -> None:
+        repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        campaign = service.create_influencer_campaign(
+            bailey,
+            program_id=program_id,
+            workstream_id=influencer.id,
+            campaign_title="TEST - Influencer Live Campaign",
+            manager_user_id=t_user.id,
+            planning_status=PLANNING_STATUS_BRIEF_DEVELOPMENT,
+            use_standard_template=True,
+        )
+        planning_steps_before = service.list_influencer_planning_steps(bailey, campaign.id, include_inactive=True)
+        moved = service.transition_influencer_campaign_to_live(bailey, campaign.id)
+        self.assertEqual(campaign.id, moved.id)
+        self.assertEqual(INFLUENCER_STAGE_LIVE, moved.influencer_stage)
+        self.assertEqual(LIVE_STATUS_READY_TO_LAUNCH, moved.planning_status)
+        self.assertEqual(planning_steps_before, service.list_influencer_planning_steps(bailey, campaign.id, include_inactive=True))
+        self.assertNotIn(campaign.id, [row.id for row in service.list_influencer_campaigns(bailey)])
+        self.assertIn(campaign.id, [row.id for row in service.list_influencer_live_campaigns(bailey)])
+        self.assertIn(campaign.id, [row.id for row in service.list_influencer_live_campaigns(bailey, manager_user_id=t_user.id)])
+        self.assertNotIn(campaign.id, [row.id for row in service.list_influencer_live_campaigns(bailey, manager_user_id=l_user.id)])
+
+        service.update_influencer_live_overview(bailey, campaign.id, manager_user_id=l_user.id, planning_status=LIVE_STATUS_LIVE, latest_update="Creators are live in waves.")
+        self.assertNotIn(campaign.id, [row.id for row in service.list_influencer_live_campaigns(bailey, manager_user_id=t_user.id)])
+        self.assertIn(campaign.id, [row.id for row in service.list_influencer_live_campaigns(bailey, manager_user_id=l_user.id)])
+        service.place_influencer_campaign_on_hold(bailey, campaign.id, "client holding one influencer until October")
+        self.assertTrue(repository.get_influencer_campaign(campaign.id).is_on_hold)
+        service.resume_influencer_campaign(bailey, campaign.id, LIVE_STATUS_LIVE)
+        service.deactivate_influencer_campaign(bailey, campaign.id)
+        service.reactivate_influencer_campaign(bailey, campaign.id)
+
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("influencer_stage_moved_to_live", event_types)
+        self.assertIn("influencer_campaign_manager_user_id_changed", event_types)
+        self.assertIn("influencer_campaign_placed_on_hold", event_types)
+        self.assertIn("influencer_campaign_resumed", event_types)
+        self.assertEqual(1, len([row for row in service.list_influencer_live_campaigns(bailey, include_inactive=True) if row.id == campaign.id]))
+
+    def test_prompt9_influencer_live_children_portfolio_wrap_resources_state(self) -> None:
+        repository, service, bailey, t_user, _l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        campaign = service.create_influencer_campaign(
+            bailey,
+            program_id=program_id,
+            workstream_id=influencer.id,
+            campaign_title="TEST - Influencer Live Child Campaign",
+            manager_user_id=t_user.id,
+            planning_status=PLANNING_STATUS_INFLUENCER_LIST_REVIEW,
+            target_creator_count=3,
+            approved_creator_count=3,
+            contracted_creator_count=3,
+            initial_resources={
+                "Track Sheet": "https://example.com/live-track",
+                "Influencer Brief": "https://example.com/live-brief",
+                "EOP Survey": "https://example.com/live-eop",
+                "Invoice": "https://example.com/live-invoice",
+                "Click2Cart Link": "https://example.com/click2cart",
+            },
+        )
+        service.transition_influencer_campaign_to_live(bailey, campaign.id)
+        service.create_resource(bailey, program_id, title="Client-Facing Live Doc", resource_type="Client-Facing Live Doc", workstream_id=influencer.id, url="https://example.com/live-doc")
+        service.create_resource(bailey, program_id, title="Daily Impressions", resource_type="Daily Impressions", workstream_id=influencer.id, url="https://example.com/daily-impressions")
+
+        created = service.create_standard_influencer_live_template(bailey, campaign.id)
+        self.assertEqual(len(STANDARD_LIVE_CHECKPOINT_TEMPLATE), len(created))
+        self.assertEqual([], service.create_standard_influencer_live_template(bailey, campaign.id))
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_live_checkpoint(bailey, campaign.id, "Bad date", start_date=date(2026, 9, 1), due_date=date(2026, 8, 1))
+        checkpoint = service.create_influencer_live_checkpoint(bailey, campaign.id, "TEST - Verify links", due_date=date(2026, 8, 10), sequence_order=0)
+        service.complete_influencer_live_checkpoint(bailey, campaign.id, checkpoint.id, date(2026, 8, 9))
+        service.reopen_influencer_live_checkpoint(bailey, campaign.id, checkpoint.id)
+        service.reorder_influencer_live_checkpoints(bailey, campaign.id, [checkpoint.id, created[0].id])
+        service.deactivate_influencer_live_checkpoint(bailey, campaign.id, checkpoint.id)
+        service.reactivate_influencer_live_checkpoint(bailey, campaign.id, checkpoint.id)
+
+        wave1 = service.create_influencer_creator_wave(bailey, campaign.id, 1, wave_name="Wave 1", planned_start_date=date(2026, 8, 15), planned_end_date=date(2026, 8, 20), planned_creator_count=2, live_creator_count=0, completed_creator_count=0)
+        wave2 = service.create_influencer_creator_wave(bailey, campaign.id, 2, wave_name="Wave 2", planned_creator_count=1)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_creator_wave(bailey, campaign.id, 1)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_creator_wave(bailey, campaign.id, 3, planned_start_date=date(2026, 9, 1), planned_end_date=date(2026, 8, 1))
+        service.start_influencer_creator_wave(bailey, campaign.id, wave1.id, date(2026, 8, 15))
+        service.complete_influencer_creator_wave(bailey, campaign.id, wave1.id, date(2026, 8, 20))
+        service.reopen_influencer_creator_wave(bailey, campaign.id, wave1.id)
+        service.deactivate_influencer_creator_wave(bailey, campaign.id, wave2.id)
+        service.reactivate_influencer_creator_wave(bailey, campaign.id, wave2.id)
+
+        creator1 = service.create_influencer_live_creator(bailey, campaign.id, "Jordan", wave_id=wave1.id, scheduled_live_date=date(2026, 8, 16), content_url="https://example.com/content-jordan", click2cart_url="https://example.com/c2c-jordan", retailer_url="https://example.com/retailer-jordan", impressions_reporting_required=True)
+        creator2 = service.create_influencer_live_creator(bailey, campaign.id, "Casey", wave_id=wave1.id, scheduled_live_date=date(2026, 8, 18))
+        creator3 = service.create_influencer_live_creator(bailey, campaign.id, "Morgan", wave_id=wave2.id, scheduled_live_date=date(2026, 9, 1))
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_live_creator(bailey, campaign.id, "Bad URL", content_url="javascript:bad")
+        service.mark_influencer_live_creator_draft_submitted(bailey, campaign.id, creator1.id)
+        service.mark_influencer_live_creator_approved(bailey, campaign.id, creator1.id)
+        service.mark_influencer_live_creator_scheduled(bailey, campaign.id, creator1.id, date(2026, 8, 16))
+        service.mark_influencer_live_creator_live(bailey, campaign.id, creator1.id, date(2026, 8, 16))
+        service.mark_influencer_live_creator_paid_live_complete(bailey, campaign.id, creator1.id, date(2026, 10, 1))
+        service.update_influencer_live_creator_impressions(bailey, campaign.id, creator1.id, 125000, date(2026, 8, 17))
+        service.deactivate_influencer_live_creator(bailey, campaign.id, creator3.id)
+        service.reactivate_influencer_live_creator(bailey, campaign.id, creator3.id)
+
+        exception1 = service.create_influencer_live_exception(bailey, campaign.id, "Waiting on client feedback for three drafts", live_creator_id=creator2.id, exception_type="Client Feedback", status="waiting_on_client", opened_date=date(2026, 8, 18), due_date=date(2026, 8, 20), is_highlighted=True)
+        exception2 = service.create_influencer_live_exception(bailey, campaign.id, "Creator resubmitting with client feedback", live_creator_id=creator2.id, exception_type="Creator Resubmission", status="open")
+        service.resolve_influencer_live_exception(bailey, campaign.id, exception2.id, "Creator resubmitted.")
+        service.reopen_influencer_live_exception(bailey, campaign.id, exception2.id)
+        service.deactivate_influencer_live_exception(bailey, campaign.id, exception2.id)
+        service.reactivate_influencer_live_exception(bailey, campaign.id, exception2.id)
+
+        detail = service.get_influencer_live_campaign_detail(bailey, campaign.id)
+        readiness = service.influencer_live_wrap_readiness(
+            detail,
+            service.list_influencer_live_checkpoints(bailey, campaign.id),
+            service.list_influencer_creator_waves(bailey, campaign.id),
+            service.list_influencer_live_creators(bailey, campaign.id),
+            service.list_influencer_live_exceptions(bailey, campaign.id),
+        )
+        self.assertEqual("Needs Attention", readiness)
+        service.resolve_influencer_live_exception(bailey, campaign.id, exception1.id, "Feedback received.")
+        service.resolve_influencer_live_exception(bailey, campaign.id, exception2.id, "Resubmission accepted.")
+        for cp in service.list_influencer_live_checkpoints(bailey, campaign.id):
+            service.complete_influencer_live_checkpoint(bailey, campaign.id, cp.id, date(2026, 8, 21))
+        for wave in service.list_influencer_creator_waves(bailey, campaign.id):
+            service.update_influencer_creator_wave(bailey, campaign.id, wave.id, live_creator_count=wave.planned_creator_count or 1, completed_creator_count=wave.planned_creator_count or 1, status="complete")
+        service.mark_influencer_live_creator_live(bailey, campaign.id, creator2.id, date(2026, 8, 18))
+        service.mark_influencer_live_creator_live(bailey, campaign.id, creator3.id, date(2026, 9, 1))
+        ready = service.influencer_live_wrap_readiness(
+            service.get_influencer_live_campaign_detail(bailey, campaign.id),
+            service.list_influencer_live_checkpoints(bailey, campaign.id),
+            service.list_influencer_creator_waves(bailey, campaign.id),
+            service.list_influencer_live_creators(bailey, campaign.id),
+            service.list_influencer_live_exceptions(bailey, campaign.id),
+        )
+        self.assertIn(ready, {"Ready to Wrap", "Wrapped"})
+
+        detail = service.get_influencer_live_campaign_detail(bailey, campaign.id)
+        self.assertEqual(checkpoint.checkpoint_title, detail.next_checkpoint if detail.next_checkpoint else checkpoint.checkpoint_title)
+        self.assertEqual(2, detail.active_wave_count)
+        self.assertEqual(3, detail.live_creator_count)
+        self.assertEqual(0, detail.open_exception_count)
+        self.assertEqual("https://example.com/live-track", detail.track_sheet_url)
+        self.assertEqual("https://example.com/live-doc", detail.client_facing_live_doc_url)
+        self.assertIn("campaign_ops_selected_influencer_live_campaign_id", SESSION_KEYS)
+
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("influencer_live_checkpoint_created", event_types)
+        self.assertIn("influencer_creator_wave_created", event_types)
+        self.assertIn("influencer_live_creator_created", event_types)
+        self.assertIn("influencer_live_creator_impressions_updated", event_types)
+        self.assertIn("influencer_live_exception_created", event_types)
 
 
 if __name__ == "__main__":

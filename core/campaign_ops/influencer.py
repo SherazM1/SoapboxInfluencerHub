@@ -71,6 +71,79 @@ INFLUENCER_RESOURCE_TYPES = (
     "Custom",
 )
 
+LIVE_STATUS_READY_TO_LAUNCH = "ready_to_launch"
+LIVE_STATUS_LAUNCHING = "launching"
+LIVE_STATUS_LIVE = "live"
+LIVE_STATUS_LIVE_IN_WAVES = "live_in_waves"
+LIVE_STATUS_WAITING_ON_CREATOR = "waiting_on_creator"
+LIVE_STATUS_WAITING_ON_CLIENT = "waiting_on_client"
+LIVE_STATUS_RESUBMISSION = "resubmission"
+LIVE_STATUS_PARTIALLY_LIVE = "partially_live"
+LIVE_STATUS_PAID_LIVE = "paid_live"
+LIVE_STATUS_ON_HOLD = "on_hold"
+LIVE_STATUS_WRAPPING = "wrapping"
+LIVE_STATUS_READY_FOR_RECAP = "ready_for_recap"
+LIVE_STATUS_COMPLETE = "complete"
+LIVE_STATUS_CANCELLED = "cancelled"
+
+LIVE_STATUSES = (
+    LIVE_STATUS_READY_TO_LAUNCH,
+    LIVE_STATUS_LAUNCHING,
+    LIVE_STATUS_LIVE,
+    LIVE_STATUS_LIVE_IN_WAVES,
+    LIVE_STATUS_WAITING_ON_CREATOR,
+    LIVE_STATUS_WAITING_ON_CLIENT,
+    LIVE_STATUS_RESUBMISSION,
+    LIVE_STATUS_PARTIALLY_LIVE,
+    LIVE_STATUS_PAID_LIVE,
+    LIVE_STATUS_ON_HOLD,
+    LIVE_STATUS_WRAPPING,
+    LIVE_STATUS_READY_FOR_RECAP,
+    LIVE_STATUS_COMPLETE,
+    LIVE_STATUS_CANCELLED,
+)
+
+LIVE_CHECKPOINT_STATUSES = ("not_started", "in_progress", "waiting", "complete", "cancelled")
+WAVE_STATUSES = ("not_started", "in_progress", "live", "complete", "reopened", "cancelled")
+CREATOR_LIVE_STATUSES = ("not_started", "approved", "scheduled", "live", "paid_live_complete", "complete", "cancelled")
+CREATOR_DRAFT_STATUSES = ("not_started", "submitted", "resubmission", "approved", "cancelled")
+CREATOR_APPROVAL_STATUSES = ("pending", "approved", "rejected", "needs_revision")
+LIVE_EXCEPTION_STATUSES = ("open", "waiting_on_client", "waiting_on_creator", "in_progress", "resolved", "reopened", "cancelled")
+LIVE_EXCEPTION_TYPES = ("Client Feedback", "Creator Resubmission", "Product Availability", "Launch Delay", "Missing Link", "Approval Pending", "Other")
+
+LIVE_RESOURCE_TYPES = (
+    "Track Sheet",
+    "Influencer Brief",
+    "EOP Survey",
+    "Invoice",
+    "Bitly Link",
+    "Click2Cart Link",
+    "Walmart Link",
+    "Retailer Link",
+    "Client-Facing Live Doc",
+    "Daily Impressions",
+    "Influencer Education",
+    "Client Guidelines",
+    "Content Folder",
+    "Custom",
+)
+
+STANDARD_LIVE_CHECKPOINT_TEMPLATE = (
+    "Final content approved",
+    "Final display creative approved",
+    "Creator schedules confirmed",
+    "Click2Cart links confirmed",
+    "Client-facing live document ready",
+    "First creator wave begins",
+    "Daily impressions reporting starts",
+    "Additional creator waves begin",
+    "Paid-live monitoring",
+    "Final creators go live",
+    "All creator links verified",
+    "Campaign wrap",
+    "Ready for recap",
+)
+
 STANDARD_PLANNING_TEMPLATE = (
     "Application out to influencers",
     "Send brief and influencer list for client review",
@@ -106,6 +179,10 @@ def normalize_influencer_stage(value: str | None) -> str:
 
 def normalize_planning_status(value: str | None) -> str:
     return _normalize(value, PLANNING_STATUS_NOT_STARTED, PLANNING_STATUSES, "Planning status")
+
+
+def normalize_live_status(value: str | None) -> str:
+    return _normalize(value, LIVE_STATUS_READY_TO_LAUNCH, LIVE_STATUSES, "Live status")
 
 
 def normalize_optional_status(value: str | None, allowed: tuple[str, ...], label: str) -> str | None:

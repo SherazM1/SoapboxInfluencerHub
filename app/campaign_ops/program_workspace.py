@@ -566,6 +566,7 @@ def render_activity(summary: ProgramWorkspaceSummary) -> None:
             "Notes",
             "Reporting Requests",
             "Influencer",
+            "Influencer Live",
             "Insights",
             "Retail Media",
             "Content Management",
@@ -617,6 +618,8 @@ def activity_matches_filter(event_type: str, filter_label: str) -> bool:
         return event_type.startswith("reporting_request_")
     if filter_label == "Influencer":
         return event_type.startswith("influencer_")
+    if filter_label == "Influencer Live":
+        return event_type.startswith("influencer_live_") or event_type.startswith("influencer_creator_") or event_type == "influencer_stage_moved_to_live"
     if filter_label == "Insights":
         return event_type.startswith("insights_")
     if filter_label == "Retail Media":

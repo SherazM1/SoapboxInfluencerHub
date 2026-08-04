@@ -40,6 +40,11 @@ from core.campaign_ops.models import (
     InfluencerCampaignRecord,
     InfluencerContentRoundRecord,
     InfluencerCreatorSummaryRecord,
+    InfluencerCreatorWaveRecord,
+    InfluencerLiveCheckpointRecord,
+    InfluencerLiveCreatorRecord,
+    InfluencerLiveExceptionRecord,
+    InfluencerLivePortfolioRow,
     InfluencerPlanningPortfolioRow,
     InfluencerPlanningStepRecord,
     InsightsObjectiveRecord,
@@ -3210,6 +3215,177 @@ class CampaignOpsRepository:
             (influencer_campaign_id, *tuple(kwargs.get(field) for field in fields)),
             InfluencerCreatorSummaryRecord,
         )
+
+    def _influencer_live_portfolio_row_from_db(self, row: dict[str, Any]) -> InfluencerLivePortfolioRow:
+        normalized = normalize_row(row)
+        return InfluencerLivePortfolioRow(
+            id=str(normalized["id"]), program_id=str(normalized["program_id"]), program_name=str(normalized["program_name"]),
+            client_name=normalized.get("client_name"), workstream_id=normalize_id(normalized.get("workstream_id")),
+            campaign_title=str(normalized["campaign_title"]), manager_user_id=normalize_id(normalized.get("manager_user_id")),
+            manager_display_name=normalized.get("manager_display_name"), influencer_stage=str(normalized["influencer_stage"]),
+            live_status=normalized.get("live_status"), planning_status=normalized.get("planning_status"),
+            latest_update=normalized.get("latest_update"), waiting_on=normalized.get("waiting_on"),
+            is_on_hold=bool(normalized.get("is_on_hold", False)), hold_reason=normalized.get("hold_reason"),
+            planned_creator_count=normalized.get("planned_creator_count"), live_creator_count=int(normalized.get("live_creator_count") or 0),
+            completed_creator_count=int(normalized.get("completed_creator_count") or 0), active_wave_count=int(normalized.get("active_wave_count") or 0),
+            next_go_live_date=normalized.get("next_go_live_date"), paid_live_end_date=normalized.get("paid_live_end_date"),
+            open_exception_count=int(normalized.get("open_exception_count") or 0), highlighted_exception_count=int(normalized.get("highlighted_exception_count") or 0),
+            launch_date=normalized.get("launch_date"), wrap_date=normalized.get("wrap_date"), invoice_date=normalized.get("invoice_date"),
+            invoice_status=normalized.get("invoice_status"), invoice_amount=normalized.get("invoice_amount"),
+            program_status=str(normalized["program_status"]), program_risk=str(normalized["program_risk"]),
+            next_checkpoint=normalized.get("next_checkpoint"), next_checkpoint_due_date=normalized.get("next_checkpoint_due_date"),
+            track_sheet_url=normalized.get("track_sheet_url"), influencer_brief_url=normalized.get("influencer_brief_url"),
+            eop_survey_url=normalized.get("eop_survey_url"), invoice_url=normalized.get("invoice_url"),
+            bitly_link_url=normalized.get("bitly_link_url"), click2cart_link_url=normalized.get("click2cart_link_url"),
+            client_facing_live_doc_url=normalized.get("client_facing_live_doc_url"), daily_impressions_url=normalized.get("daily_impressions_url"),
+            is_active=bool(normalized.get("is_active", True)), created_at=normalized.get("created_at"), updated_at=normalized.get("updated_at"),
+        )
+
+    def list_influencer_live_campaigns(self, include_inactive: bool = False, manager_user_id: str | None = None) -> list[InfluencerLivePortfolioRow]:
+        clauses = ["ic.influencer_stage = 'live'"]
+        params: list[Any] = []
+        if not include_inactive:
+            clauses.append("ic.is_active = true")
+        if manager_user_id:
+            clauses.append("ic.manager_user_id = %s")
+            params.append(manager_user_id)
+        query = f"""
+            with next_checkpoint as (
+                select distinct on (influencer_campaign_id) influencer_campaign_id, checkpoint_title, due_date
+                from campaign_ops_influencer_live_checkpoints
+                where is_active = true and coalesce(status, '') <> 'complete' and completed_date is null
+                order by influencer_campaign_id, due_date asc nulls last, sequence_order asc, created_at asc
+            ), wave_agg as (
+                select influencer_campaign_id,
+                       count(*) filter (where is_active = true) as active_wave_count,
+                       sum(planned_creator_count) filter (where is_active = true) as planned_creator_count,
+                       sum(live_creator_count) filter (where is_active = true) as live_wave_creator_count,
+                       sum(completed_creator_count) filter (where is_active = true) as completed_wave_creator_count
+                from campaign_ops_influencer_creator_waves group by influencer_campaign_id
+            ), creator_agg as (
+                select influencer_campaign_id,
+                       count(*) filter (where is_active = true and live_status in ('live','paid_live_complete','complete')) as live_creator_count,
+                       count(*) filter (where is_active = true and live_status in ('paid_live_complete','complete')) as completed_creator_count,
+                       min(coalesce(scheduled_live_date, actual_live_date)) filter (where is_active = true and live_status not in ('live','paid_live_complete','complete')) as next_go_live_date,
+                       max(paid_live_end_date) filter (where is_active = true) as paid_live_end_date
+                from campaign_ops_influencer_live_creators group by influencer_campaign_id
+            ), exception_agg as (
+                select influencer_campaign_id,
+                       count(*) filter (where is_active = true and coalesce(status, 'open') not in ('resolved','cancelled')) as open_exception_count,
+                       count(*) filter (where is_active = true and is_highlighted = true and coalesce(status, 'open') not in ('resolved','cancelled')) as highlighted_exception_count
+                from campaign_ops_influencer_live_exceptions group by influencer_campaign_id
+            ), resource_agg as (
+                select program_id,
+                    max(url) filter (where resource_type = 'Track Sheet' and is_active = true) as track_sheet_url,
+                    max(url) filter (where resource_type = 'Influencer Brief' and is_active = true) as influencer_brief_url,
+                    max(url) filter (where resource_type = 'EOP Survey' and is_active = true) as eop_survey_url,
+                    max(url) filter (where resource_type = 'Invoice' and is_active = true) as invoice_url,
+                    max(url) filter (where resource_type = 'Bitly Link' and is_active = true) as bitly_link_url,
+                    max(url) filter (where resource_type = 'Click2Cart Link' and is_active = true) as click2cart_link_url,
+                    max(url) filter (where resource_type = 'Client-Facing Live Doc' and is_active = true) as client_facing_live_doc_url,
+                    max(url) filter (where resource_type = 'Daily Impressions' and is_active = true) as daily_impressions_url
+                from campaign_ops_resources group by program_id
+            )
+            select ic.*, ic.planning_status as live_status, p.program_name, p.status as program_status, p.risk_level as program_risk,
+                   c.name as client_name, u.display_name as manager_display_name,
+                   coalesce(wa.planned_creator_count, ic.target_creator_count) as planned_creator_count,
+                   coalesce(ca.live_creator_count, wa.live_wave_creator_count, 0) as live_creator_count,
+                   coalesce(ca.completed_creator_count, wa.completed_wave_creator_count, 0) as completed_creator_count,
+                   coalesce(wa.active_wave_count, 0) as active_wave_count,
+                   ca.next_go_live_date, ca.paid_live_end_date,
+                   coalesce(ea.open_exception_count, 0) as open_exception_count,
+                   coalesce(ea.highlighted_exception_count, 0) as highlighted_exception_count,
+                   nc.checkpoint_title as next_checkpoint, nc.due_date as next_checkpoint_due_date,
+                   ra.track_sheet_url, ra.influencer_brief_url, ra.eop_survey_url, ra.invoice_url,
+                   ra.bitly_link_url, ra.click2cart_link_url, ra.client_facing_live_doc_url, ra.daily_impressions_url
+            from campaign_ops_influencer_campaigns ic
+            join campaign_ops_programs p on p.id = ic.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_users u on u.id = ic.manager_user_id
+            left join next_checkpoint nc on nc.influencer_campaign_id = ic.id
+            left join wave_agg wa on wa.influencer_campaign_id = ic.id
+            left join creator_agg ca on ca.influencer_campaign_id = ic.id
+            left join exception_agg ea on ea.influencer_campaign_id = ic.id
+            left join resource_agg ra on ra.program_id = ic.program_id
+            where {' and '.join(clauses)}
+            order by ic.updated_at desc, ic.campaign_title asc
+        """
+        return [self._influencer_live_portfolio_row_from_db(row) for row in self._fetch_raw_all(query, tuple(params))]
+
+    def get_influencer_live_campaign_detail(self, campaign_id: str) -> InfluencerLivePortfolioRow | None:
+        return next((row for row in self.list_influencer_live_campaigns(include_inactive=True) if row.id == campaign_id), None)
+
+    def create_influencer_live_checkpoint(self, influencer_campaign_id: str, checkpoint_title: str, **kwargs: Any) -> InfluencerLiveCheckpointRecord:
+        fields = ["influencer_campaign_id", "checkpoint_type", "checkpoint_title", "checkpoint_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes"]
+        return self._create_content_child("campaign_ops_influencer_live_checkpoints", InfluencerLiveCheckpointRecord, fields, (influencer_campaign_id, kwargs.get("checkpoint_type"), require_text(checkpoint_title, "checkpoint_title"), kwargs.get("checkpoint_description"), kwargs.get("sequence_order", 0), kwargs.get("responsible_party"), kwargs.get("assigned_user_id"), kwargs.get("start_date"), kwargs.get("due_date"), kwargs.get("completed_date"), kwargs.get("status"), bool(kwargs.get("hard_deadline", False)), kwargs.get("waiting_on"), kwargs.get("notes")))
+
+    def list_influencer_live_checkpoints(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCheckpointRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_live_checkpoints where influencer_campaign_id = %s {clause} order by sequence_order asc, due_date asc nulls last, created_at asc", (influencer_campaign_id,), InfluencerLiveCheckpointRecord)
+
+    def update_influencer_live_checkpoint(self, checkpoint_id: str, **kwargs: Any) -> InfluencerLiveCheckpointRecord:
+        fields = ["checkpoint_type", "checkpoint_title", "checkpoint_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes"]
+        return self._update_content_child("campaign_ops_influencer_live_checkpoints", InfluencerLiveCheckpointRecord, checkpoint_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_live_checkpoint(self, checkpoint_id: str) -> None:
+        self._execute("update campaign_ops_influencer_live_checkpoints set is_active = false where id = %s and is_active = true", (checkpoint_id,))
+
+    def reactivate_influencer_live_checkpoint(self, checkpoint_id: str) -> InfluencerLiveCheckpointRecord:
+        return self._write_returning("update campaign_ops_influencer_live_checkpoints set is_active = true where id = %s and is_active = false returning *", (checkpoint_id,), InfluencerLiveCheckpointRecord)
+
+    def create_influencer_creator_wave(self, influencer_campaign_id: str, wave_number: int, **kwargs: Any) -> InfluencerCreatorWaveRecord:
+        fields = ["influencer_campaign_id", "wave_number", "wave_name", "planned_start_date", "planned_end_date", "actual_start_date", "actual_end_date", "planned_creator_count", "live_creator_count", "completed_creator_count", "status", "waiting_on", "notes"]
+        return self._create_content_child("campaign_ops_influencer_creator_waves", InfluencerCreatorWaveRecord, fields, (influencer_campaign_id, wave_number, kwargs.get("wave_name"), kwargs.get("planned_start_date"), kwargs.get("planned_end_date"), kwargs.get("actual_start_date"), kwargs.get("actual_end_date"), kwargs.get("planned_creator_count"), kwargs.get("live_creator_count"), kwargs.get("completed_creator_count"), kwargs.get("status"), kwargs.get("waiting_on"), kwargs.get("notes")))
+
+    def list_influencer_creator_waves(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerCreatorWaveRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_creator_waves where influencer_campaign_id = %s {clause} order by wave_number asc, created_at asc", (influencer_campaign_id,), InfluencerCreatorWaveRecord)
+
+    def update_influencer_creator_wave(self, wave_id: str, **kwargs: Any) -> InfluencerCreatorWaveRecord:
+        fields = ["wave_number", "wave_name", "planned_start_date", "planned_end_date", "actual_start_date", "actual_end_date", "planned_creator_count", "live_creator_count", "completed_creator_count", "status", "waiting_on", "notes"]
+        return self._update_content_child("campaign_ops_influencer_creator_waves", InfluencerCreatorWaveRecord, wave_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_creator_wave(self, wave_id: str) -> None:
+        self._execute("update campaign_ops_influencer_creator_waves set is_active = false where id = %s and is_active = true", (wave_id,))
+
+    def reactivate_influencer_creator_wave(self, wave_id: str) -> InfluencerCreatorWaveRecord:
+        return self._write_returning("update campaign_ops_influencer_creator_waves set is_active = true where id = %s and is_active = false returning *", (wave_id,), InfluencerCreatorWaveRecord)
+
+    def create_influencer_live_creator(self, influencer_campaign_id: str, creator_name: str, **kwargs: Any) -> InfluencerLiveCreatorRecord:
+        fields = ["influencer_campaign_id", "wave_id", "creator_name", "creator_handle", "platform", "live_status", "draft_status", "approval_status", "scheduled_live_date", "actual_live_date", "paid_live_end_date", "content_url", "click2cart_url", "retailer_url", "impressions_reporting_required", "latest_impressions", "last_impressions_update_date", "waiting_on", "exception_status", "exception_notes"]
+        return self._create_content_child("campaign_ops_influencer_live_creators", InfluencerLiveCreatorRecord, fields, (influencer_campaign_id, kwargs.get("wave_id"), require_text(creator_name, "creator_name"), kwargs.get("creator_handle"), kwargs.get("platform"), kwargs.get("live_status"), kwargs.get("draft_status"), kwargs.get("approval_status"), kwargs.get("scheduled_live_date"), kwargs.get("actual_live_date"), kwargs.get("paid_live_end_date"), kwargs.get("content_url"), kwargs.get("click2cart_url"), kwargs.get("retailer_url"), bool(kwargs.get("impressions_reporting_required", False)), kwargs.get("latest_impressions"), kwargs.get("last_impressions_update_date"), kwargs.get("waiting_on"), kwargs.get("exception_status"), kwargs.get("exception_notes")))
+
+    def list_influencer_live_creators(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCreatorRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_live_creators where influencer_campaign_id = %s {clause} order by scheduled_live_date asc nulls last, creator_name asc", (influencer_campaign_id,), InfluencerLiveCreatorRecord)
+
+    def update_influencer_live_creator(self, creator_id: str, **kwargs: Any) -> InfluencerLiveCreatorRecord:
+        fields = ["wave_id", "creator_name", "creator_handle", "platform", "live_status", "draft_status", "approval_status", "scheduled_live_date", "actual_live_date", "paid_live_end_date", "content_url", "click2cart_url", "retailer_url", "impressions_reporting_required", "latest_impressions", "last_impressions_update_date", "waiting_on", "exception_status", "exception_notes"]
+        return self._update_content_child("campaign_ops_influencer_live_creators", InfluencerLiveCreatorRecord, creator_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_live_creator(self, creator_id: str) -> None:
+        self._execute("update campaign_ops_influencer_live_creators set is_active = false where id = %s and is_active = true", (creator_id,))
+
+    def reactivate_influencer_live_creator(self, creator_id: str) -> InfluencerLiveCreatorRecord:
+        return self._write_returning("update campaign_ops_influencer_live_creators set is_active = true where id = %s and is_active = false returning *", (creator_id,), InfluencerLiveCreatorRecord)
+
+    def create_influencer_live_exception(self, influencer_campaign_id: str, exception_title: str, **kwargs: Any) -> InfluencerLiveExceptionRecord:
+        fields = ["influencer_campaign_id", "live_creator_id", "exception_type", "exception_title", "description", "status", "owner_user_id", "opened_date", "due_date", "resolved_date", "resolution_notes", "is_highlighted"]
+        return self._create_content_child("campaign_ops_influencer_live_exceptions", InfluencerLiveExceptionRecord, fields, (influencer_campaign_id, kwargs.get("live_creator_id"), kwargs.get("exception_type"), require_text(exception_title, "exception_title"), kwargs.get("description"), kwargs.get("status"), kwargs.get("owner_user_id"), kwargs.get("opened_date"), kwargs.get("due_date"), kwargs.get("resolved_date"), kwargs.get("resolution_notes"), bool(kwargs.get("is_highlighted", False))))
+
+    def list_influencer_live_exceptions(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveExceptionRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_live_exceptions where influencer_campaign_id = %s {clause} order by is_highlighted desc, due_date asc nulls last, created_at desc", (influencer_campaign_id,), InfluencerLiveExceptionRecord)
+
+    def update_influencer_live_exception(self, exception_id: str, **kwargs: Any) -> InfluencerLiveExceptionRecord:
+        fields = ["live_creator_id", "exception_type", "exception_title", "description", "status", "owner_user_id", "opened_date", "due_date", "resolved_date", "resolution_notes", "is_highlighted"]
+        return self._update_content_child("campaign_ops_influencer_live_exceptions", InfluencerLiveExceptionRecord, exception_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_live_exception(self, exception_id: str) -> None:
+        self._execute("update campaign_ops_influencer_live_exceptions set is_active = false where id = %s and is_active = true", (exception_id,))
+
+    def reactivate_influencer_live_exception(self, exception_id: str) -> InfluencerLiveExceptionRecord:
+        return self._write_returning("update campaign_ops_influencer_live_exceptions set is_active = true where id = %s and is_active = false returning *", (exception_id,), InfluencerLiveExceptionRecord)
 
     def append_event(
         self,

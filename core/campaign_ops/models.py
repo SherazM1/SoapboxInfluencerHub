@@ -1057,3 +1057,164 @@ class InfluencerCreatorSummaryRecord:
     is_active: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class InfluencerLivePortfolioRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    workstream_id: str | None
+    campaign_title: str
+    manager_user_id: str | None
+    manager_display_name: str | None
+    influencer_stage: str
+    live_status: str | None
+    planning_status: str | None
+    latest_update: str | None
+    waiting_on: str | None
+    is_on_hold: bool
+    hold_reason: str | None
+    planned_creator_count: int | None
+    live_creator_count: int
+    completed_creator_count: int
+    active_wave_count: int
+    next_go_live_date: date | None
+    paid_live_end_date: date | None
+    open_exception_count: int
+    highlighted_exception_count: int
+    launch_date: date | None
+    wrap_date: date | None
+    invoice_date: date | None
+    invoice_status: str | None
+    invoice_amount: float | None
+    program_status: str
+    program_risk: str
+    next_checkpoint: str | None
+    next_checkpoint_due_date: date | None
+    track_sheet_url: str | None
+    influencer_brief_url: str | None
+    eop_survey_url: str | None
+    invoice_url: str | None
+    bitly_link_url: str | None
+    click2cart_link_url: str | None
+    client_facing_live_doc_url: str | None
+    daily_impressions_url: str | None
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+@dataclass(slots=True)
+class InfluencerLiveCheckpointRecord:
+    id: str
+    influencer_campaign_id: str
+    checkpoint_title: str
+    checkpoint_type: str | None = None
+    checkpoint_description: str | None = None
+    sequence_order: int = 0
+    responsible_party: str | None = None
+    assigned_user_id: str | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+    completed_date: date | None = None
+    status: str | None = None
+    hard_deadline: bool = False
+    waiting_on: str | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.checkpoint_title = require_text(self.checkpoint_title, "checkpoint_title")
+
+
+@dataclass(slots=True)
+class InfluencerCreatorWaveRecord:
+    id: str
+    influencer_campaign_id: str
+    wave_number: int
+    wave_name: str | None = None
+    planned_start_date: date | None = None
+    planned_end_date: date | None = None
+    actual_start_date: date | None = None
+    actual_end_date: date | None = None
+    planned_creator_count: int | None = None
+    live_creator_count: int | None = None
+    completed_creator_count: int | None = None
+    status: str | None = None
+    waiting_on: str | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class InfluencerLiveCreatorRecord:
+    id: str
+    influencer_campaign_id: str
+    creator_name: str
+    wave_id: str | None = None
+    creator_handle: str | None = None
+    platform: str | None = None
+    live_status: str | None = None
+    draft_status: str | None = None
+    approval_status: str | None = None
+    scheduled_live_date: date | None = None
+    actual_live_date: date | None = None
+    paid_live_end_date: date | None = None
+    content_url: str | None = None
+    click2cart_url: str | None = None
+    retailer_url: str | None = None
+    impressions_reporting_required: bool = False
+    latest_impressions: int | None = None
+    last_impressions_update_date: date | None = None
+    waiting_on: str | None = None
+    exception_status: str | None = None
+    exception_notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.creator_name = require_text(self.creator_name, "creator_name")
+
+
+@dataclass(slots=True)
+class InfluencerLiveExceptionRecord:
+    id: str
+    influencer_campaign_id: str
+    exception_title: str
+    live_creator_id: str | None = None
+    exception_type: str | None = None
+    description: str | None = None
+    status: str | None = None
+    owner_user_id: str | None = None
+    opened_date: date | None = None
+    due_date: date | None = None
+    resolved_date: date | None = None
+    resolution_notes: str | None = None
+    is_highlighted: bool = False
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.exception_title = require_text(self.exception_title, "exception_title")
+
+
+@dataclass(slots=True)
+class InfluencerLiveWorkspaceSummary:
+    campaign: InfluencerLivePortfolioRow
+    planning_steps: list[InfluencerPlanningStepRecord]
+    approval_rounds: list[InfluencerApprovalRoundRecord]
+    content_rounds: list[InfluencerContentRoundRecord]
+    creator_summary: InfluencerCreatorSummaryRecord | None
+    checkpoints: list[InfluencerLiveCheckpointRecord]
+    waves: list[InfluencerCreatorWaveRecord]
+    creators: list[InfluencerLiveCreatorRecord]
+    exceptions: list[InfluencerLiveExceptionRecord]
+    wrap_readiness: str
