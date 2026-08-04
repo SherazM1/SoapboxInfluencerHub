@@ -60,6 +60,12 @@ from core.campaign_ops.models import (
     ProgramNote,
     ReportingRequestListRow,
     ReportingRequestRecord,
+    RetailMediaActivationRecord,
+    RetailMediaCampaignRecord,
+    RetailMediaChannelRecord,
+    RetailMediaCreativeRecord,
+    RetailMediaOptimizationRecord,
+    RetailMediaPortfolioRow,
     Resource,
     ResourceListRow,
     Workstream,
@@ -77,6 +83,7 @@ from core.campaign_ops.seed_data import get_seed_users
 from core.campaign_ops.service import CampaignOpsService
 from core.campaign_ops.repository import CampaignOpsRepository
 from core.campaign_ops.insights import INSIGHTS_STATUS_DRAFTING_SURVEY, INSIGHTS_STATUS_NOT_STARTED
+from core.campaign_ops.retail_media import RETAIL_MEDIA_STATUS_LIVE, RETAIL_MEDIA_STATUS_PLANNING
 from core.campaign_ops.reporting_requests import normalize_am_name
 
 
@@ -214,6 +221,11 @@ class FakePrompt4ARepository:
         self.reporting_requests: list[ReportingRequestRecord] = []
         self.insights_projects: list[InsightsProjectRecord] = []
         self.insights_objectives: list[InsightsObjectiveRecord] = []
+        self.retail_media_campaigns: list[RetailMediaCampaignRecord] = []
+        self.retail_media_channels: list[RetailMediaChannelRecord] = []
+        self.retail_media_activations: list[RetailMediaActivationRecord] = []
+        self.retail_media_creative: list[RetailMediaCreativeRecord] = []
+        self.retail_media_optimizations: list[RetailMediaOptimizationRecord] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -765,6 +777,176 @@ class FakePrompt4ARepository:
             raise CampaignOpsNotFoundError("Insights objective was not found.")
         objective.is_active = True
         return objective
+
+    def create_retail_media_campaign(self, actor_user_id: str | None = None, **kwargs: object) -> RetailMediaCampaignRecord:
+        campaign = RetailMediaCampaignRecord(id=f"44444444-4444-4444-8444-{len(self.retail_media_campaigns) + 1:012d}", created_by_user_id=actor_user_id, **kwargs)
+        self.retail_media_campaigns.append(campaign)
+        return campaign
+
+    def get_retail_media_campaign(self, campaign_id: str) -> RetailMediaCampaignRecord | None:
+        return next((campaign for campaign in self.retail_media_campaigns if campaign.id == campaign_id), None)
+
+    def get_active_retail_media_campaign_by_title(self, program_id: str, campaign_title: str) -> RetailMediaCampaignRecord | None:
+        return next((campaign for campaign in self.retail_media_campaigns if campaign.program_id == program_id and campaign.is_active and campaign.campaign_title.lower() == campaign_title.lower()), None)
+
+    def update_retail_media_campaign(self, campaign_id: str, **kwargs: object) -> RetailMediaCampaignRecord:
+        campaign = self.get_retail_media_campaign(campaign_id)
+        if campaign is None:
+            raise CampaignOpsNotFoundError("Retail Media campaign was not found.")
+        for key, value in kwargs.items():
+            setattr(campaign, key, value)
+        return campaign
+
+    def deactivate_retail_media_campaign(self, campaign_id: str) -> None:
+        campaign = self.get_retail_media_campaign(campaign_id)
+        if campaign is None or not campaign.is_active:
+            raise CampaignOpsNotFoundError("Retail Media campaign was not found.")
+        campaign.is_active = False
+
+    def reactivate_retail_media_campaign(self, campaign_id: str) -> RetailMediaCampaignRecord:
+        campaign = self.get_retail_media_campaign(campaign_id)
+        if campaign is None or campaign.is_active:
+            raise CampaignOpsNotFoundError("Retail Media campaign was not found.")
+        campaign.is_active = True
+        return campaign
+
+    def _retail_media_portfolio_row(self, campaign: RetailMediaCampaignRecord) -> RetailMediaPortfolioRow:
+        program = self.get_program(campaign.program_id)
+        client = self.get_program_client(campaign.program_id)
+        owner = self.get_user_by_id(campaign.owner_user_id) if campaign.owner_user_id else None
+        channels = [channel for channel in self.retail_media_channels if channel.retail_media_campaign_id == campaign.id and channel.is_active]
+        milestones = [milestone for milestone in self.milestones if milestone.program_id == campaign.program_id and milestone.is_active and milestone.status != TaskStatus.COMPLETED.value and (milestone.workstream_id == campaign.workstream_id or milestone.milestone_type == "Retail Media")]
+        milestones.sort(key=lambda milestone: ((milestone.target_date or milestone.start_date or milestone.end_date) is None, milestone.target_date or milestone.start_date or milestone.end_date or date.max, milestone.title))
+        next_milestone = milestones[0] if milestones else None
+        resources = [resource for resource in self.resources if resource.program_id == campaign.program_id and resource.is_active]
+        return RetailMediaPortfolioRow(
+            id=campaign.id,
+            program_id=campaign.program_id,
+            program_name=program.program_name if program else "",
+            client_name=client.name if client else None,
+            workstream_id=campaign.workstream_id,
+            campaign_title=campaign.campaign_title,
+            retail_media_status=campaign.retail_media_status,
+            latest_update=campaign.latest_update,
+            waiting_on=campaign.waiting_on,
+            owner_user_id=campaign.owner_user_id,
+            owner_display_name=owner.display_name if owner else None,
+            launch_date=campaign.launch_date,
+            wrap_date=campaign.wrap_date,
+            reporting_cadence=campaign.reporting_cadence,
+            overall_budget=campaign.overall_budget,
+            total_spend=campaign.total_spend,
+            channel_budget_total=sum(channel.budget or 0 for channel in channels),
+            channel_spend_total=sum(channel.spend_to_date or 0 for channel in channels),
+            channel_mix=[channel.channel_type for channel in sorted(channels, key=lambda item: item.channel_type)],
+            program_status=program.status if program else ProgramStatus.ACTIVE.value,
+            program_risk=program.risk_level if program else RiskLevel.UNRATED.value,
+            next_milestone=next_milestone.title if next_milestone else None,
+            next_milestone_date=next_milestone.target_date if next_milestone else None,
+            tracksheet_url=next((resource.url for resource in resources if resource.resource_type in {"Tracksheet", "Program Tracksheet"} and resource.url), None),
+            budget_tracker_url=next((resource.url for resource in resources if resource.resource_type == "Budget Tracker" and resource.url), None),
+            optimization_log_url=next((resource.url for resource in resources if resource.resource_type == "Optimization Log" and resource.url), None),
+            is_paused=campaign.is_paused,
+            pause_reason=campaign.pause_reason,
+            is_active=campaign.is_active,
+            created_at=campaign.created_at,
+            updated_at=campaign.updated_at,
+        )
+
+    def list_retail_media_campaigns(self, include_inactive: bool = False) -> list[RetailMediaPortfolioRow]:
+        return [self._retail_media_portfolio_row(campaign) for campaign in self.retail_media_campaigns if include_inactive or campaign.is_active]
+
+    def get_retail_media_campaign_detail(self, campaign_id: str) -> RetailMediaPortfolioRow | None:
+        campaign = self.get_retail_media_campaign(campaign_id)
+        return self._retail_media_portfolio_row(campaign) if campaign else None
+
+    def create_retail_media_channel(self, retail_media_campaign_id: str, channel_type: str, **kwargs: object) -> RetailMediaChannelRecord:
+        channel = RetailMediaChannelRecord(id=f"34343434-3434-4434-8434-{len(self.retail_media_channels) + 1:012d}", retail_media_campaign_id=retail_media_campaign_id, channel_type=channel_type, **kwargs)
+        self.retail_media_channels.append(channel)
+        return channel
+
+    def list_retail_media_channels(self, retail_media_campaign_id: str, include_inactive: bool = False) -> list[RetailMediaChannelRecord]:
+        return [channel for channel in self.retail_media_channels if channel.retail_media_campaign_id == retail_media_campaign_id and (include_inactive or channel.is_active)]
+
+    def update_retail_media_channel(self, channel_id: str, **kwargs: object) -> RetailMediaChannelRecord:
+        channel = next((item for item in self.retail_media_channels if item.id == channel_id), None)
+        if channel is None:
+            raise CampaignOpsNotFoundError("Retail Media channel was not found.")
+        for key, value in kwargs.items():
+            setattr(channel, key, value)
+        return channel
+
+    def deactivate_retail_media_channel(self, channel_id: str) -> None:
+        self.update_retail_media_channel(channel_id, is_active=False)
+
+    def reactivate_retail_media_channel(self, channel_id: str) -> RetailMediaChannelRecord:
+        return self.update_retail_media_channel(channel_id, is_active=True)
+
+    def create_retail_media_activation(self, retail_media_campaign_id: str, activation_name: str, **kwargs: object) -> RetailMediaActivationRecord:
+        activation = RetailMediaActivationRecord(id=f"32323232-3232-4323-8323-{len(self.retail_media_activations) + 1:012d}", retail_media_campaign_id=retail_media_campaign_id, activation_name=activation_name, **kwargs)
+        self.retail_media_activations.append(activation)
+        return activation
+
+    def list_retail_media_activations(self, retail_media_campaign_id: str, include_inactive: bool = False) -> list[RetailMediaActivationRecord]:
+        return sorted([item for item in self.retail_media_activations if item.retail_media_campaign_id == retail_media_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.start_date or item.end_date or date.max, item.created_at or datetime.min))
+
+    def update_retail_media_activation(self, activation_id: str, **kwargs: object) -> RetailMediaActivationRecord:
+        activation = next((item for item in self.retail_media_activations if item.id == activation_id), None)
+        if activation is None:
+            raise CampaignOpsNotFoundError("Retail Media activation was not found.")
+        for key, value in kwargs.items():
+            setattr(activation, key, value)
+        return activation
+
+    def deactivate_retail_media_activation(self, activation_id: str) -> None:
+        self.update_retail_media_activation(activation_id, is_active=False)
+
+    def reactivate_retail_media_activation(self, activation_id: str) -> RetailMediaActivationRecord:
+        return self.update_retail_media_activation(activation_id, is_active=True)
+
+    def create_retail_media_creative(self, retail_media_campaign_id: str, creative_name: str, **kwargs: object) -> RetailMediaCreativeRecord:
+        creative = RetailMediaCreativeRecord(id=f"31313131-3131-4313-8313-{len(self.retail_media_creative) + 1:012d}", retail_media_campaign_id=retail_media_campaign_id, creative_name=creative_name, **kwargs)
+        self.retail_media_creative.append(creative)
+        return creative
+
+    def list_retail_media_creative(self, retail_media_campaign_id: str, include_inactive: bool = False) -> list[RetailMediaCreativeRecord]:
+        return [item for item in self.retail_media_creative if item.retail_media_campaign_id == retail_media_campaign_id and (include_inactive or item.is_active)]
+
+    def update_retail_media_creative(self, creative_id: str, **kwargs: object) -> RetailMediaCreativeRecord:
+        creative = next((item for item in self.retail_media_creative if item.id == creative_id), None)
+        if creative is None:
+            raise CampaignOpsNotFoundError("Retail Media creative item was not found.")
+        for key, value in kwargs.items():
+            setattr(creative, key, value)
+        return creative
+
+    def deactivate_retail_media_creative(self, creative_id: str) -> None:
+        self.update_retail_media_creative(creative_id, is_active=False)
+
+    def reactivate_retail_media_creative(self, creative_id: str) -> RetailMediaCreativeRecord:
+        return self.update_retail_media_creative(creative_id, is_active=True)
+
+    def create_retail_media_optimization(self, retail_media_campaign_id: str, update_date: date, update_text: str, actor_user_id: str | None = None, **kwargs: object) -> RetailMediaOptimizationRecord:
+        optimization = RetailMediaOptimizationRecord(id=f"30303030-3030-4303-8303-{len(self.retail_media_optimizations) + 1:012d}", retail_media_campaign_id=retail_media_campaign_id, update_date=update_date, update_text=update_text, created_by_user_id=actor_user_id, **kwargs)
+        self.retail_media_optimizations.append(optimization)
+        return optimization
+
+    def list_retail_media_optimizations(self, retail_media_campaign_id: str, include_inactive: bool = False) -> list[RetailMediaOptimizationRecord]:
+        return sorted([item for item in self.retail_media_optimizations if item.retail_media_campaign_id == retail_media_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.update_date, item.created_at or datetime.min), reverse=True)
+
+    def update_retail_media_optimization(self, optimization_id: str, **kwargs: object) -> RetailMediaOptimizationRecord:
+        optimization = next((item for item in self.retail_media_optimizations if item.id == optimization_id), None)
+        if optimization is None:
+            raise CampaignOpsNotFoundError("Retail Media optimization update was not found.")
+        for key, value in kwargs.items():
+            setattr(optimization, key, value)
+        return optimization
+
+    def deactivate_retail_media_optimization(self, optimization_id: str) -> None:
+        self.update_retail_media_optimization(optimization_id, is_active=False)
+
+    def reactivate_retail_media_optimization(self, optimization_id: str) -> RetailMediaOptimizationRecord:
+        return self.update_retail_media_optimization(optimization_id, is_active=True)
 
     def _task_list_row(self, task: Task) -> TaskListRow:
         program = self.get_program(task.program_id)
@@ -2394,6 +2576,143 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         if state.get("campaign_ops_selected_insights_project_id") not in visible_ids:
             state.pop("campaign_ops_selected_insights_project_id", None)
         self.assertNotIn("campaign_ops_selected_insights_project_id", state)
+
+    def test_prompt6_retail_media_campaign_validation_crud_and_activity(self) -> None:
+        repository, service, bailey, t_user, _l_user, program_id, _influencer, retail = self._prompt4c_fixture()
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, campaign_title="Missing program")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, program_id=program_id, campaign_title=" ")
+        with self.assertRaises(CampaignOpsError):
+            service.create_retail_media_campaign(bailey, program_id="missing", campaign_title="Missing")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, program_id=program_id, campaign_title="Inactive owner", owner_user_id=repository.users[3].id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, program_id=program_id, campaign_title="Bad budget", overall_budget=-1)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, program_id=program_id, campaign_title="Bad spend", total_spend=-1)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, program_id=program_id, campaign_title="Bad dates", launch_date=date(2026, 9, 1), wrap_date=date(2026, 8, 1))
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, program_id=program_id, campaign_title="Paused", is_paused=True)
+        repository.deactivate_workstream(retail.id, actor_user_id=bailey.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, program_id=program_id, workstream_id=retail.id, campaign_title="Inactive workstream")
+        repository.reactivate_workstream(retail.id, actor_user_id=bailey.id)
+
+        campaign = service.create_retail_media_campaign(
+            bailey,
+            program_id=program_id,
+            campaign_title="TEST - Retail Media Campaign",
+            owner_user_id=t_user.id,
+            retail_media_status=RETAIL_MEDIA_STATUS_PLANNING,
+            latest_update="Creative is with client",
+            waiting_on="Client",
+            launch_date=date(2026, 8, 10),
+            wrap_date=date(2026, 9, 10),
+            reporting_cadence="WPSR Weekly",
+            overall_budget=1000,
+            total_spend=200,
+            initial_channels=[{"channel_type": "Onsite Display", "budget": 600, "spend_to_date": 100}],
+            initial_resources={"Tracksheet": "https://example.com/tracksheet", "Budget Tracker": "https://example.com/budget"},
+        )
+        self.assertEqual(campaign.owner_user_id, t_user.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_campaign(bailey, program_id=program_id, campaign_title="TEST - Retail Media Campaign")
+        event_count = len(repository.events)
+        unchanged = service.update_retail_media_campaign(bailey, campaign.id, campaign_title=campaign.campaign_title)
+        self.assertEqual(unchanged.campaign_title, campaign.campaign_title)
+        self.assertEqual(len(repository.events), event_count)
+        updated = service.update_retail_media_campaign(bailey, campaign.id, retail_media_status=RETAIL_MEDIA_STATUS_LIVE, latest_update="Onsite and offsite live", total_spend=1200, is_paused=True, pause_reason="Paused until further notice")
+        self.assertEqual(updated.retail_media_status, RETAIL_MEDIA_STATUS_LIVE)
+        self.assertTrue(updated.is_paused)
+        service.deactivate_retail_media_campaign(bailey, campaign.id)
+        self.assertFalse(repository.get_retail_media_campaign(campaign.id).is_active)
+        service.reactivate_retail_media_campaign(bailey, campaign.id)
+        self.assertTrue(repository.get_retail_media_campaign(campaign.id).is_active)
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("retail_media_campaign_created", event_types)
+        self.assertIn("retail_media_campaign_latest_update_changed", event_types)
+        self.assertIn("retail_media_campaign_deactivated", event_types)
+        self.assertIn("retail_media_campaign_reactivated", event_types)
+
+    def test_prompt6_retail_media_children_portfolio_budget_and_state(self) -> None:
+        from app.campaign_ops.retail_media.formatting import PORTFOLIO_COLUMNS, portfolio_rows
+
+        repository, service, bailey, t_user, _l_user, program_id, _influencer, _retail = self._prompt4c_fixture()
+        campaign = service.create_retail_media_campaign(
+            bailey,
+            program_id=program_id,
+            campaign_title="TEST - Retail Media Campaign",
+            owner_user_id=t_user.id,
+            overall_budget=1000,
+            total_spend=1200,
+            initial_resources={"Optimization Log": "https://example.com/opt"},
+        )
+        onsite = service.create_retail_media_channel(bailey, campaign.id, channel_type="Onsite Display", budget=600, spend_to_date=700)
+        offsite = service.create_retail_media_channel(bailey, campaign.id, channel_type="Offsite Display", budget=400, spend_to_date=300)
+        search = service.create_retail_media_channel(bailey, campaign.id, channel_type="Sponsored Search", budget=300, spend_to_date=100)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_channel(bailey, campaign.id, channel_type="Onsite Display")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.update_retail_media_channel(bailey, campaign.id, offsite.id, channel_type="Offsite Display", budget=-1)
+        service.update_retail_media_channel(bailey, campaign.id, offsite.id, channel_type="Offsite Display", spend_to_date=350)
+        service.deactivate_retail_media_channel(bailey, campaign.id, search.id)
+        service.reactivate_retail_media_channel(bailey, campaign.id, search.id)
+
+        exact = service.create_retail_media_activation(bailey, campaign.id, activation_name="BTS Onsite Display", channel_id=onsite.id, start_date=date(2026, 8, 10))
+        ranged = service.create_retail_media_activation(bailey, campaign.id, activation_name="Summer Campaign Flight", channel_id=offsite.id, start_date=date(2026, 8, 12), end_date=date(2026, 8, 20), hard_deadline=True)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_retail_media_activation(bailey, campaign.id, activation_name="Bad dates", start_date=date(2026, 9, 1), end_date=date(2026, 8, 1))
+        completed = service.complete_retail_media_activation(bailey, campaign.id, exact.id)
+        self.assertIsNotNone(completed.completed_at)
+        reopened = service.reopen_retail_media_activation(bailey, campaign.id, exact.id)
+        self.assertIsNone(reopened.completed_at)
+        service.deactivate_retail_media_activation(bailey, campaign.id, ranged.id)
+        service.reactivate_retail_media_activation(bailey, campaign.id, ranged.id)
+
+        creative = service.create_retail_media_creative(bailey, campaign.id, creative_name="Ad creative", channel_id=onsite.id, approval_status="client_review", submission_status="ready_to_submit")
+        submitted = service.mark_retail_media_creative_submitted(bailey, campaign.id, creative.id, submitted_date=date(2026, 8, 5))
+        self.assertEqual(submitted.submission_status, "submitted")
+        approved = service.mark_retail_media_creative_approved(bailey, campaign.id, creative.id, approved_date=date(2026, 8, 6))
+        self.assertEqual(approved.approval_status, "approved")
+        service.deactivate_retail_media_creative(bailey, campaign.id, creative.id)
+        service.reactivate_retail_media_creative(bailey, campaign.id, creative.id)
+
+        opt1 = service.create_retail_media_optimization(bailey, campaign.id, date(2026, 8, 15), "A250 optimizations made", channel_id=onsite.id)
+        opt2 = service.create_retail_media_optimization(bailey, campaign.id, date(2026, 8, 16), "Adjusted search strategy", channel_id=search.id)
+        self.assertEqual([row.id for row in service.list_retail_media_optimizations(bailey, campaign.id)], [opt2.id, opt1.id])
+        service.update_retail_media_optimization(bailey, campaign.id, opt1.id, update_text="Updated budget allocation")
+        service.deactivate_retail_media_optimization(bailey, campaign.id, opt2.id)
+        service.reactivate_retail_media_optimization(bailey, campaign.id, opt2.id)
+
+        milestone = service.create_milestone(bailey, program_id, "Campaign launch", workstream_id=campaign.workstream_id, milestone_type="Retail Media", target_date=date(2026, 8, 10))
+        service.complete_milestone(bailey, milestone.id)
+        service.reopen_milestone(bailey, milestone.id)
+        service.create_resource(bailey, program_id, "RM Strategy", resource_type="RM Strategy", workstream_id=campaign.workstream_id, url=None)
+
+        detail = service.get_retail_media_campaign_detail(bailey, campaign.id)
+        rows = portfolio_rows([detail])
+        self.assertEqual(list(rows[0]), PORTFOLIO_COLUMNS)
+        self.assertIn("Onsite Display", detail.channel_mix)
+        self.assertEqual(detail.channel_budget_total, 1300)
+        self.assertEqual(detail.channel_spend_total, 1150)
+        self.assertEqual(detail.optimization_log_url, "https://example.com/opt")
+        summary = service.retail_media_budget_summary(detail, service.list_retail_media_channels(bailey, campaign.id))
+        self.assertEqual(summary["remaining"], -200)
+        self.assertTrue(summary["over_budget"])
+        self.assertGreater(summary["spend_percentage"], 100)
+        self.assertIn("campaign_ops_selected_retail_media_campaign_id", SESSION_KEYS)
+        self.assertTrue(all(key.startswith("campaign_ops_") for key in SESSION_KEYS))
+        state: dict[str, object] = {"campaign_ops_selected_retail_media_campaign_id": "missing"}
+        if state.get("campaign_ops_selected_retail_media_campaign_id") not in {campaign.id}:
+            state.pop("campaign_ops_selected_retail_media_campaign_id", None)
+        self.assertNotIn("campaign_ops_selected_retail_media_campaign_id", state)
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("retail_media_channel_created", event_types)
+        self.assertIn("retail_media_activation_created", event_types)
+        self.assertIn("retail_media_creative_created", event_types)
+        self.assertIn("retail_media_optimization_created", event_types)
 
 
 if __name__ == "__main__":

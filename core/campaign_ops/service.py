@@ -40,6 +40,13 @@ from core.campaign_ops.models import (
     ReportingRequestDetail,
     ReportingRequestListRow,
     ReportingRequestRecord,
+    RetailMediaActivationRecord,
+    RetailMediaCampaignDetail,
+    RetailMediaCampaignRecord,
+    RetailMediaChannelRecord,
+    RetailMediaCreativeRecord,
+    RetailMediaOptimizationRecord,
+    RetailMediaPortfolioRow,
     Resource,
     ResourceListRow,
     Task,
@@ -79,6 +86,14 @@ from core.campaign_ops.insights import (
     INSIGHTS_RESOURCE_TYPES,
     INSIGHTS_STATUS_NOT_STARTED,
     validate_insights_status,
+)
+from core.campaign_ops.retail_media import (
+    RETAIL_MEDIA_RESOURCE_TYPES,
+    RETAIL_MEDIA_STATUS_COMPLETE,
+    RETAIL_MEDIA_STATUS_NOT_STARTED,
+    normalize_approval_status,
+    normalize_retail_media_status,
+    normalize_submission_status,
 )
 from core.campaign_ops.repository import CampaignOpsRepository
 
@@ -2050,6 +2065,530 @@ class CampaignOpsService:
             return objective
 
         return self._transaction(operation)
+
+    def _retail_media_actor_label(self, actor: CampaignOpsUser | None) -> str:
+        return actor.display_name if actor else "System"
+
+    def _validate_retail_media_access(
+        self,
+        repository: CampaignOpsRepository,
+        actor: CampaignOpsUser | None,
+        program_id: str,
+    ) -> Program:
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this Retail Media program.")
+        if not program.is_active:
+            raise CampaignOpsValidationError("Archived programs cannot have Retail Media changes.")
+        return program
+
+    def _require_retail_media_campaign(
+        self,
+        repository: CampaignOpsRepository,
+        campaign_id: str,
+    ) -> RetailMediaCampaignRecord:
+        campaign = repository.get_retail_media_campaign(campaign_id)
+        if campaign is None:
+            raise CampaignOpsNotFoundError("Retail Media campaign was not found.")
+        return campaign
+
+    def _validate_retail_media_campaign_payload(
+        self,
+        repository: CampaignOpsRepository,
+        actor: CampaignOpsUser | None,
+        payload: dict[str, Any],
+        before: RetailMediaCampaignRecord | None = None,
+    ) -> dict[str, Any]:
+        program_id = payload.get("program_id") or (before.program_id if before else None)
+        if not program_id:
+            raise CampaignOpsValidationError("Program is required.")
+        self._validate_retail_media_access(repository, actor, str(program_id))
+        title = require_text(payload.get("campaign_title") or (before.campaign_title if before else None), "Retail Media campaign title")
+        workstream_id = payload.get("workstream_id") if "workstream_id" in payload else (before.workstream_id if before else None)
+        if workstream_id:
+            workstream = self._require_workstream(repository, str(program_id), str(workstream_id))
+            if not workstream.is_active:
+                raise CampaignOpsValidationError("Inactive workstreams cannot receive active Retail Media changes.")
+        owner_user_id = payload.get("owner_user_id") if "owner_user_id" in payload else (before.owner_user_id if before else None)
+        if owner_user_id:
+            self._require_active_user(repository, str(owner_user_id), "Owner")
+        launch_date = payload.get("launch_date") if "launch_date" in payload else (before.launch_date if before else None)
+        wrap_date = payload.get("wrap_date") if "wrap_date" in payload else (before.wrap_date if before else None)
+        if launch_date and wrap_date and wrap_date < launch_date:
+            raise CampaignOpsValidationError("Wrap date cannot precede launch date.")
+        overall_budget = self._non_negative_number(payload.get("overall_budget") if "overall_budget" in payload else (before.overall_budget if before else None), "Overall budget")
+        total_spend = self._non_negative_number(payload.get("total_spend") if "total_spend" in payload else (before.total_spend if before else None), "Total spend")
+        is_paused = bool(payload.get("is_paused") if "is_paused" in payload else (before.is_paused if before else False))
+        pause_reason = self._clean_optional_text(payload.get("pause_reason") if "pause_reason" in payload else (before.pause_reason if before else None))
+        if is_paused and not pause_reason:
+            raise CampaignOpsValidationError("Pause reason is required when a Retail Media campaign is paused.")
+        return {
+            "program_id": str(program_id),
+            "workstream_id": str(workstream_id) if workstream_id else None,
+            "campaign_title": title,
+            "retail_media_status": normalize_retail_media_status(payload.get("retail_media_status") or (before.retail_media_status if before else RETAIL_MEDIA_STATUS_NOT_STARTED)),
+            "latest_update": self._clean_optional_text(payload.get("latest_update") if "latest_update" in payload else (before.latest_update if before else None)),
+            "waiting_on": self._clean_optional_text(payload.get("waiting_on") if "waiting_on" in payload else (before.waiting_on if before else None)),
+            "owner_user_id": str(owner_user_id) if owner_user_id else None,
+            "launch_date": launch_date,
+            "wrap_date": wrap_date,
+            "reporting_cadence": self._clean_optional_text(payload.get("reporting_cadence") if "reporting_cadence" in payload else (before.reporting_cadence if before else None)),
+            "overall_budget": overall_budget,
+            "total_spend": total_spend,
+            "is_paused": is_paused,
+            "pause_reason": pause_reason,
+        }
+
+    def create_retail_media_campaign(self, actor: CampaignOpsUser | None, **kwargs: Any) -> RetailMediaCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaCampaignRecord:
+            payload = self._validate_retail_media_campaign_payload(repository, actor, kwargs)
+            duplicate = repository.get_active_retail_media_campaign_by_title(payload["program_id"], payload["campaign_title"])
+            if duplicate:
+                raise CampaignOpsValidationError("An active Retail Media campaign with this title already exists for this program.")
+            for resource_type, url in (kwargs.get("initial_resources") or {}).items():
+                if resource_type in RETAIL_MEDIA_RESOURCE_TYPES and url:
+                    self._validate_resource_url(str(url))
+            workstream_id = payload.get("workstream_id")
+            if not workstream_id:
+                existing = next((w for w in repository.list_all_workstreams_by_program(payload["program_id"]) if w.workstream_type == WorkstreamType.RETAIL_MEDIA.value and w.is_active), None)
+                if existing:
+                    workstream_id = existing.id
+                else:
+                    workstream = repository.create_workstream(
+                        payload["program_id"],
+                        WorkstreamType.RETAIL_MEDIA.value,
+                        actor_user_id=actor.id if actor else None,
+                        owner_user_id=payload.get("owner_user_id"),
+                    )
+                    workstream_id = workstream.id
+            payload["workstream_id"] = workstream_id
+            campaign = repository.create_retail_media_campaign(actor_user_id=actor.id if actor else None, **payload)
+            seen_channels: set[str] = set()
+            for channel in kwargs.get("initial_channels") or []:
+                channel_type = require_text(str(channel.get("channel_type") if isinstance(channel, dict) else channel), "Channel type")
+                normalized = channel_type.strip().lower()
+                if normalized in seen_channels:
+                    raise CampaignOpsValidationError("Duplicate active Retail Media channels are not allowed.")
+                seen_channels.add(normalized)
+                channel_payload = dict(channel) if isinstance(channel, dict) else {}
+                channel_payload["channel_type"] = channel_type
+                self._create_retail_media_channel(repository, actor, campaign, **channel_payload)
+            for resource_type, url in (kwargs.get("initial_resources") or {}).items():
+                if resource_type in RETAIL_MEDIA_RESOURCE_TYPES:
+                    resource = repository.create_resource(
+                        program_id=campaign.program_id,
+                        workstream_id=campaign.workstream_id,
+                        resource_type=resource_type,
+                        title=resource_type,
+                        url=self._validate_resource_url(url) if url else None,
+                        actor_user_id=actor.id if actor else None,
+                    )
+                    repository.append_event(
+                        event_type="resource_created",
+                        entity_type="resource",
+                        entity_id=resource.id,
+                        program_id=campaign.program_id,
+                        workstream_id=campaign.workstream_id,
+                        actor_user_id=actor.id if actor else None,
+                        message=f"{self._retail_media_actor_label(actor)} added {resource.resource_type} for Retail Media campaign {campaign.campaign_title}.",
+                    )
+            repository.append_event(
+                event_type="retail_media_campaign_created",
+                entity_type="retail_media_campaign",
+                entity_id=campaign.id,
+                program_id=campaign.program_id,
+                workstream_id=campaign.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                new_value_json={"campaign_title": campaign.campaign_title},
+                message=f"{self._retail_media_actor_label(actor)} created Retail Media campaign {campaign.campaign_title}.",
+            )
+            return campaign
+
+        return self._transaction(operation)
+
+    def update_retail_media_campaign(self, actor: CampaignOpsUser | None, campaign_id: str, **kwargs: Any) -> RetailMediaCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaCampaignRecord:
+            before = self._require_retail_media_campaign(repository, campaign_id)
+            payload = self._validate_retail_media_campaign_payload(repository, actor, kwargs, before)
+            duplicate = repository.get_active_retail_media_campaign_by_title(payload["program_id"], payload["campaign_title"])
+            if duplicate and duplicate.id != campaign_id:
+                raise CampaignOpsValidationError("An active Retail Media campaign with this title already exists for this program.")
+            editable = {k: getattr(before, k) for k in payload if k != "program_id"}
+            changes = {field: value for field, value in payload.items() if field != "program_id" and editable[field] != value}
+            if not changes:
+                return before
+            merged = dict(editable)
+            merged.update(changes)
+            updated = repository.update_retail_media_campaign(campaign_id, **merged)
+            for field, value in changes.items():
+                repository.append_event(
+                    event_type=f"retail_media_campaign_{field}_changed",
+                    entity_type="retail_media_campaign",
+                    entity_id=campaign_id,
+                    program_id=updated.program_id,
+                    workstream_id=updated.workstream_id,
+                    actor_user_id=actor.id if actor else None,
+                    old_value_json={field: self._activity_value(getattr(before, field))},
+                    new_value_json={field: self._activity_value(value)},
+                    message=f"{self._retail_media_actor_label(actor)} changed Retail Media {field.replace('_', ' ')} from {getattr(before, field) or '-'} to {value or '-'}.",
+                )
+            return updated
+
+        return self._transaction(operation)
+
+    def list_retail_media_campaigns(self, actor: CampaignOpsUser | None, include_inactive: bool = False) -> list[RetailMediaPortfolioRow]:
+        repository = self.repository or CampaignOpsRepository()
+        rows = repository.list_retail_media_campaigns(include_inactive=include_inactive)
+        if can_access_admin(actor):
+            return rows
+        visible: list[RetailMediaPortfolioRow] = []
+        for row in rows:
+            program = self._require_program(repository, row.program_id)
+            assignments = repository.list_assignments_by_program(row.program_id)
+            if can_view_program(actor, program, assignments):
+                visible.append(row)
+        return visible
+
+    def get_retail_media_campaign_detail(self, actor: CampaignOpsUser | None, campaign_id: str) -> RetailMediaCampaignDetail:
+        repository = self.repository or CampaignOpsRepository()
+        detail = repository.get_retail_media_campaign_detail(campaign_id)
+        if detail is None:
+            raise CampaignOpsNotFoundError("Retail Media campaign was not found.")
+        program = self._require_program(repository, detail.program_id)
+        if not can_view_program(actor, program, repository.list_assignments_by_program(detail.program_id)):
+            raise CampaignOpsPermissionError("You do not have access to this Retail Media campaign.")
+        return detail
+
+    def deactivate_retail_media_campaign(self, actor: CampaignOpsUser | None, campaign_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            repository.deactivate_retail_media_campaign(campaign_id)
+            repository.append_event(event_type="retail_media_campaign_deactivated", entity_type="retail_media_campaign", entity_id=campaign_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} deactivated Retail Media campaign {campaign.campaign_title}.")
+
+        self._transaction(operation)
+
+    def reactivate_retail_media_campaign(self, actor: CampaignOpsUser | None, campaign_id: str) -> RetailMediaCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaCampaignRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            updated = repository.reactivate_retail_media_campaign(campaign_id)
+            repository.append_event(event_type="retail_media_campaign_reactivated", entity_type="retail_media_campaign", entity_id=campaign_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} reactivated Retail Media campaign {campaign.campaign_title}.")
+            return updated
+
+        return self._transaction(operation)
+
+    def _validate_retail_media_child_dates(self, start: Any, end: Any, start_label: str = "Start date", end_label: str = "End date") -> None:
+        if start and end and end < start:
+            raise CampaignOpsValidationError(f"{end_label} cannot precede {start_label.lower()}.")
+
+    def _channel_payload(self, repository: CampaignOpsRepository, campaign: RetailMediaCampaignRecord, payload: dict[str, Any], before: RetailMediaChannelRecord | None = None) -> dict[str, Any]:
+        channel_type = require_text(payload.get("channel_type") or (before.channel_type if before else None), "Channel type")
+        launch = payload.get("launch_date") if "launch_date" in payload else (before.launch_date if before else None)
+        end = payload.get("end_date") if "end_date" in payload else (before.end_date if before else None)
+        self._validate_retail_media_child_dates(launch, end, "Launch date", "End date")
+        return {
+            "channel_type": channel_type,
+            "platform_name": self._clean_optional_text(payload.get("platform_name") if "platform_name" in payload else (before.platform_name if before else None)),
+            "status": self._clean_optional_text(payload.get("status") if "status" in payload else (before.status if before else None)),
+            "budget": self._non_negative_number(payload.get("budget") if "budget" in payload else (before.budget if before else None), "Channel budget"),
+            "spend_to_date": self._non_negative_number(payload.get("spend_to_date") if "spend_to_date" in payload else (before.spend_to_date if before else None), "Channel spend"),
+            "launch_date": launch,
+            "end_date": end,
+            "reporting_requirement": self._clean_optional_text(payload.get("reporting_requirement") if "reporting_requirement" in payload else (before.reporting_requirement if before else None)),
+        }
+
+    def _create_retail_media_channel(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, campaign: RetailMediaCampaignRecord, **kwargs: Any) -> RetailMediaChannelRecord:
+        payload = self._channel_payload(repository, campaign, kwargs)
+        if any(c.channel_type.lower() == payload["channel_type"].lower() for c in repository.list_retail_media_channels(campaign.id)):
+            raise CampaignOpsValidationError("Duplicate active Retail Media channels are not allowed.")
+        channel = repository.create_retail_media_channel(campaign.id, **payload)
+        repository.append_event(event_type="retail_media_channel_created", entity_type="retail_media_channel", entity_id=channel.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} added Retail Media channel {channel.channel_type}.")
+        return channel
+
+    def create_retail_media_channel(self, actor: CampaignOpsUser | None, campaign_id: str, **kwargs: Any) -> RetailMediaChannelRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaChannelRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            return self._create_retail_media_channel(repository, actor, campaign, **kwargs)
+
+        return self._transaction(operation)
+
+    def list_retail_media_channels(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[RetailMediaChannelRecord]:
+        campaign = self.get_retail_media_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_retail_media_channels(campaign.id, include_inactive=include_inactive)
+
+    def update_retail_media_channel(self, actor: CampaignOpsUser | None, campaign_id: str, channel_id: str, **kwargs: Any) -> RetailMediaChannelRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaChannelRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            before = next((c for c in repository.list_retail_media_channels(campaign_id, include_inactive=True) if c.id == channel_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Retail Media channel was not found.")
+            payload = self._channel_payload(repository, campaign, kwargs, before)
+            if any(c.id != channel_id and c.channel_type.lower() == payload["channel_type"].lower() for c in repository.list_retail_media_channels(campaign_id)):
+                raise CampaignOpsValidationError("Duplicate active Retail Media channels are not allowed.")
+            changes = {field: value for field, value in payload.items() if getattr(before, field) != value}
+            if not changes:
+                return before
+            updated = repository.update_retail_media_channel(channel_id, **{**{k: getattr(before, k) for k in payload}, **changes})
+            repository.append_event(event_type="retail_media_channel_updated", entity_type="retail_media_channel", entity_id=channel_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} updated Retail Media channel {updated.channel_type}.")
+            return updated
+
+        return self._transaction(operation)
+
+    def deactivate_retail_media_channel(self, actor: CampaignOpsUser | None, campaign_id: str, channel_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            repository.deactivate_retail_media_channel(channel_id)
+            repository.append_event(event_type="retail_media_channel_deactivated", entity_type="retail_media_channel", entity_id=channel_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} deactivated a Retail Media channel.")
+
+        self._transaction(operation)
+
+    def reactivate_retail_media_channel(self, actor: CampaignOpsUser | None, campaign_id: str, channel_id: str) -> RetailMediaChannelRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaChannelRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            channel = repository.reactivate_retail_media_channel(channel_id)
+            repository.append_event(event_type="retail_media_channel_reactivated", entity_type="retail_media_channel", entity_id=channel_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} reactivated Retail Media channel {channel.channel_type}.")
+            return channel
+
+        return self._transaction(operation)
+
+    def _validate_retail_media_channel_link(
+        self,
+        repository: CampaignOpsRepository,
+        campaign_id: str,
+        channel_id: str | None,
+    ) -> None:
+        if not channel_id:
+            return
+        if not any(channel.id == channel_id for channel in repository.list_retail_media_channels(campaign_id, include_inactive=True)):
+            raise CampaignOpsValidationError("Selected channel must belong to the Retail Media campaign.")
+
+    def _activation_payload(self, repository: CampaignOpsRepository, campaign: RetailMediaCampaignRecord, payload: dict[str, Any], before: RetailMediaActivationRecord | None = None) -> dict[str, Any]:
+        channel_id = payload.get("channel_id") if "channel_id" in payload else (before.channel_id if before else None)
+        self._validate_retail_media_channel_link(repository, campaign.id, str(channel_id) if channel_id else None)
+        start = payload.get("start_date") if "start_date" in payload else (before.start_date if before else None)
+        end = payload.get("end_date") if "end_date" in payload else (before.end_date if before else None)
+        self._validate_retail_media_child_dates(start, end)
+        return {
+            "channel_id": str(channel_id) if channel_id else None,
+            "activation_name": require_text(payload.get("activation_name") or (before.activation_name if before else None), "Activation name"),
+            "activation_type": self._clean_optional_text(payload.get("activation_type") if "activation_type" in payload else (before.activation_type if before else None)),
+            "status": self._clean_optional_text(payload.get("status") if "status" in payload else (before.status if before else None)),
+            "start_date": start,
+            "end_date": end,
+            "hard_deadline": bool(payload.get("hard_deadline") if "hard_deadline" in payload else (before.hard_deadline if before else False)),
+            "waiting_on": self._clean_optional_text(payload.get("waiting_on") if "waiting_on" in payload else (before.waiting_on if before else None)),
+            "latest_update": self._clean_optional_text(payload.get("latest_update") if "latest_update" in payload else (before.latest_update if before else None)),
+            "completed_at": payload.get("completed_at") if "completed_at" in payload else (before.completed_at if before else None),
+        }
+
+    def create_retail_media_activation(self, actor: CampaignOpsUser | None, campaign_id: str, **kwargs: Any) -> RetailMediaActivationRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaActivationRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            payload = self._activation_payload(repository, campaign, kwargs)
+            activation = repository.create_retail_media_activation(campaign_id, **payload)
+            repository.append_event(event_type="retail_media_activation_created", entity_type="retail_media_activation", entity_id=activation.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} added Retail Media activation {activation.activation_name}.")
+            return activation
+
+        return self._transaction(operation)
+
+    def list_retail_media_activations(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[RetailMediaActivationRecord]:
+        campaign = self.get_retail_media_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_retail_media_activations(campaign.id, include_inactive=include_inactive)
+
+    def update_retail_media_activation(self, actor: CampaignOpsUser | None, campaign_id: str, activation_id: str, **kwargs: Any) -> RetailMediaActivationRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaActivationRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            before = next((item for item in repository.list_retail_media_activations(campaign_id, include_inactive=True) if item.id == activation_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Retail Media activation was not found.")
+            payload = self._activation_payload(repository, campaign, kwargs, before)
+            changes = {field: value for field, value in payload.items() if getattr(before, field) != value}
+            if not changes:
+                return before
+            updated = repository.update_retail_media_activation(activation_id, **{**{k: getattr(before, k) for k in payload}, **changes})
+            repository.append_event(event_type="retail_media_activation_updated", entity_type="retail_media_activation", entity_id=activation_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} updated Retail Media activation {updated.activation_name}.")
+            return updated
+
+        return self._transaction(operation)
+
+    def complete_retail_media_activation(self, actor: CampaignOpsUser | None, campaign_id: str, activation_id: str) -> RetailMediaActivationRecord:
+        return self.update_retail_media_activation(actor, campaign_id, activation_id, status=RETAIL_MEDIA_STATUS_COMPLETE, completed_at=datetime.now(UTC))
+
+    def reopen_retail_media_activation(self, actor: CampaignOpsUser | None, campaign_id: str, activation_id: str) -> RetailMediaActivationRecord:
+        return self.update_retail_media_activation(actor, campaign_id, activation_id, status="in_progress", completed_at=None)
+
+    def deactivate_retail_media_activation(self, actor: CampaignOpsUser | None, campaign_id: str, activation_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            repository.deactivate_retail_media_activation(activation_id)
+            repository.append_event(event_type="retail_media_activation_deactivated", entity_type="retail_media_activation", entity_id=activation_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} deactivated a Retail Media activation.")
+
+        self._transaction(operation)
+
+    def reactivate_retail_media_activation(self, actor: CampaignOpsUser | None, campaign_id: str, activation_id: str) -> RetailMediaActivationRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaActivationRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            activation = repository.reactivate_retail_media_activation(activation_id)
+            repository.append_event(event_type="retail_media_activation_reactivated", entity_type="retail_media_activation", entity_id=activation_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} reactivated Retail Media activation {activation.activation_name}.")
+            return activation
+
+        return self._transaction(operation)
+
+    def _creative_payload(self, repository: CampaignOpsRepository, campaign: RetailMediaCampaignRecord, payload: dict[str, Any], before: RetailMediaCreativeRecord | None = None) -> dict[str, Any]:
+        channel_id = payload.get("channel_id") if "channel_id" in payload else (before.channel_id if before else None)
+        self._validate_retail_media_channel_link(repository, campaign.id, str(channel_id) if channel_id else None)
+        return {
+            "channel_id": str(channel_id) if channel_id else None,
+            "creative_name": require_text(payload.get("creative_name") or (before.creative_name if before else None), "Creative name"),
+            "creative_type": self._clean_optional_text(payload.get("creative_type") if "creative_type" in payload else (before.creative_type if before else None)),
+            "approval_status": normalize_approval_status(payload.get("approval_status") if "approval_status" in payload else (before.approval_status if before else None)),
+            "submission_status": normalize_submission_status(payload.get("submission_status") if "submission_status" in payload else (before.submission_status if before else None)),
+            "platform_status": self._clean_optional_text(payload.get("platform_status") if "platform_status" in payload else (before.platform_status if before else None)),
+            "due_date": payload.get("due_date") if "due_date" in payload else (before.due_date if before else None),
+            "submitted_date": payload.get("submitted_date") if "submitted_date" in payload else (before.submitted_date if before else None),
+            "approved_date": payload.get("approved_date") if "approved_date" in payload else (before.approved_date if before else None),
+            "notes": self._clean_optional_text(payload.get("notes") if "notes" in payload else (before.notes if before else None)),
+        }
+
+    def create_retail_media_creative(self, actor: CampaignOpsUser | None, campaign_id: str, **kwargs: Any) -> RetailMediaCreativeRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaCreativeRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            creative = repository.create_retail_media_creative(campaign_id, **self._creative_payload(repository, campaign, kwargs))
+            repository.append_event(event_type="retail_media_creative_created", entity_type="retail_media_creative", entity_id=creative.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} added Retail Media creative {creative.creative_name}.")
+            return creative
+
+        return self._transaction(operation)
+
+    def list_retail_media_creative(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[RetailMediaCreativeRecord]:
+        campaign = self.get_retail_media_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_retail_media_creative(campaign.id, include_inactive=include_inactive)
+
+    def update_retail_media_creative(self, actor: CampaignOpsUser | None, campaign_id: str, creative_id: str, **kwargs: Any) -> RetailMediaCreativeRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaCreativeRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            before = next((item for item in repository.list_retail_media_creative(campaign_id, include_inactive=True) if item.id == creative_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Retail Media creative item was not found.")
+            payload = self._creative_payload(repository, campaign, kwargs, before)
+            changes = {field: value for field, value in payload.items() if getattr(before, field) != value}
+            if not changes:
+                return before
+            updated = repository.update_retail_media_creative(creative_id, **{**{k: getattr(before, k) for k in payload}, **changes})
+            repository.append_event(event_type="retail_media_creative_updated", entity_type="retail_media_creative", entity_id=creative_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} updated Retail Media creative {updated.creative_name}.")
+            return updated
+
+        return self._transaction(operation)
+
+    def mark_retail_media_creative_submitted(self, actor: CampaignOpsUser | None, campaign_id: str, creative_id: str, submitted_date: date | None = None) -> RetailMediaCreativeRecord:
+        return self.update_retail_media_creative(actor, campaign_id, creative_id, submission_status="submitted", submitted_date=submitted_date or date.today())
+
+    def mark_retail_media_creative_approved(self, actor: CampaignOpsUser | None, campaign_id: str, creative_id: str, approved_date: date | None = None) -> RetailMediaCreativeRecord:
+        return self.update_retail_media_creative(actor, campaign_id, creative_id, approval_status="approved", approved_date=approved_date or date.today())
+
+    def deactivate_retail_media_creative(self, actor: CampaignOpsUser | None, campaign_id: str, creative_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            repository.deactivate_retail_media_creative(creative_id)
+            repository.append_event(event_type="retail_media_creative_deactivated", entity_type="retail_media_creative", entity_id=creative_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} deactivated a Retail Media creative item.")
+
+        self._transaction(operation)
+
+    def reactivate_retail_media_creative(self, actor: CampaignOpsUser | None, campaign_id: str, creative_id: str) -> RetailMediaCreativeRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaCreativeRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            creative = repository.reactivate_retail_media_creative(creative_id)
+            repository.append_event(event_type="retail_media_creative_reactivated", entity_type="retail_media_creative", entity_id=creative_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} reactivated Retail Media creative {creative.creative_name}.")
+            return creative
+
+        return self._transaction(operation)
+
+    def create_retail_media_optimization(self, actor: CampaignOpsUser | None, campaign_id: str, update_date: date, update_text: str, **kwargs: Any) -> RetailMediaOptimizationRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaOptimizationRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            channel_id = kwargs.get("channel_id")
+            self._validate_retail_media_channel_link(repository, campaign_id, str(channel_id) if channel_id else None)
+            optimization = repository.create_retail_media_optimization(campaign_id, update_date, update_text, actor_user_id=actor.id if actor else None, channel_id=channel_id, optimization_type=self._clean_optional_text(kwargs.get("optimization_type")))
+            repository.append_event(event_type="retail_media_optimization_created", entity_type="retail_media_optimization", entity_id=optimization.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} added optimization update {optimization.update_text}.")
+            return optimization
+
+        return self._transaction(operation)
+
+    def list_retail_media_optimizations(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[RetailMediaOptimizationRecord]:
+        campaign = self.get_retail_media_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_retail_media_optimizations(campaign.id, include_inactive=include_inactive)
+
+    def update_retail_media_optimization(self, actor: CampaignOpsUser | None, campaign_id: str, optimization_id: str, **kwargs: Any) -> RetailMediaOptimizationRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaOptimizationRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            before = next((item for item in repository.list_retail_media_optimizations(campaign_id, include_inactive=True) if item.id == optimization_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Retail Media optimization update was not found.")
+            channel_id = kwargs.get("channel_id") if "channel_id" in kwargs else before.channel_id
+            self._validate_retail_media_channel_link(repository, campaign_id, str(channel_id) if channel_id else None)
+            payload = {
+                "channel_id": str(channel_id) if channel_id else None,
+                "update_date": kwargs.get("update_date") if "update_date" in kwargs else before.update_date,
+                "update_text": require_text(kwargs.get("update_text") or before.update_text, "Optimization update"),
+                "optimization_type": self._clean_optional_text(kwargs.get("optimization_type") if "optimization_type" in kwargs else before.optimization_type),
+            }
+            changes = {field: value for field, value in payload.items() if getattr(before, field) != value}
+            if not changes:
+                return before
+            updated = repository.update_retail_media_optimization(optimization_id, **payload)
+            repository.append_event(event_type="retail_media_optimization_updated", entity_type="retail_media_optimization", entity_id=optimization_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} updated optimization update {updated.update_text}.")
+            return updated
+
+        return self._transaction(operation)
+
+    def deactivate_retail_media_optimization(self, actor: CampaignOpsUser | None, campaign_id: str, optimization_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            repository.deactivate_retail_media_optimization(optimization_id)
+            repository.append_event(event_type="retail_media_optimization_deactivated", entity_type="retail_media_optimization", entity_id=optimization_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} deactivated a Retail Media optimization update.")
+
+        self._transaction(operation)
+
+    def reactivate_retail_media_optimization(self, actor: CampaignOpsUser | None, campaign_id: str, optimization_id: str) -> RetailMediaOptimizationRecord:
+        def operation(repository: CampaignOpsRepository) -> RetailMediaOptimizationRecord:
+            campaign = self._require_retail_media_campaign(repository, campaign_id)
+            self._validate_retail_media_access(repository, actor, campaign.program_id)
+            optimization = repository.reactivate_retail_media_optimization(optimization_id)
+            repository.append_event(event_type="retail_media_optimization_reactivated", entity_type="retail_media_optimization", entity_id=optimization_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._retail_media_actor_label(actor)} reactivated Retail Media optimization update {optimization.update_text}.")
+            return optimization
+
+        return self._transaction(operation)
+
+    def retail_media_budget_summary(self, campaign: RetailMediaCampaignDetail, channels: list[RetailMediaChannelRecord]) -> dict[str, float | bool | None]:
+        budget = campaign.overall_budget
+        spend = campaign.total_spend if campaign.total_spend is not None else sum(channel.spend_to_date or 0 for channel in channels)
+        remaining = None if budget is None else budget - (spend or 0)
+        percentage = None if not budget else ((spend or 0) / budget) * 100
+        return {
+            "budget": budget,
+            "spend": spend,
+            "remaining": remaining,
+            "spend_percentage": percentage,
+            "over_budget": bool(budget is not None and (spend or 0) > budget),
+            "channel_budget_total": sum(channel.budget or 0 for channel in channels),
+            "channel_spend_total": sum(channel.spend_to_date or 0 for channel in channels),
+        }
 
     def create_resource(
         self,

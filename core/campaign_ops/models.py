@@ -532,3 +532,148 @@ class InsightsObjectiveRecord:
 
     def __post_init__(self) -> None:
         self.objective_text = require_text(self.objective_text, "objective_text")
+
+
+@dataclass(slots=True)
+class RetailMediaCampaignRecord:
+    id: str
+    program_id: str
+    campaign_title: str
+    workstream_id: str | None = None
+    retail_media_status: str | None = None
+    latest_update: str | None = None
+    waiting_on: str | None = None
+    owner_user_id: str | None = None
+    launch_date: date | None = None
+    wrap_date: date | None = None
+    reporting_cadence: str | None = None
+    overall_budget: float | None = None
+    total_spend: float | None = None
+    is_paused: bool = False
+    pause_reason: str | None = None
+    is_active: bool = True
+    created_by_user_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.campaign_title = require_text(self.campaign_title, "campaign_title")
+
+
+@dataclass(slots=True)
+class RetailMediaPortfolioRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    workstream_id: str | None
+    campaign_title: str
+    retail_media_status: str | None
+    latest_update: str | None
+    waiting_on: str | None
+    owner_user_id: str | None
+    owner_display_name: str | None
+    launch_date: date | None
+    wrap_date: date | None
+    reporting_cadence: str | None
+    overall_budget: float | None
+    total_spend: float | None
+    channel_budget_total: float | None
+    channel_spend_total: float | None
+    channel_mix: list[str]
+    program_status: str
+    program_risk: str
+    next_milestone: str | None
+    next_milestone_date: date | None
+    tracksheet_url: str | None
+    budget_tracker_url: str | None
+    optimization_log_url: str | None
+    is_paused: bool
+    pause_reason: str | None
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+RetailMediaCampaignDetail = RetailMediaPortfolioRow
+
+
+@dataclass(slots=True)
+class RetailMediaChannelRecord:
+    id: str
+    retail_media_campaign_id: str
+    channel_type: str
+    platform_name: str | None = None
+    status: str | None = None
+    budget: float | None = None
+    spend_to_date: float | None = None
+    launch_date: date | None = None
+    end_date: date | None = None
+    reporting_requirement: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.channel_type = require_text(self.channel_type, "channel_type")
+
+
+@dataclass(slots=True)
+class RetailMediaActivationRecord:
+    id: str
+    retail_media_campaign_id: str
+    activation_name: str
+    channel_id: str | None = None
+    activation_type: str | None = None
+    status: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    hard_deadline: bool = False
+    waiting_on: str | None = None
+    latest_update: str | None = None
+    completed_at: datetime | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.activation_name = require_text(self.activation_name, "activation_name")
+
+
+@dataclass(slots=True)
+class RetailMediaCreativeRecord:
+    id: str
+    retail_media_campaign_id: str
+    creative_name: str
+    channel_id: str | None = None
+    creative_type: str | None = None
+    approval_status: str | None = None
+    submission_status: str | None = None
+    platform_status: str | None = None
+    due_date: date | None = None
+    submitted_date: date | None = None
+    approved_date: date | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.creative_name = require_text(self.creative_name, "creative_name")
+
+
+@dataclass(slots=True)
+class RetailMediaOptimizationRecord:
+    id: str
+    retail_media_campaign_id: str
+    update_date: date
+    update_text: str
+    channel_id: str | None = None
+    optimization_type: str | None = None
+    created_by_user_id: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.update_text = require_text(self.update_text, "update_text")

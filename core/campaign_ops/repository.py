@@ -40,6 +40,12 @@ from core.campaign_ops.models import (
     ProgramNote,
     ReportingRequestListRow,
     ReportingRequestRecord,
+    RetailMediaActivationRecord,
+    RetailMediaCampaignRecord,
+    RetailMediaChannelRecord,
+    RetailMediaCreativeRecord,
+    RetailMediaOptimizationRecord,
+    RetailMediaPortfolioRow,
     Resource,
     ResourceListRow,
     Task,
@@ -2254,6 +2260,471 @@ class CampaignOpsRepository:
             (objective_id,),
             InsightsObjectiveRecord,
         )
+
+    def create_retail_media_campaign(self, actor_user_id: str | None = None, **kwargs: Any) -> RetailMediaCampaignRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_retail_media_campaigns (
+                program_id, workstream_id, campaign_title, retail_media_status,
+                latest_update, waiting_on, owner_user_id, launch_date, wrap_date,
+                reporting_cadence, overall_budget, total_spend, is_paused,
+                pause_reason, created_by_user_id
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                kwargs["program_id"],
+                kwargs.get("workstream_id"),
+                require_text(kwargs.get("campaign_title"), "campaign_title"),
+                kwargs.get("retail_media_status"),
+                kwargs.get("latest_update"),
+                kwargs.get("waiting_on"),
+                kwargs.get("owner_user_id"),
+                kwargs.get("launch_date"),
+                kwargs.get("wrap_date"),
+                kwargs.get("reporting_cadence"),
+                kwargs.get("overall_budget"),
+                kwargs.get("total_spend"),
+                bool(kwargs.get("is_paused", False)),
+                kwargs.get("pause_reason"),
+                actor_user_id,
+            ),
+            RetailMediaCampaignRecord,
+        )
+
+    def get_retail_media_campaign(self, campaign_id: str) -> RetailMediaCampaignRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_retail_media_campaigns where id = %s",
+            (campaign_id,),
+            RetailMediaCampaignRecord,
+        )
+
+    def get_active_retail_media_campaign_by_title(
+        self,
+        program_id: str,
+        campaign_title: str,
+    ) -> RetailMediaCampaignRecord | None:
+        return self._fetch_one(
+            """
+            select * from campaign_ops_retail_media_campaigns
+            where program_id = %s and lower(campaign_title) = lower(%s) and is_active = true
+            """,
+            (program_id, campaign_title),
+            RetailMediaCampaignRecord,
+        )
+
+    def update_retail_media_campaign(self, campaign_id: str, **kwargs: Any) -> RetailMediaCampaignRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_retail_media_campaigns
+            set
+                workstream_id = %s,
+                campaign_title = %s,
+                retail_media_status = %s,
+                latest_update = %s,
+                waiting_on = %s,
+                owner_user_id = %s,
+                launch_date = %s,
+                wrap_date = %s,
+                reporting_cadence = %s,
+                overall_budget = %s,
+                total_spend = %s,
+                is_paused = %s,
+                pause_reason = %s
+            where id = %s
+            returning *
+            """,
+            (
+                kwargs.get("workstream_id"),
+                require_text(kwargs.get("campaign_title"), "campaign_title"),
+                kwargs.get("retail_media_status"),
+                kwargs.get("latest_update"),
+                kwargs.get("waiting_on"),
+                kwargs.get("owner_user_id"),
+                kwargs.get("launch_date"),
+                kwargs.get("wrap_date"),
+                kwargs.get("reporting_cadence"),
+                kwargs.get("overall_budget"),
+                kwargs.get("total_spend"),
+                bool(kwargs.get("is_paused", False)),
+                kwargs.get("pause_reason"),
+                campaign_id,
+            ),
+            RetailMediaCampaignRecord,
+        )
+
+    def deactivate_retail_media_campaign(self, campaign_id: str) -> None:
+        self._execute(
+            "update campaign_ops_retail_media_campaigns set is_active = false where id = %s and is_active = true",
+            (campaign_id,),
+        )
+
+    def reactivate_retail_media_campaign(self, campaign_id: str) -> RetailMediaCampaignRecord:
+        return self._write_returning(
+            "update campaign_ops_retail_media_campaigns set is_active = true where id = %s and is_active = false returning *",
+            (campaign_id,),
+            RetailMediaCampaignRecord,
+        )
+
+    def _retail_media_portfolio_row_from_db(self, row: dict[str, Any]) -> RetailMediaPortfolioRow:
+        normalized = normalize_row(row)
+        return RetailMediaPortfolioRow(
+            id=str(normalized["id"]),
+            program_id=str(normalized["program_id"]),
+            program_name=str(normalized["program_name"]),
+            client_name=normalized.get("client_name"),
+            workstream_id=normalize_id(normalized.get("workstream_id")),
+            campaign_title=str(normalized["campaign_title"]),
+            retail_media_status=normalized.get("retail_media_status"),
+            latest_update=normalized.get("latest_update"),
+            waiting_on=normalized.get("waiting_on"),
+            owner_user_id=normalize_id(normalized.get("owner_user_id")),
+            owner_display_name=normalized.get("owner_display_name"),
+            launch_date=normalized.get("launch_date"),
+            wrap_date=normalized.get("wrap_date"),
+            reporting_cadence=normalized.get("reporting_cadence"),
+            overall_budget=normalized.get("overall_budget"),
+            total_spend=normalized.get("total_spend"),
+            channel_budget_total=normalized.get("channel_budget_total"),
+            channel_spend_total=normalized.get("channel_spend_total"),
+            channel_mix=normalize_optional_list(normalized.get("channel_mix")),
+            program_status=str(normalized["program_status"]),
+            program_risk=str(normalized["program_risk"]),
+            next_milestone=normalized.get("next_milestone"),
+            next_milestone_date=normalized.get("next_milestone_date"),
+            tracksheet_url=normalized.get("tracksheet_url"),
+            budget_tracker_url=normalized.get("budget_tracker_url"),
+            optimization_log_url=normalized.get("optimization_log_url"),
+            is_paused=bool(normalized.get("is_paused", False)),
+            pause_reason=normalized.get("pause_reason"),
+            is_active=bool(normalized.get("is_active", True)),
+            created_at=normalized.get("created_at"),
+            updated_at=normalized.get("updated_at"),
+        )
+
+    def list_retail_media_campaigns(self, include_inactive: bool = False) -> list[RetailMediaPortfolioRow]:
+        clauses = [] if include_inactive else ["rm.is_active = true"]
+        where_clause = "where " + " and ".join(clauses) if clauses else ""
+        query = f"""
+            with channel_agg as (
+                select
+                    retail_media_campaign_id,
+                    array_agg(channel_type order by channel_type) filter (where is_active = true) as channel_mix,
+                    sum(budget) filter (where is_active = true) as channel_budget_total,
+                    sum(spend_to_date) filter (where is_active = true) as channel_spend_total
+                from campaign_ops_retail_media_channels
+                group by retail_media_campaign_id
+            ),
+            next_milestone as (
+                select distinct on (m.program_id)
+                    m.program_id,
+                    m.title,
+                    coalesce(m.target_date, m.start_date, m.end_date) as milestone_date
+                from campaign_ops_milestones m
+                where m.is_active = true and m.status <> %s
+                order by m.program_id, coalesce(m.target_date, m.start_date, m.end_date) asc nulls last, m.created_at asc
+            ),
+            resource_agg as (
+                select
+                    program_id,
+                    max(url) filter (where resource_type in ('Tracksheet', 'Program Tracksheet') and is_active = true) as tracksheet_url,
+                    max(url) filter (where resource_type = 'Budget Tracker' and is_active = true) as budget_tracker_url,
+                    max(url) filter (where resource_type = 'Optimization Log' and is_active = true) as optimization_log_url
+                from campaign_ops_resources
+                group by program_id
+            )
+            select
+                rm.*,
+                p.program_name,
+                p.status as program_status,
+                p.risk_level as program_risk,
+                c.name as client_name,
+                u.display_name as owner_display_name,
+                ca.channel_mix,
+                ca.channel_budget_total,
+                ca.channel_spend_total,
+                nm.title as next_milestone,
+                nm.milestone_date as next_milestone_date,
+                ra.tracksheet_url,
+                ra.budget_tracker_url,
+                ra.optimization_log_url
+            from campaign_ops_retail_media_campaigns rm
+            join campaign_ops_programs p on p.id = rm.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_users u on u.id = rm.owner_user_id
+            left join channel_agg ca on ca.retail_media_campaign_id = rm.id
+            left join next_milestone nm on nm.program_id = rm.program_id
+            left join resource_agg ra on ra.program_id = rm.program_id
+            {where_clause}
+            order by rm.updated_at desc, rm.campaign_title asc
+        """
+        return [
+            self._retail_media_portfolio_row_from_db(row)
+            for row in self._fetch_raw_all(query, (TaskStatus.COMPLETED.value,))
+        ]
+
+    def get_retail_media_campaign_detail(self, campaign_id: str) -> RetailMediaPortfolioRow | None:
+        return next((row for row in self.list_retail_media_campaigns(include_inactive=True) if row.id == campaign_id), None)
+
+    def create_retail_media_channel(self, retail_media_campaign_id: str, channel_type: str, **kwargs: Any) -> RetailMediaChannelRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_retail_media_channels (
+                retail_media_campaign_id, channel_type, platform_name, status,
+                budget, spend_to_date, launch_date, end_date, reporting_requirement
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                retail_media_campaign_id,
+                require_text(channel_type, "channel_type"),
+                kwargs.get("platform_name"),
+                kwargs.get("status"),
+                kwargs.get("budget"),
+                kwargs.get("spend_to_date"),
+                kwargs.get("launch_date"),
+                kwargs.get("end_date"),
+                kwargs.get("reporting_requirement"),
+            ),
+            RetailMediaChannelRecord,
+        )
+
+    def list_retail_media_channels(self, retail_media_campaign_id: str, include_inactive: bool = False) -> list[RetailMediaChannelRecord]:
+        clauses = ["retail_media_campaign_id = %s"]
+        params: list[Any] = [retail_media_campaign_id]
+        if not include_inactive:
+            clauses.append("is_active = true")
+        return self._fetch_all(
+            f"select * from campaign_ops_retail_media_channels where {' and '.join(clauses)} order by channel_type asc, created_at asc",
+            tuple(params),
+            RetailMediaChannelRecord,
+        )
+
+    def update_retail_media_channel(self, channel_id: str, **kwargs: Any) -> RetailMediaChannelRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_retail_media_channels
+            set channel_type = %s, platform_name = %s, status = %s, budget = %s,
+                spend_to_date = %s, launch_date = %s, end_date = %s, reporting_requirement = %s
+            where id = %s
+            returning *
+            """,
+            (
+                require_text(kwargs.get("channel_type"), "channel_type"),
+                kwargs.get("platform_name"),
+                kwargs.get("status"),
+                kwargs.get("budget"),
+                kwargs.get("spend_to_date"),
+                kwargs.get("launch_date"),
+                kwargs.get("end_date"),
+                kwargs.get("reporting_requirement"),
+                channel_id,
+            ),
+            RetailMediaChannelRecord,
+        )
+
+    def deactivate_retail_media_channel(self, channel_id: str) -> None:
+        self._execute("update campaign_ops_retail_media_channels set is_active = false where id = %s and is_active = true", (channel_id,))
+
+    def reactivate_retail_media_channel(self, channel_id: str) -> RetailMediaChannelRecord:
+        return self._write_returning("update campaign_ops_retail_media_channels set is_active = true where id = %s and is_active = false returning *", (channel_id,), RetailMediaChannelRecord)
+
+    def create_retail_media_activation(self, retail_media_campaign_id: str, activation_name: str, **kwargs: Any) -> RetailMediaActivationRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_retail_media_activations (
+                retail_media_campaign_id, channel_id, activation_name, activation_type,
+                status, start_date, end_date, hard_deadline, waiting_on, latest_update, completed_at
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                retail_media_campaign_id,
+                kwargs.get("channel_id"),
+                require_text(activation_name, "activation_name"),
+                kwargs.get("activation_type"),
+                kwargs.get("status"),
+                kwargs.get("start_date"),
+                kwargs.get("end_date"),
+                bool(kwargs.get("hard_deadline", False)),
+                kwargs.get("waiting_on"),
+                kwargs.get("latest_update"),
+                kwargs.get("completed_at"),
+            ),
+            RetailMediaActivationRecord,
+        )
+
+    def list_retail_media_activations(self, retail_media_campaign_id: str, include_inactive: bool = False) -> list[RetailMediaActivationRecord]:
+        clauses = ["retail_media_campaign_id = %s"]
+        params: list[Any] = [retail_media_campaign_id]
+        if not include_inactive:
+            clauses.append("is_active = true")
+        return self._fetch_all(
+            f"select * from campaign_ops_retail_media_activations where {' and '.join(clauses)} order by coalesce(start_date, end_date) asc nulls last, created_at asc",
+            tuple(params),
+            RetailMediaActivationRecord,
+        )
+
+    def update_retail_media_activation(self, activation_id: str, **kwargs: Any) -> RetailMediaActivationRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_retail_media_activations
+            set channel_id = %s, activation_name = %s, activation_type = %s, status = %s,
+                start_date = %s, end_date = %s, hard_deadline = %s, waiting_on = %s,
+                latest_update = %s, completed_at = %s
+            where id = %s
+            returning *
+            """,
+            (
+                kwargs.get("channel_id"),
+                require_text(kwargs.get("activation_name"), "activation_name"),
+                kwargs.get("activation_type"),
+                kwargs.get("status"),
+                kwargs.get("start_date"),
+                kwargs.get("end_date"),
+                bool(kwargs.get("hard_deadline", False)),
+                kwargs.get("waiting_on"),
+                kwargs.get("latest_update"),
+                kwargs.get("completed_at"),
+                activation_id,
+            ),
+            RetailMediaActivationRecord,
+        )
+
+    def deactivate_retail_media_activation(self, activation_id: str) -> None:
+        self._execute("update campaign_ops_retail_media_activations set is_active = false where id = %s and is_active = true", (activation_id,))
+
+    def reactivate_retail_media_activation(self, activation_id: str) -> RetailMediaActivationRecord:
+        return self._write_returning("update campaign_ops_retail_media_activations set is_active = true where id = %s and is_active = false returning *", (activation_id,), RetailMediaActivationRecord)
+
+    def create_retail_media_creative(self, retail_media_campaign_id: str, creative_name: str, **kwargs: Any) -> RetailMediaCreativeRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_retail_media_creative_items (
+                retail_media_campaign_id, channel_id, creative_name, creative_type,
+                approval_status, submission_status, platform_status, due_date,
+                submitted_date, approved_date, notes
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                retail_media_campaign_id,
+                kwargs.get("channel_id"),
+                require_text(creative_name, "creative_name"),
+                kwargs.get("creative_type"),
+                kwargs.get("approval_status"),
+                kwargs.get("submission_status"),
+                kwargs.get("platform_status"),
+                kwargs.get("due_date"),
+                kwargs.get("submitted_date"),
+                kwargs.get("approved_date"),
+                kwargs.get("notes"),
+            ),
+            RetailMediaCreativeRecord,
+        )
+
+    def list_retail_media_creative(self, retail_media_campaign_id: str, include_inactive: bool = False) -> list[RetailMediaCreativeRecord]:
+        clauses = ["retail_media_campaign_id = %s"]
+        params: list[Any] = [retail_media_campaign_id]
+        if not include_inactive:
+            clauses.append("is_active = true")
+        return self._fetch_all(
+            f"select * from campaign_ops_retail_media_creative_items where {' and '.join(clauses)} order by due_date asc nulls last, created_at asc",
+            tuple(params),
+            RetailMediaCreativeRecord,
+        )
+
+    def update_retail_media_creative(self, creative_id: str, **kwargs: Any) -> RetailMediaCreativeRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_retail_media_creative_items
+            set channel_id = %s, creative_name = %s, creative_type = %s,
+                approval_status = %s, submission_status = %s, platform_status = %s,
+                due_date = %s, submitted_date = %s, approved_date = %s, notes = %s
+            where id = %s
+            returning *
+            """,
+            (
+                kwargs.get("channel_id"),
+                require_text(kwargs.get("creative_name"), "creative_name"),
+                kwargs.get("creative_type"),
+                kwargs.get("approval_status"),
+                kwargs.get("submission_status"),
+                kwargs.get("platform_status"),
+                kwargs.get("due_date"),
+                kwargs.get("submitted_date"),
+                kwargs.get("approved_date"),
+                kwargs.get("notes"),
+                creative_id,
+            ),
+            RetailMediaCreativeRecord,
+        )
+
+    def deactivate_retail_media_creative(self, creative_id: str) -> None:
+        self._execute("update campaign_ops_retail_media_creative_items set is_active = false where id = %s and is_active = true", (creative_id,))
+
+    def reactivate_retail_media_creative(self, creative_id: str) -> RetailMediaCreativeRecord:
+        return self._write_returning("update campaign_ops_retail_media_creative_items set is_active = true where id = %s and is_active = false returning *", (creative_id,), RetailMediaCreativeRecord)
+
+    def create_retail_media_optimization(self, retail_media_campaign_id: str, update_date: Any, update_text: str, actor_user_id: str | None = None, **kwargs: Any) -> RetailMediaOptimizationRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_retail_media_optimization_updates (
+                retail_media_campaign_id, channel_id, update_date, update_text,
+                optimization_type, created_by_user_id
+            )
+            values (%s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                retail_media_campaign_id,
+                kwargs.get("channel_id"),
+                update_date,
+                require_text(update_text, "update_text"),
+                kwargs.get("optimization_type"),
+                actor_user_id,
+            ),
+            RetailMediaOptimizationRecord,
+        )
+
+    def list_retail_media_optimizations(self, retail_media_campaign_id: str, include_inactive: bool = False) -> list[RetailMediaOptimizationRecord]:
+        clauses = ["retail_media_campaign_id = %s"]
+        params: list[Any] = [retail_media_campaign_id]
+        if not include_inactive:
+            clauses.append("is_active = true")
+        return self._fetch_all(
+            f"select * from campaign_ops_retail_media_optimization_updates where {' and '.join(clauses)} order by update_date desc, created_at desc",
+            tuple(params),
+            RetailMediaOptimizationRecord,
+        )
+
+    def update_retail_media_optimization(self, optimization_id: str, **kwargs: Any) -> RetailMediaOptimizationRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_retail_media_optimization_updates
+            set channel_id = %s, update_date = %s, update_text = %s, optimization_type = %s
+            where id = %s
+            returning *
+            """,
+            (
+                kwargs.get("channel_id"),
+                kwargs.get("update_date"),
+                require_text(kwargs.get("update_text"), "update_text"),
+                kwargs.get("optimization_type"),
+                optimization_id,
+            ),
+            RetailMediaOptimizationRecord,
+        )
+
+    def deactivate_retail_media_optimization(self, optimization_id: str) -> None:
+        self._execute("update campaign_ops_retail_media_optimization_updates set is_active = false where id = %s and is_active = true", (optimization_id,))
+
+    def reactivate_retail_media_optimization(self, optimization_id: str) -> RetailMediaOptimizationRecord:
+        return self._write_returning("update campaign_ops_retail_media_optimization_updates set is_active = true where id = %s and is_active = false returning *", (optimization_id,), RetailMediaOptimizationRecord)
 
     def append_event(
         self,

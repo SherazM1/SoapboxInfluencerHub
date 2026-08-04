@@ -69,6 +69,16 @@ SESSION_KEYS = {
     "campaign_ops_insights_timeline_edit_id",
     "campaign_ops_insights_objective_edit_id",
     "campaign_ops_insights_show_inactive",
+    "campaign_ops_retail_media_view",
+    "campaign_ops_selected_retail_media_campaign_id",
+    "campaign_ops_retail_media_filters",
+    "campaign_ops_retail_media_create_open",
+    "campaign_ops_retail_media_edit_open",
+    "campaign_ops_retail_media_channel_edit_id",
+    "campaign_ops_retail_media_activation_edit_id",
+    "campaign_ops_retail_media_creative_edit_id",
+    "campaign_ops_retail_media_optimization_edit_id",
+    "campaign_ops_retail_media_show_inactive",
 }
 
 
