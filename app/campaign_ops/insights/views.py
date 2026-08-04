@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 import streamlit as st
@@ -20,8 +21,11 @@ from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.enums import RiskLevel, TaskStatus, WorkstreamType
 from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.insights import INSIGHTS_RESOURCE_TYPES, INSIGHTS_STATUSES, INSIGHTS_STATUS_NOT_STARTED
-from core.campaign_ops.models import CampaignOpsUser, InsightsPortfolioRow, MilestoneListRow
+from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.service import CampaignOpsService
+
+if TYPE_CHECKING:
+    from core.campaign_ops.models import InsightsPortfolioRow
 
 SORT_OPTIONS = {
     "Recently updated": "updated_at",
