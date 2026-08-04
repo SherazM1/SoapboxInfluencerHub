@@ -79,6 +79,18 @@ SESSION_KEYS = {
     "campaign_ops_retail_media_creative_edit_id",
     "campaign_ops_retail_media_optimization_edit_id",
     "campaign_ops_retail_media_show_inactive",
+    "campaign_ops_content_view",
+    "campaign_ops_selected_content_program_id",
+    "campaign_ops_content_filters",
+    "campaign_ops_content_create_open",
+    "campaign_ops_content_edit_open",
+    "campaign_ops_content_sku_group_edit_id",
+    "campaign_ops_content_sku_edit_id",
+    "campaign_ops_content_deliverable_edit_id",
+    "campaign_ops_content_submission_edit_id",
+    "campaign_ops_content_monitoring_edit_id",
+    "campaign_ops_content_invoice_edit_id",
+    "campaign_ops_content_show_inactive",
 }
 
 

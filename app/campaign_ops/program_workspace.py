@@ -567,6 +567,7 @@ def render_activity(summary: ProgramWorkspaceSummary) -> None:
             "Reporting Requests",
             "Insights",
             "Retail Media",
+            "Content Management",
             "Assignment changes",
             "Ownership changes",
             "Archive activity",
@@ -617,6 +618,8 @@ def activity_matches_filter(event_type: str, filter_label: str) -> bool:
         return event_type.startswith("insights_")
     if filter_label == "Retail Media":
         return event_type.startswith("retail_media_")
+    if filter_label == "Content Management":
+        return event_type.startswith("content_")
     if filter_label == "Ownership changes":
         return "owner" in event_type or "lead" in event_type
     if filter_label == "Archive activity":

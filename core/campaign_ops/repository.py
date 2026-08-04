@@ -28,6 +28,14 @@ from core.campaign_ops.models import (
     ActivityEvent,
     CampaignOpsUser,
     Client,
+    ContentDeliverableRecord,
+    ContentInvoiceCheckpointRecord,
+    ContentMonitoringUpdateRecord,
+    ContentPortfolioRow,
+    ContentProgramRecord,
+    ContentSkuGroupRecord,
+    ContentSkuRecord,
+    ContentSubmissionRecord,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectRecord,
@@ -2725,6 +2733,263 @@ class CampaignOpsRepository:
 
     def reactivate_retail_media_optimization(self, optimization_id: str) -> RetailMediaOptimizationRecord:
         return self._write_returning("update campaign_ops_retail_media_optimization_updates set is_active = true where id = %s and is_active = false returning *", (optimization_id,), RetailMediaOptimizationRecord)
+
+    def create_content_program(self, actor_user_id: str | None = None, **kwargs: Any) -> ContentProgramRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_content_programs (
+                program_id, workstream_id, content_program_title, content_status,
+                latest_update, waiting_on, owner_user_id, total_sku_count,
+                default_graphics_per_sku, monitoring_start_date, maintenance_end_date,
+                reporting_cadence, is_invoiced, invoice_status, created_by_user_id
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                kwargs["program_id"], kwargs.get("workstream_id"), require_text(kwargs.get("content_program_title"), "content_program_title"),
+                kwargs.get("content_status"), kwargs.get("latest_update"), kwargs.get("waiting_on"), kwargs.get("owner_user_id"),
+                kwargs.get("total_sku_count"), kwargs.get("default_graphics_per_sku"), kwargs.get("monitoring_start_date"),
+                kwargs.get("maintenance_end_date"), kwargs.get("reporting_cadence"), bool(kwargs.get("is_invoiced", False)),
+                kwargs.get("invoice_status"), actor_user_id,
+            ),
+            ContentProgramRecord,
+        )
+
+    def get_content_program(self, content_program_id: str) -> ContentProgramRecord | None:
+        return self._fetch_one("select * from campaign_ops_content_programs where id = %s", (content_program_id,), ContentProgramRecord)
+
+    def get_active_content_program_by_title(self, program_id: str, title: str) -> ContentProgramRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_content_programs where program_id = %s and lower(content_program_title) = lower(%s) and is_active = true",
+            (program_id, title),
+            ContentProgramRecord,
+        )
+
+    def update_content_program(self, content_program_id: str, **kwargs: Any) -> ContentProgramRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_content_programs
+            set workstream_id=%s, content_program_title=%s, content_status=%s,
+                latest_update=%s, waiting_on=%s, owner_user_id=%s,
+                total_sku_count=%s, default_graphics_per_sku=%s,
+                monitoring_start_date=%s, maintenance_end_date=%s,
+                reporting_cadence=%s, is_invoiced=%s, invoice_status=%s
+            where id = %s
+            returning *
+            """,
+            (
+                kwargs.get("workstream_id"), require_text(kwargs.get("content_program_title"), "content_program_title"),
+                kwargs.get("content_status"), kwargs.get("latest_update"), kwargs.get("waiting_on"), kwargs.get("owner_user_id"),
+                kwargs.get("total_sku_count"), kwargs.get("default_graphics_per_sku"), kwargs.get("monitoring_start_date"),
+                kwargs.get("maintenance_end_date"), kwargs.get("reporting_cadence"), bool(kwargs.get("is_invoiced", False)),
+                kwargs.get("invoice_status"), content_program_id,
+            ),
+            ContentProgramRecord,
+        )
+
+    def deactivate_content_program(self, content_program_id: str) -> None:
+        self._execute("update campaign_ops_content_programs set is_active = false where id = %s and is_active = true", (content_program_id,))
+
+    def reactivate_content_program(self, content_program_id: str) -> ContentProgramRecord:
+        return self._write_returning("update campaign_ops_content_programs set is_active = true where id = %s and is_active = false returning *", (content_program_id,), ContentProgramRecord)
+
+    def _content_portfolio_row_from_db(self, row: dict[str, Any]) -> ContentPortfolioRow:
+        normalized = normalize_row(row)
+        return ContentPortfolioRow(
+            id=str(normalized["id"]), program_id=str(normalized["program_id"]), program_name=str(normalized["program_name"]),
+            client_name=normalized.get("client_name"), workstream_id=normalize_id(normalized.get("workstream_id")),
+            content_program_title=str(normalized["content_program_title"]), content_status=normalized.get("content_status"),
+            latest_update=normalized.get("latest_update"), waiting_on=normalized.get("waiting_on"),
+            owner_user_id=normalize_id(normalized.get("owner_user_id")), owner_display_name=normalized.get("owner_display_name"),
+            total_sku_count=normalized.get("total_sku_count"), default_graphics_per_sku=normalized.get("default_graphics_per_sku"),
+            monitoring_start_date=normalized.get("monitoring_start_date"), maintenance_end_date=normalized.get("maintenance_end_date"),
+            reporting_cadence=normalized.get("reporting_cadence"), is_invoiced=bool(normalized.get("is_invoiced", False)),
+            invoice_status=normalized.get("invoice_status"), group_names=normalize_optional_list(normalized.get("group_names")),
+            group_expected_sku_total=normalized.get("group_expected_sku_total"), active_sku_count=int(normalized.get("active_sku_count") or 0),
+            delivered_count=int(normalized.get("delivered_count") or 0), live_count=int(normalized.get("live_count") or 0),
+            issue_count=int(normalized.get("issue_count") or 0), program_status=str(normalized["program_status"]),
+            program_risk=str(normalized["program_risk"]), next_milestone=normalized.get("next_milestone"),
+            next_milestone_date=normalized.get("next_milestone_date"), sku_list_url=normalized.get("sku_list_url"),
+            tracksheet_url=normalized.get("tracksheet_url"), creative_request_deck_url=normalized.get("creative_request_deck_url"),
+            pdp_request_deck_url=normalized.get("pdp_request_deck_url"), keyword_insights_url=normalized.get("keyword_insights_url"),
+            photography_url=normalized.get("photography_url"), is_active=bool(normalized.get("is_active", True)),
+            created_at=normalized.get("created_at"), updated_at=normalized.get("updated_at"),
+        )
+
+    def list_content_programs(self, include_inactive: bool = False) -> list[ContentPortfolioRow]:
+        where_clause = "" if include_inactive else "where cp.is_active = true"
+        query = f"""
+            with group_agg as (
+                select content_program_id, array_agg(group_name order by sort_order, group_name) filter (where is_active = true) as group_names,
+                       sum(expected_sku_count) filter (where is_active = true) as group_expected_sku_total
+                from campaign_ops_content_sku_groups group by content_program_id
+            ), sku_agg as (
+                select content_program_id,
+                       count(*) filter (where is_active = true) as active_sku_count,
+                       count(*) filter (where is_active = true and publication_status = 'live') as live_count,
+                       count(*) filter (where is_active = true and issue_status is not null and issue_status <> '') as issue_count
+                from campaign_ops_content_skus group by content_program_id
+            ), deliverable_agg as (
+                select content_program_id, count(*) filter (where is_active = true and status in ('delivered','approved','complete')) as delivered_count
+                from campaign_ops_content_deliverables group by content_program_id
+            ), next_milestone as (
+                select distinct on (m.program_id) m.program_id, m.title, coalesce(m.target_date, m.start_date, m.end_date) as milestone_date
+                from campaign_ops_milestones m where m.is_active = true and m.status <> %s
+                order by m.program_id, coalesce(m.target_date, m.start_date, m.end_date) asc nulls last, m.created_at asc
+            ), resource_agg as (
+                select program_id,
+                    max(url) filter (where resource_type = 'SKU List' and is_active = true) as sku_list_url,
+                    max(url) filter (where resource_type = 'Tracksheet' and is_active = true) as tracksheet_url,
+                    max(url) filter (where resource_type = 'Creative Request Deck' and is_active = true) as creative_request_deck_url,
+                    max(url) filter (where resource_type = 'PDP Request Deck' and is_active = true) as pdp_request_deck_url,
+                    max(url) filter (where resource_type = 'Keyword Insights' and is_active = true) as keyword_insights_url,
+                    max(url) filter (where resource_type = 'Photography Folder' and is_active = true) as photography_url
+                from campaign_ops_resources group by program_id
+            )
+            select cp.*, p.program_name, p.status as program_status, p.risk_level as program_risk, c.name as client_name,
+                   u.display_name as owner_display_name, ga.group_names, ga.group_expected_sku_total,
+                   coalesce(sa.active_sku_count, 0) as active_sku_count, coalesce(sa.live_count, 0) as live_count,
+                   coalesce(sa.issue_count, 0) as issue_count, coalesce(da.delivered_count, 0) as delivered_count,
+                   nm.title as next_milestone, nm.milestone_date as next_milestone_date,
+                   ra.sku_list_url, ra.tracksheet_url, ra.creative_request_deck_url, ra.pdp_request_deck_url,
+                   ra.keyword_insights_url, ra.photography_url
+            from campaign_ops_content_programs cp
+            join campaign_ops_programs p on p.id = cp.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_users u on u.id = cp.owner_user_id
+            left join group_agg ga on ga.content_program_id = cp.id
+            left join sku_agg sa on sa.content_program_id = cp.id
+            left join deliverable_agg da on da.content_program_id = cp.id
+            left join next_milestone nm on nm.program_id = cp.program_id
+            left join resource_agg ra on ra.program_id = cp.program_id
+            {where_clause}
+            order by cp.updated_at desc, cp.content_program_title asc
+        """
+        return [self._content_portfolio_row_from_db(row) for row in self._fetch_raw_all(query, (TaskStatus.COMPLETED.value,))]
+
+    def get_content_program_detail(self, content_program_id: str) -> ContentPortfolioRow | None:
+        return next((row for row in self.list_content_programs(include_inactive=True) if row.id == content_program_id), None)
+
+    def _create_content_child(self, table: str, model: type, fields: list[str], values: tuple[Any, ...]) -> Any:
+        columns = ", ".join(fields)
+        placeholders = ", ".join(["%s"] * len(fields))
+        return self._write_returning(f"insert into {table} ({columns}) values ({placeholders}) returning *", values, model)
+
+    def _update_content_child(self, table: str, model: type, record_id: str, fields: list[str], values: tuple[Any, ...]) -> Any:
+        assignments = ", ".join(f"{field} = %s" for field in fields)
+        return self._write_returning(f"update {table} set {assignments} where id = %s returning *", (*values, record_id), model)
+
+    def create_content_sku_group(self, content_program_id: str, group_name: str, **kwargs: Any) -> ContentSkuGroupRecord:
+        fields = ["content_program_id", "group_name", "brand_name", "expected_sku_count", "graphics_per_sku", "status", "latest_update", "waiting_on", "sort_order"]
+        return self._create_content_child("campaign_ops_content_sku_groups", ContentSkuGroupRecord, fields, (content_program_id, require_text(group_name, "group_name"), kwargs.get("brand_name"), kwargs.get("expected_sku_count"), kwargs.get("graphics_per_sku"), kwargs.get("status"), kwargs.get("latest_update"), kwargs.get("waiting_on"), kwargs.get("sort_order", 0)))
+
+    def list_content_sku_groups(self, content_program_id: str, include_inactive: bool = False) -> list[ContentSkuGroupRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_content_sku_groups where content_program_id = %s {clause} order by sort_order asc, group_name asc", (content_program_id,), ContentSkuGroupRecord)
+
+    def update_content_sku_group(self, group_id: str, **kwargs: Any) -> ContentSkuGroupRecord:
+        fields = ["group_name", "brand_name", "expected_sku_count", "graphics_per_sku", "status", "latest_update", "waiting_on", "sort_order"]
+        return self._update_content_child("campaign_ops_content_sku_groups", ContentSkuGroupRecord, group_id, fields, tuple(kwargs.get(f) for f in fields))
+
+    def deactivate_content_sku_group(self, group_id: str) -> None:
+        self._execute("update campaign_ops_content_sku_groups set is_active = false where id = %s and is_active = true", (group_id,))
+
+    def reactivate_content_sku_group(self, group_id: str) -> ContentSkuGroupRecord:
+        return self._write_returning("update campaign_ops_content_sku_groups set is_active = true where id = %s and is_active = false returning *", (group_id,), ContentSkuGroupRecord)
+
+    def create_content_sku(self, content_program_id: str, product_name: str, **kwargs: Any) -> ContentSkuRecord:
+        fields = ["content_program_id", "sku_group_id", "sku_code", "product_name", "retailer_sku", "upc", "variant", "content_status", "copy_status", "attribute_status", "graphics_status", "submission_status", "publication_status", "live_url", "last_checked_at", "issue_status", "waiting_on", "maintenance_required"]
+        return self._create_content_child("campaign_ops_content_skus", ContentSkuRecord, fields, (content_program_id, kwargs.get("sku_group_id"), kwargs.get("sku_code"), require_text(product_name, "product_name"), kwargs.get("retailer_sku"), kwargs.get("upc"), kwargs.get("variant"), kwargs.get("content_status"), kwargs.get("copy_status"), kwargs.get("attribute_status"), kwargs.get("graphics_status"), kwargs.get("submission_status"), kwargs.get("publication_status"), kwargs.get("live_url"), kwargs.get("last_checked_at"), kwargs.get("issue_status"), kwargs.get("waiting_on"), bool(kwargs.get("maintenance_required", False))))
+
+    def get_content_sku(self, sku_id: str) -> ContentSkuRecord | None:
+        return self._fetch_one("select * from campaign_ops_content_skus where id = %s", (sku_id,), ContentSkuRecord)
+
+    def list_content_skus(self, content_program_id: str, include_inactive: bool = False) -> list[ContentSkuRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_content_skus where content_program_id = %s {clause} order by product_name asc", (content_program_id,), ContentSkuRecord)
+
+    def update_content_sku(self, sku_id: str, **kwargs: Any) -> ContentSkuRecord:
+        fields = ["sku_group_id", "sku_code", "product_name", "retailer_sku", "upc", "variant", "content_status", "copy_status", "attribute_status", "graphics_status", "submission_status", "publication_status", "live_url", "last_checked_at", "issue_status", "waiting_on", "maintenance_required"]
+        return self._update_content_child("campaign_ops_content_skus", ContentSkuRecord, sku_id, fields, tuple(kwargs.get(f) for f in fields))
+
+    def deactivate_content_sku(self, sku_id: str) -> None:
+        self._execute("update campaign_ops_content_skus set is_active = false where id = %s and is_active = true", (sku_id,))
+
+    def reactivate_content_sku(self, sku_id: str) -> ContentSkuRecord:
+        return self._write_returning("update campaign_ops_content_skus set is_active = true where id = %s and is_active = false returning *", (sku_id,), ContentSkuRecord)
+
+    def create_content_deliverable(self, content_program_id: str, deliverable_name: str, **kwargs: Any) -> ContentDeliverableRecord:
+        fields = ["content_program_id", "sku_group_id", "sku_id", "deliverable_name", "deliverable_type", "status", "approval_status", "due_date", "delivered_date", "approved_date", "required_quantity", "completed_quantity", "waiting_on", "notes"]
+        return self._create_content_child("campaign_ops_content_deliverables", ContentDeliverableRecord, fields, (content_program_id, kwargs.get("sku_group_id"), kwargs.get("sku_id"), require_text(deliverable_name, "deliverable_name"), kwargs.get("deliverable_type"), kwargs.get("status"), kwargs.get("approval_status"), kwargs.get("due_date"), kwargs.get("delivered_date"), kwargs.get("approved_date"), kwargs.get("required_quantity"), kwargs.get("completed_quantity"), kwargs.get("waiting_on"), kwargs.get("notes")))
+
+    def list_content_deliverables(self, content_program_id: str, include_inactive: bool = False) -> list[ContentDeliverableRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_content_deliverables where content_program_id = %s {clause} order by due_date asc nulls last, created_at asc", (content_program_id,), ContentDeliverableRecord)
+
+    def update_content_deliverable(self, deliverable_id: str, **kwargs: Any) -> ContentDeliverableRecord:
+        fields = ["sku_group_id", "sku_id", "deliverable_name", "deliverable_type", "status", "approval_status", "due_date", "delivered_date", "approved_date", "required_quantity", "completed_quantity", "waiting_on", "notes"]
+        return self._update_content_child("campaign_ops_content_deliverables", ContentDeliverableRecord, deliverable_id, fields, tuple(kwargs.get(f) for f in fields))
+
+    def deactivate_content_deliverable(self, deliverable_id: str) -> None:
+        self._execute("update campaign_ops_content_deliverables set is_active = false where id = %s and is_active = true", (deliverable_id,))
+
+    def reactivate_content_deliverable(self, deliverable_id: str) -> ContentDeliverableRecord:
+        return self._write_returning("update campaign_ops_content_deliverables set is_active = true where id = %s and is_active = false returning *", (deliverable_id,), ContentDeliverableRecord)
+
+    def create_content_submission(self, content_program_id: str, **kwargs: Any) -> ContentSubmissionRecord:
+        fields = ["content_program_id", "sku_group_id", "sku_id", "retailer_or_platform", "submission_type", "status", "submitted_date", "approved_date", "published_date", "expected_live_date", "live_url", "issue_text", "waiting_on"]
+        return self._create_content_child("campaign_ops_content_submissions", ContentSubmissionRecord, fields, (content_program_id, kwargs.get("sku_group_id"), kwargs.get("sku_id"), kwargs.get("retailer_or_platform"), kwargs.get("submission_type"), kwargs.get("status"), kwargs.get("submitted_date"), kwargs.get("approved_date"), kwargs.get("published_date"), kwargs.get("expected_live_date"), kwargs.get("live_url"), kwargs.get("issue_text"), kwargs.get("waiting_on")))
+
+    def list_content_submissions(self, content_program_id: str, include_inactive: bool = False) -> list[ContentSubmissionRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_content_submissions where content_program_id = %s {clause} order by expected_live_date asc nulls last, created_at asc", (content_program_id,), ContentSubmissionRecord)
+
+    def update_content_submission(self, submission_id: str, **kwargs: Any) -> ContentSubmissionRecord:
+        fields = ["sku_group_id", "sku_id", "retailer_or_platform", "submission_type", "status", "submitted_date", "approved_date", "published_date", "expected_live_date", "live_url", "issue_text", "waiting_on"]
+        return self._update_content_child("campaign_ops_content_submissions", ContentSubmissionRecord, submission_id, fields, tuple(kwargs.get(f) for f in fields))
+
+    def deactivate_content_submission(self, submission_id: str) -> None:
+        self._execute("update campaign_ops_content_submissions set is_active = false where id = %s and is_active = true", (submission_id,))
+
+    def reactivate_content_submission(self, submission_id: str) -> ContentSubmissionRecord:
+        return self._write_returning("update campaign_ops_content_submissions set is_active = true where id = %s and is_active = false returning *", (submission_id,), ContentSubmissionRecord)
+
+    def create_content_monitoring_update(self, content_program_id: str, update_date: Any, update_text: str, actor_user_id: str | None = None, **kwargs: Any) -> ContentMonitoringUpdateRecord:
+        fields = ["content_program_id", "sku_group_id", "sku_id", "update_date", "update_type", "update_text", "live_review_count", "publication_state", "created_by_user_id"]
+        return self._create_content_child("campaign_ops_content_monitoring_updates", ContentMonitoringUpdateRecord, fields, (content_program_id, kwargs.get("sku_group_id"), kwargs.get("sku_id"), update_date, kwargs.get("update_type"), require_text(update_text, "update_text"), kwargs.get("live_review_count"), kwargs.get("publication_state"), actor_user_id))
+
+    def list_content_monitoring_updates(self, content_program_id: str, include_inactive: bool = False) -> list[ContentMonitoringUpdateRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_content_monitoring_updates where content_program_id = %s {clause} order by update_date desc, created_at desc", (content_program_id,), ContentMonitoringUpdateRecord)
+
+    def update_content_monitoring_update(self, update_id: str, **kwargs: Any) -> ContentMonitoringUpdateRecord:
+        fields = ["sku_group_id", "sku_id", "update_date", "update_type", "update_text", "live_review_count", "publication_state"]
+        return self._update_content_child("campaign_ops_content_monitoring_updates", ContentMonitoringUpdateRecord, update_id, fields, tuple(kwargs.get(f) for f in fields))
+
+    def deactivate_content_monitoring_update(self, update_id: str) -> None:
+        self._execute("update campaign_ops_content_monitoring_updates set is_active = false where id = %s and is_active = true", (update_id,))
+
+    def reactivate_content_monitoring_update(self, update_id: str) -> ContentMonitoringUpdateRecord:
+        return self._write_returning("update campaign_ops_content_monitoring_updates set is_active = true where id = %s and is_active = false returning *", (update_id,), ContentMonitoringUpdateRecord)
+
+    def create_content_invoice_checkpoint(self, content_program_id: str, checkpoint_name: str, **kwargs: Any) -> ContentInvoiceCheckpointRecord:
+        fields = ["content_program_id", "checkpoint_name", "invoice_date", "due_date", "status", "amount", "notes"]
+        return self._create_content_child("campaign_ops_content_invoice_checkpoints", ContentInvoiceCheckpointRecord, fields, (content_program_id, require_text(checkpoint_name, "checkpoint_name"), kwargs.get("invoice_date"), kwargs.get("due_date"), kwargs.get("status"), kwargs.get("amount"), kwargs.get("notes")))
+
+    def list_content_invoice_checkpoints(self, content_program_id: str, include_inactive: bool = False) -> list[ContentInvoiceCheckpointRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_content_invoice_checkpoints where content_program_id = %s {clause} order by coalesce(invoice_date, due_date) asc nulls last, created_at asc", (content_program_id,), ContentInvoiceCheckpointRecord)
+
+    def update_content_invoice_checkpoint(self, checkpoint_id: str, **kwargs: Any) -> ContentInvoiceCheckpointRecord:
+        fields = ["checkpoint_name", "invoice_date", "due_date", "status", "amount", "notes"]
+        return self._update_content_child("campaign_ops_content_invoice_checkpoints", ContentInvoiceCheckpointRecord, checkpoint_id, fields, tuple(kwargs.get(f) for f in fields))
+
+    def deactivate_content_invoice_checkpoint(self, checkpoint_id: str) -> None:
+        self._execute("update campaign_ops_content_invoice_checkpoints set is_active = false where id = %s and is_active = true", (checkpoint_id,))
+
+    def reactivate_content_invoice_checkpoint(self, checkpoint_id: str) -> ContentInvoiceCheckpointRecord:
+        return self._write_returning("update campaign_ops_content_invoice_checkpoints set is_active = true where id = %s and is_active = false returning *", (checkpoint_id,), ContentInvoiceCheckpointRecord)
 
     def append_event(
         self,

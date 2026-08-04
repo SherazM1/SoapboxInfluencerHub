@@ -677,3 +677,206 @@ class RetailMediaOptimizationRecord:
 
     def __post_init__(self) -> None:
         self.update_text = require_text(self.update_text, "update_text")
+
+
+@dataclass(slots=True)
+class ContentProgramRecord:
+    id: str
+    program_id: str
+    content_program_title: str
+    workstream_id: str | None = None
+    content_status: str | None = None
+    latest_update: str | None = None
+    waiting_on: str | None = None
+    owner_user_id: str | None = None
+    total_sku_count: int | None = None
+    default_graphics_per_sku: int | None = None
+    monitoring_start_date: date | None = None
+    maintenance_end_date: date | None = None
+    reporting_cadence: str | None = None
+    is_invoiced: bool = False
+    invoice_status: str | None = None
+    is_active: bool = True
+    created_by_user_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.content_program_title = require_text(self.content_program_title, "content_program_title")
+
+
+@dataclass(slots=True)
+class ContentPortfolioRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    workstream_id: str | None
+    content_program_title: str
+    content_status: str | None
+    latest_update: str | None
+    waiting_on: str | None
+    owner_user_id: str | None
+    owner_display_name: str | None
+    total_sku_count: int | None
+    default_graphics_per_sku: int | None
+    monitoring_start_date: date | None
+    maintenance_end_date: date | None
+    reporting_cadence: str | None
+    is_invoiced: bool
+    invoice_status: str | None
+    group_names: list[str]
+    group_expected_sku_total: int | None
+    active_sku_count: int
+    delivered_count: int
+    live_count: int
+    issue_count: int
+    program_status: str
+    program_risk: str
+    next_milestone: str | None
+    next_milestone_date: date | None
+    sku_list_url: str | None
+    tracksheet_url: str | None
+    creative_request_deck_url: str | None
+    pdp_request_deck_url: str | None
+    keyword_insights_url: str | None
+    photography_url: str | None
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+ContentProgramDetail = ContentPortfolioRow
+
+
+@dataclass(slots=True)
+class ContentSkuGroupRecord:
+    id: str
+    content_program_id: str
+    group_name: str
+    brand_name: str | None = None
+    expected_sku_count: int | None = None
+    graphics_per_sku: int | None = None
+    status: str | None = None
+    latest_update: str | None = None
+    waiting_on: str | None = None
+    sort_order: int = 0
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.group_name = require_text(self.group_name, "group_name")
+
+
+@dataclass(slots=True)
+class ContentSkuRecord:
+    id: str
+    content_program_id: str
+    product_name: str
+    sku_group_id: str | None = None
+    sku_code: str | None = None
+    retailer_sku: str | None = None
+    upc: str | None = None
+    variant: str | None = None
+    content_status: str | None = None
+    copy_status: str | None = None
+    attribute_status: str | None = None
+    graphics_status: str | None = None
+    submission_status: str | None = None
+    publication_status: str | None = None
+    live_url: str | None = None
+    last_checked_at: datetime | None = None
+    issue_status: str | None = None
+    waiting_on: str | None = None
+    maintenance_required: bool = False
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.product_name = require_text(self.product_name, "product_name")
+
+
+@dataclass(slots=True)
+class ContentDeliverableRecord:
+    id: str
+    content_program_id: str
+    deliverable_name: str
+    sku_group_id: str | None = None
+    sku_id: str | None = None
+    deliverable_type: str | None = None
+    status: str | None = None
+    approval_status: str | None = None
+    due_date: date | None = None
+    delivered_date: date | None = None
+    approved_date: date | None = None
+    required_quantity: int | None = None
+    completed_quantity: int | None = None
+    waiting_on: str | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.deliverable_name = require_text(self.deliverable_name, "deliverable_name")
+
+
+@dataclass(slots=True)
+class ContentSubmissionRecord:
+    id: str
+    content_program_id: str
+    sku_group_id: str | None = None
+    sku_id: str | None = None
+    retailer_or_platform: str | None = None
+    submission_type: str | None = None
+    status: str | None = None
+    submitted_date: date | None = None
+    approved_date: date | None = None
+    published_date: date | None = None
+    expected_live_date: date | None = None
+    live_url: str | None = None
+    issue_text: str | None = None
+    waiting_on: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class ContentMonitoringUpdateRecord:
+    id: str
+    content_program_id: str
+    update_date: date
+    update_text: str
+    sku_group_id: str | None = None
+    sku_id: str | None = None
+    update_type: str | None = None
+    live_review_count: int | None = None
+    publication_state: str | None = None
+    created_by_user_id: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.update_text = require_text(self.update_text, "update_text")
+
+
+@dataclass(slots=True)
+class ContentInvoiceCheckpointRecord:
+    id: str
+    content_program_id: str
+    checkpoint_name: str
+    invoice_date: date | None = None
+    due_date: date | None = None
+    status: str | None = None
+    amount: float | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.checkpoint_name = require_text(self.checkpoint_name, "checkpoint_name")

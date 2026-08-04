@@ -49,6 +49,14 @@ from core.campaign_ops.migrations import (
 from core.campaign_ops.models import (
     CampaignOpsUser,
     Client,
+    ContentDeliverableRecord,
+    ContentInvoiceCheckpointRecord,
+    ContentMonitoringUpdateRecord,
+    ContentPortfolioRow,
+    ContentProgramRecord,
+    ContentSkuGroupRecord,
+    ContentSkuRecord,
+    ContentSubmissionRecord,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectRecord,
@@ -82,6 +90,11 @@ from core.campaign_ops.permissions import (
 from core.campaign_ops.seed_data import get_seed_users
 from core.campaign_ops.service import CampaignOpsService
 from core.campaign_ops.repository import CampaignOpsRepository
+from core.campaign_ops.content_management import (
+    CONTENT_STATUS_CLIENT_REVIEW,
+    CONTENT_STATUS_LIVE,
+    CONTENT_STATUS_READY_TO_SUBMIT,
+)
 from core.campaign_ops.insights import INSIGHTS_STATUS_DRAFTING_SURVEY, INSIGHTS_STATUS_NOT_STARTED
 from core.campaign_ops.retail_media import RETAIL_MEDIA_STATUS_LIVE, RETAIL_MEDIA_STATUS_PLANNING
 from core.campaign_ops.reporting_requests import normalize_am_name
@@ -226,6 +239,13 @@ class FakePrompt4ARepository:
         self.retail_media_activations: list[RetailMediaActivationRecord] = []
         self.retail_media_creative: list[RetailMediaCreativeRecord] = []
         self.retail_media_optimizations: list[RetailMediaOptimizationRecord] = []
+        self.content_programs: list[ContentProgramRecord] = []
+        self.content_sku_groups: list[ContentSkuGroupRecord] = []
+        self.content_skus: list[ContentSkuRecord] = []
+        self.content_deliverables: list[ContentDeliverableRecord] = []
+        self.content_submissions: list[ContentSubmissionRecord] = []
+        self.content_monitoring_updates: list[ContentMonitoringUpdateRecord] = []
+        self.content_invoice_checkpoints: list[ContentInvoiceCheckpointRecord] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -947,6 +967,236 @@ class FakePrompt4ARepository:
 
     def reactivate_retail_media_optimization(self, optimization_id: str) -> RetailMediaOptimizationRecord:
         return self.update_retail_media_optimization(optimization_id, is_active=True)
+
+    def create_content_program(self, actor_user_id: str | None = None, **kwargs: object) -> ContentProgramRecord:
+        content = ContentProgramRecord(id=f"29292929-2929-4929-8929-{len(self.content_programs) + 1:012d}", created_by_user_id=actor_user_id, **kwargs)
+        self.content_programs.append(content)
+        return content
+
+    def get_content_program(self, content_program_id: str) -> ContentProgramRecord | None:
+        return next((item for item in self.content_programs if item.id == content_program_id), None)
+
+    def get_active_content_program_by_title(self, program_id: str, content_program_title: str) -> ContentProgramRecord | None:
+        return next((item for item in self.content_programs if item.program_id == program_id and item.is_active and item.content_program_title.lower() == content_program_title.lower()), None)
+
+    def update_content_program(self, content_program_id: str, **kwargs: object) -> ContentProgramRecord:
+        content = self.get_content_program(content_program_id)
+        if content is None:
+            raise CampaignOpsNotFoundError("Content Program was not found.")
+        for key, value in kwargs.items():
+            setattr(content, key, value)
+        content.updated_at = datetime.now(UTC)
+        return content
+
+    def deactivate_content_program(self, content_program_id: str) -> None:
+        self.update_content_program(content_program_id, is_active=False)
+
+    def reactivate_content_program(self, content_program_id: str) -> ContentProgramRecord:
+        return self.update_content_program(content_program_id, is_active=True)
+
+    def _content_portfolio_row(self, content: ContentProgramRecord) -> ContentPortfolioRow:
+        program = self.get_program(content.program_id)
+        client = self.get_client(program.client_id) if program and program.client_id else None
+        owner = self.get_user_by_id(content.owner_user_id) if content.owner_user_id else None
+        groups = [group for group in self.content_sku_groups if group.content_program_id == content.id and group.is_active]
+        skus = [sku for sku in self.content_skus if sku.content_program_id == content.id and sku.is_active]
+        deliverables = [item for item in self.content_deliverables if item.content_program_id == content.id and item.is_active]
+        milestones = [
+            milestone
+            for milestone in self.milestones
+            if milestone.program_id == content.program_id
+            and milestone.is_active
+            and milestone.status != TaskStatus.COMPLETED.value
+            and (milestone.workstream_id == content.workstream_id or milestone.milestone_type == "Content Management")
+        ]
+        milestones.sort(key=lambda item: item.target_date or item.start_date or date.max)
+        resources = [resource for resource in self.resources if resource.program_id == content.program_id and resource.is_active]
+
+        def resource_url(*types: str) -> str | None:
+            wanted = {item.lower() for item in types}
+            return next((resource.url for resource in resources if resource.url and resource.resource_type.lower() in wanted), None)
+
+        return ContentPortfolioRow(
+            id=content.id,
+            program_id=content.program_id,
+            program_name=program.program_name if program else "",
+            client_name=client.name if client else None,
+            workstream_id=content.workstream_id,
+            content_program_title=content.content_program_title,
+            content_status=content.content_status,
+            latest_update=content.latest_update,
+            waiting_on=content.waiting_on,
+            owner_user_id=content.owner_user_id,
+            owner_display_name=owner.display_name if owner else None,
+            total_sku_count=content.total_sku_count,
+            default_graphics_per_sku=content.default_graphics_per_sku,
+            monitoring_start_date=content.monitoring_start_date,
+            maintenance_end_date=content.maintenance_end_date,
+            reporting_cadence=content.reporting_cadence,
+            is_invoiced=content.is_invoiced,
+            invoice_status=content.invoice_status,
+            group_names=[group.group_name for group in groups],
+            group_expected_sku_total=sum(group.expected_sku_count or 0 for group in groups) or None,
+            active_sku_count=len(skus),
+            delivered_count=len([item for item in deliverables if item.status in {"delivered", "approved", "complete"}]),
+            live_count=len([sku for sku in skus if sku.publication_status == "live"]),
+            issue_count=len([sku for sku in skus if sku.issue_status]),
+            program_status=program.status if program else ProgramStatus.ACTIVE.value,
+            program_risk=program.risk_level if program else RiskLevel.UNRATED.value,
+            next_milestone=milestones[0].title if milestones else None,
+            next_milestone_date=(milestones[0].target_date or milestones[0].start_date) if milestones else None,
+            sku_list_url=resource_url("SKU List"),
+            tracksheet_url=resource_url("Tracksheet"),
+            creative_request_deck_url=resource_url("Creative Request Deck"),
+            pdp_request_deck_url=resource_url("PDP Request Deck"),
+            keyword_insights_url=resource_url("Keyword Insights"),
+            photography_url=resource_url("Photography Folder", "Photography"),
+            is_active=content.is_active,
+            created_at=content.created_at,
+            updated_at=content.updated_at,
+        )
+
+    def list_content_programs(self, include_inactive: bool = False) -> list[ContentPortfolioRow]:
+        return [self._content_portfolio_row(item) for item in self.content_programs if include_inactive or item.is_active]
+
+    def get_content_program_detail(self, content_program_id: str) -> ContentPortfolioRow | None:
+        content = self.get_content_program(content_program_id)
+        return self._content_portfolio_row(content) if content else None
+
+    def create_content_sku_group(self, content_program_id: str, group_name: str, **kwargs: object) -> ContentSkuGroupRecord:
+        group = ContentSkuGroupRecord(id=f"28282828-2828-4828-8828-{len(self.content_sku_groups) + 1:012d}", content_program_id=content_program_id, group_name=group_name, **kwargs)
+        self.content_sku_groups.append(group)
+        return group
+
+    def list_content_sku_groups(self, content_program_id: str, include_inactive: bool = False) -> list[ContentSkuGroupRecord]:
+        return sorted([item for item in self.content_sku_groups if item.content_program_id == content_program_id and (include_inactive or item.is_active)], key=lambda item: (item.sort_order, item.group_name))
+
+    def update_content_sku_group(self, group_id: str, **kwargs: object) -> ContentSkuGroupRecord:
+        group = next((item for item in self.content_sku_groups if item.id == group_id), None)
+        if group is None:
+            raise CampaignOpsNotFoundError("SKU Group was not found.")
+        for key, value in kwargs.items():
+            setattr(group, key, value)
+        return group
+
+    def deactivate_content_sku_group(self, group_id: str) -> None:
+        self.update_content_sku_group(group_id, is_active=False)
+
+    def reactivate_content_sku_group(self, group_id: str) -> ContentSkuGroupRecord:
+        return self.update_content_sku_group(group_id, is_active=True)
+
+    def create_content_sku(self, content_program_id: str, product_name: str, **kwargs: object) -> ContentSkuRecord:
+        sku = ContentSkuRecord(id=f"27272727-2727-4727-8727-{len(self.content_skus) + 1:012d}", content_program_id=content_program_id, product_name=product_name, **kwargs)
+        self.content_skus.append(sku)
+        return sku
+
+    def get_content_sku(self, sku_id: str) -> ContentSkuRecord | None:
+        return next((item for item in self.content_skus if item.id == sku_id), None)
+
+    def list_content_skus(self, content_program_id: str, include_inactive: bool = False) -> list[ContentSkuRecord]:
+        return [item for item in self.content_skus if item.content_program_id == content_program_id and (include_inactive or item.is_active)]
+
+    def update_content_sku(self, sku_id: str, **kwargs: object) -> ContentSkuRecord:
+        sku = self.get_content_sku(sku_id)
+        if sku is None:
+            raise CampaignOpsNotFoundError("SKU was not found.")
+        for key, value in kwargs.items():
+            setattr(sku, key, value)
+        return sku
+
+    def deactivate_content_sku(self, sku_id: str) -> None:
+        self.update_content_sku(sku_id, is_active=False)
+
+    def reactivate_content_sku(self, sku_id: str) -> ContentSkuRecord:
+        return self.update_content_sku(sku_id, is_active=True)
+
+    def create_content_deliverable(self, content_program_id: str, deliverable_name: str, **kwargs: object) -> ContentDeliverableRecord:
+        deliverable = ContentDeliverableRecord(id=f"26262626-2626-4626-8626-{len(self.content_deliverables) + 1:012d}", content_program_id=content_program_id, deliverable_name=deliverable_name, **kwargs)
+        self.content_deliverables.append(deliverable)
+        return deliverable
+
+    def list_content_deliverables(self, content_program_id: str, include_inactive: bool = False) -> list[ContentDeliverableRecord]:
+        return [item for item in self.content_deliverables if item.content_program_id == content_program_id and (include_inactive or item.is_active)]
+
+    def update_content_deliverable(self, deliverable_id: str, **kwargs: object) -> ContentDeliverableRecord:
+        deliverable = next((item for item in self.content_deliverables if item.id == deliverable_id), None)
+        if deliverable is None:
+            raise CampaignOpsNotFoundError("Deliverable was not found.")
+        for key, value in kwargs.items():
+            setattr(deliverable, key, value)
+        return deliverable
+
+    def deactivate_content_deliverable(self, deliverable_id: str) -> None:
+        self.update_content_deliverable(deliverable_id, is_active=False)
+
+    def reactivate_content_deliverable(self, deliverable_id: str) -> ContentDeliverableRecord:
+        return self.update_content_deliverable(deliverable_id, is_active=True)
+
+    def create_content_submission(self, content_program_id: str, **kwargs: object) -> ContentSubmissionRecord:
+        submission = ContentSubmissionRecord(id=f"25252525-2525-4525-8525-{len(self.content_submissions) + 1:012d}", content_program_id=content_program_id, **kwargs)
+        self.content_submissions.append(submission)
+        return submission
+
+    def list_content_submissions(self, content_program_id: str, include_inactive: bool = False) -> list[ContentSubmissionRecord]:
+        return [item for item in self.content_submissions if item.content_program_id == content_program_id and (include_inactive or item.is_active)]
+
+    def update_content_submission(self, submission_id: str, **kwargs: object) -> ContentSubmissionRecord:
+        submission = next((item for item in self.content_submissions if item.id == submission_id), None)
+        if submission is None:
+            raise CampaignOpsNotFoundError("Submission was not found.")
+        for key, value in kwargs.items():
+            setattr(submission, key, value)
+        return submission
+
+    def deactivate_content_submission(self, submission_id: str) -> None:
+        self.update_content_submission(submission_id, is_active=False)
+
+    def reactivate_content_submission(self, submission_id: str) -> ContentSubmissionRecord:
+        return self.update_content_submission(submission_id, is_active=True)
+
+    def create_content_monitoring_update(self, content_program_id: str, update_date: date, update_text: str, actor_user_id: str | None = None, **kwargs: object) -> ContentMonitoringUpdateRecord:
+        update = ContentMonitoringUpdateRecord(id=f"24242424-2424-4424-8424-{len(self.content_monitoring_updates) + 1:012d}", content_program_id=content_program_id, update_date=update_date, update_text=update_text, created_by_user_id=actor_user_id, **kwargs)
+        self.content_monitoring_updates.append(update)
+        return update
+
+    def list_content_monitoring_updates(self, content_program_id: str, include_inactive: bool = False) -> list[ContentMonitoringUpdateRecord]:
+        return sorted([item for item in self.content_monitoring_updates if item.content_program_id == content_program_id and (include_inactive or item.is_active)], key=lambda item: item.update_date, reverse=True)
+
+    def update_content_monitoring_update(self, update_id: str, **kwargs: object) -> ContentMonitoringUpdateRecord:
+        update = next((item for item in self.content_monitoring_updates if item.id == update_id), None)
+        if update is None:
+            raise CampaignOpsNotFoundError("Monitoring update was not found.")
+        for key, value in kwargs.items():
+            setattr(update, key, value)
+        return update
+
+    def deactivate_content_monitoring_update(self, update_id: str) -> None:
+        self.update_content_monitoring_update(update_id, is_active=False)
+
+    def reactivate_content_monitoring_update(self, update_id: str) -> ContentMonitoringUpdateRecord:
+        return self.update_content_monitoring_update(update_id, is_active=True)
+
+    def create_content_invoice_checkpoint(self, content_program_id: str, checkpoint_name: str, **kwargs: object) -> ContentInvoiceCheckpointRecord:
+        checkpoint = ContentInvoiceCheckpointRecord(id=f"23232323-2323-4323-8323-{len(self.content_invoice_checkpoints) + 1:012d}", content_program_id=content_program_id, checkpoint_name=checkpoint_name, **kwargs)
+        self.content_invoice_checkpoints.append(checkpoint)
+        return checkpoint
+
+    def list_content_invoice_checkpoints(self, content_program_id: str, include_inactive: bool = False) -> list[ContentInvoiceCheckpointRecord]:
+        return [item for item in self.content_invoice_checkpoints if item.content_program_id == content_program_id and (include_inactive or item.is_active)]
+
+    def update_content_invoice_checkpoint(self, checkpoint_id: str, **kwargs: object) -> ContentInvoiceCheckpointRecord:
+        checkpoint = next((item for item in self.content_invoice_checkpoints if item.id == checkpoint_id), None)
+        if checkpoint is None:
+            raise CampaignOpsNotFoundError("Invoice checkpoint was not found.")
+        for key, value in kwargs.items():
+            setattr(checkpoint, key, value)
+        return checkpoint
+
+    def deactivate_content_invoice_checkpoint(self, checkpoint_id: str) -> None:
+        self.update_content_invoice_checkpoint(checkpoint_id, is_active=False)
+
+    def reactivate_content_invoice_checkpoint(self, checkpoint_id: str) -> ContentInvoiceCheckpointRecord:
+        return self.update_content_invoice_checkpoint(checkpoint_id, is_active=True)
 
     def _task_list_row(self, task: Task) -> TaskListRow:
         program = self.get_program(task.program_id)
@@ -2713,6 +2963,199 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("retail_media_activation_created", event_types)
         self.assertIn("retail_media_creative_created", event_types)
         self.assertIn("retail_media_optimization_created", event_types)
+
+    def test_prompt7_content_program_validation_crud_and_activity(self) -> None:
+        repository, service, bailey, t_user, _l_user, program_id, _influencer, retail = self._prompt4c_fixture()
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_program(bailey, content_program_title="Missing program")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_program(bailey, program_id=program_id, content_program_title=" ")
+        with self.assertRaises(CampaignOpsNotFoundError):
+            service.create_content_program(bailey, program_id="missing", content_program_title="Missing")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_program(bailey, program_id=program_id, content_program_title="Inactive owner", owner_user_id=repository.users[3].id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_program(bailey, program_id=program_id, content_program_title="Bad total", total_sku_count=-1)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_program(bailey, program_id=program_id, content_program_title="Bad dates", monitoring_start_date=date(2026, 8, 10), maintenance_end_date=date(2026, 8, 1))
+        repository.deactivate_workstream(retail.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_program(bailey, program_id=program_id, workstream_id=retail.id, content_program_title="Inactive workstream")
+        repository.reactivate_workstream(retail.id)
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_program(
+                bailey,
+                program_id=program_id,
+                content_program_title="Too many groups",
+                total_sku_count=2,
+                initial_sku_groups=[{"group_name": "FS", "expected_sku_count": 3}],
+            )
+
+        content = service.create_content_program(
+            bailey,
+            program_id=program_id,
+            content_program_title="TEST - Content Management Program",
+            owner_user_id=t_user.id,
+            content_status=CONTENT_STATUS_CLIENT_REVIEW,
+            latest_update="Copy and graphics in client review.",
+            waiting_on="Client",
+            total_sku_count=371,
+            default_graphics_per_sku=5,
+            monitoring_start_date=date(2026, 8, 10),
+            maintenance_end_date=date(2026, 9, 10),
+            initial_sku_groups=[
+                {"group_name": "FS", "expected_sku_count": 70},
+                {"group_name": "3PG", "expected_sku_count": 228},
+                {"group_name": "Gaming", "expected_sku_count": 73},
+            ],
+            initial_resources={
+                "SKU List": "https://example.com/sku-list",
+                "Tracksheet": "https://example.com/tracksheet",
+            },
+        )
+
+        self.assertEqual(content.owner_user_id, t_user.id)
+        self.assertEqual(content.content_status, CONTENT_STATUS_CLIENT_REVIEW)
+        self.assertEqual(content.workstream_id, next(workstream.id for workstream in repository.workstreams if workstream.program_id == program_id and workstream.workstream_type == WorkstreamType.ECOMMERCE.value))
+        self.assertEqual([group.group_name for group in service.list_content_sku_groups(bailey, content.id)], ["FS", "3PG", "Gaming"])
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_program(bailey, program_id=program_id, content_program_title="TEST - Content Management Program")
+
+        before_events = len(repository.events)
+        unchanged = service.update_content_program(bailey, content.id, content_program_title=content.content_program_title)
+        self.assertEqual(unchanged.id, content.id)
+        self.assertEqual(len(repository.events), before_events)
+
+        updated = service.update_content_program(bailey, content.id, content_status=CONTENT_STATUS_READY_TO_SUBMIT, latest_update="Ready to submit to retailer.")
+        self.assertEqual(updated.content_status, CONTENT_STATUS_READY_TO_SUBMIT)
+
+        service.deactivate_content_program(bailey, content.id)
+        self.assertFalse(repository.get_content_program(content.id).is_active)
+        self.assertEqual(service.list_content_programs(bailey), [])
+        service.reactivate_content_program(bailey, content.id)
+        self.assertTrue(repository.get_content_program(content.id).is_active)
+
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("content_program_created", event_types)
+        self.assertIn("content_program_latest_update_changed", event_types)
+        self.assertIn("content_program_deactivated", event_types)
+        self.assertIn("content_program_reactivated", event_types)
+
+    def test_prompt7_content_children_portfolio_resources_and_state(self) -> None:
+        from app.campaign_ops.content_management.formatting import PORTFOLIO_COLUMNS, portfolio_rows
+
+        repository, service, bailey, t_user, _l_user, program_id, _influencer, _retail = self._prompt4c_fixture()
+        content = service.create_content_program(
+            bailey,
+            program_id=program_id,
+            content_program_title="TEST - Content Child Program",
+            owner_user_id=t_user.id,
+            total_sku_count=4,
+            default_graphics_per_sku=5,
+            initial_sku_groups=[
+                {"group_name": "Jumex", "expected_sku_count": 1},
+                {"group_name": "Pelon", "expected_sku_count": 2},
+                {"group_name": "Sandibrochas", "expected_sku_count": 1},
+            ],
+            initial_resources={
+                "SKU List": "https://example.com/skus",
+                "Tracksheet": "https://example.com/tracker",
+                "Creative Request Deck": "https://example.com/creative",
+                "Keyword Insights": "https://example.com/keywords",
+                "Photography Folder": "https://example.com/photos",
+            },
+        )
+        groups = service.list_content_sku_groups(bailey, content.id)
+        jumex = groups[0]
+        service.update_content_sku_group(bailey, content.id, jumex.id, latest_update="Jumex copy drafted")
+        service.reorder_content_sku_groups(bailey, content.id, [groups[2].id, groups[1].id, groups[0].id])
+        service.deactivate_content_sku_group(bailey, content.id, groups[1].id)
+        service.reactivate_content_sku_group(bailey, content.id, groups[1].id)
+
+        sku = service.create_content_sku(bailey, content.id, sku_group_id=jumex.id, product_name="Jumex Mango", sku_code="JM-1", copy_status="drafting", graphics_status="in_progress")
+        live_sku = service.create_content_sku(bailey, content.id, sku_group_id=groups[1].id, product_name="Pelon Original", sku_code="PL-1")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_sku(bailey, content.id, sku_group_id=jumex.id, product_name="Duplicate", sku_code="JM-1")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_sku(bailey, content.id, sku_group_id="missing", product_name="Missing group")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.update_content_sku(bailey, content.id, sku.id, live_url="javascript:bad")
+        service.update_content_sku(bailey, content.id, sku.id, copy_status="approved", attribute_status="Optimized", graphics_status="approved")
+        service.mark_content_sku_live(bailey, content.id, sku.id, live_url="https://example.com/live/jm-1")
+        service.mark_content_sku_issue_found(bailey, content.id, sku.id, "image issue")
+        service.clear_content_sku_issue(bailey, content.id, sku.id)
+        service.mark_content_sku_live(bailey, content.id, live_sku.id, live_url="https://example.com/live/pl-1")
+        service.deactivate_content_sku(bailey, content.id, sku.id)
+        service.reactivate_content_sku(bailey, content.id, sku.id)
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_deliverable(bailey, content.id, deliverable_name="Bad quantity", required_quantity=1, completed_quantity=2)
+        deliverable = service.create_content_deliverable(bailey, content.id, sku_group_id=jumex.id, sku_id=sku.id, deliverable_name="PDP copy", deliverable_type="PDP copy", required_quantity=1)
+        service.mark_content_deliverable_delivered(bailey, content.id, deliverable.id, date(2026, 8, 11))
+        service.mark_content_deliverable_approved(bailey, content.id, deliverable.id, date(2026, 8, 12))
+        service.reopen_content_deliverable(bailey, content.id, deliverable.id)
+        service.deactivate_content_deliverable(bailey, content.id, deliverable.id)
+        service.reactivate_content_deliverable(bailey, content.id, deliverable.id)
+        service.mark_content_deliverable_approved(bailey, content.id, deliverable.id, date(2026, 8, 13))
+
+        submission = service.create_content_submission(bailey, content.id, sku_group_id=jumex.id, sku_id=sku.id, retailer_or_platform="Walmart", submission_type="PDP", expected_live_date=date(2026, 8, 20))
+        service.mark_content_submission_submitted(bailey, content.id, submission.id, date(2026, 8, 14))
+        service.mark_content_submission_approved(bailey, content.id, submission.id, date(2026, 8, 15))
+        service.mark_content_submission_published(bailey, content.id, submission.id, date(2026, 8, 21), live_url="https://example.com/walmart/jm-1")
+        service.mark_content_submission_issue(bailey, content.id, submission.id, "Retailer rejected image")
+        service.resolve_content_submission_issue(bailey, content.id, submission.id)
+        service.deactivate_content_submission(bailey, content.id, submission.id)
+        service.reactivate_content_submission(bailey, content.id, submission.id)
+
+        update_one = service.create_content_monitoring_update(bailey, content.id, date(2026, 8, 22), "Live checks completed", live_review_count=1)
+        update_two = service.create_content_monitoring_update(bailey, content.id, date(2026, 8, 23), "Maintenance pass", publication_state="Monitoring")
+        self.assertEqual([item.id for item in service.list_content_monitoring_updates(bailey, content.id)], [update_two.id, update_one.id])
+        service.update_content_monitoring_update(bailey, content.id, update_one.id, update_text="Live checks completed across Walmart")
+        service.deactivate_content_monitoring_update(bailey, content.id, update_two.id)
+        service.reactivate_content_monitoring_update(bailey, content.id, update_two.id)
+
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_content_invoice_checkpoint(bailey, content.id, "Bad invoice", amount=-1)
+        invoice = service.create_content_invoice_checkpoint(bailey, content.id, "Initial invoice", due_date=date(2026, 8, 30), amount=1250)
+        service.mark_content_invoice_sent(bailey, content.id, invoice.id, date(2026, 8, 24))
+        service.mark_content_invoice_paid(bailey, content.id, invoice.id)
+        service.deactivate_content_invoice_checkpoint(bailey, content.id, invoice.id)
+        service.reactivate_content_invoice_checkpoint(bailey, content.id, invoice.id)
+
+        exact = service.create_milestone(bailey, program_id, "Submit PDP copy", workstream_id=content.workstream_id, milestone_type="Content Management", target_date=date(2026, 8, 18))
+        ranged = service.create_milestone(bailey, program_id, "Monitoring window", workstream_id=content.workstream_id, milestone_type="Content Management", start_date=date(2026, 8, 21), end_date=date(2026, 9, 21))
+        service.complete_milestone(bailey, exact.id)
+        service.reopen_milestone(bailey, exact.id)
+        self.assertEqual(ranged.milestone_type, "Content Management")
+
+        detail = service.get_content_program_detail(bailey, content.id)
+        self.assertEqual(detail.group_expected_sku_total, 4)
+        self.assertEqual(detail.active_sku_count, 2)
+        self.assertEqual(detail.delivered_count, 1)
+        self.assertEqual(detail.live_count, 1)
+        self.assertEqual(detail.issue_count, 0)
+        self.assertEqual(detail.sku_list_url, "https://example.com/skus")
+        self.assertEqual(detail.next_milestone, "Submit PDP copy")
+        self.assertEqual(PORTFOLIO_COLUMNS[:5], ["Content Program", "Client", "Shared Program", "Owner", "Status"])
+        rendered = portfolio_rows([detail])[0]
+        self.assertEqual(list(rendered), PORTFOLIO_COLUMNS)
+        self.assertEqual(rendered["Graphics per SKU"], "5")
+
+        self.assertIn("campaign_ops_selected_content_program_id", SESSION_KEYS)
+        state: dict[str, object] = {"campaign_ops_selected_content_program_id": "missing"}
+        if state.get("campaign_ops_selected_content_program_id") not in {content.id}:
+            state.pop("campaign_ops_selected_content_program_id", None)
+        self.assertNotIn("campaign_ops_selected_content_program_id", state)
+
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("content_sku_group_created", event_types)
+        self.assertIn("content_sku_created", event_types)
+        self.assertIn("content_deliverable_created", event_types)
+        self.assertIn("content_submission_created", event_types)
+        self.assertIn("content_monitoring_update_created", event_types)
+        self.assertIn("content_invoice_checkpoint_created", event_types)
 
 
 if __name__ == "__main__":

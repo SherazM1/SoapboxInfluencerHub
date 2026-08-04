@@ -25,6 +25,15 @@ from core.campaign_ops.migrations import connect_to_database
 from core.campaign_ops.models import (
     CampaignOpsUser,
     Client,
+    ContentDeliverableRecord,
+    ContentInvoiceCheckpointRecord,
+    ContentMonitoringUpdateRecord,
+    ContentPortfolioRow,
+    ContentProgramDetail,
+    ContentProgramRecord,
+    ContentSkuGroupRecord,
+    ContentSkuRecord,
+    ContentSubmissionRecord,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectDetail,
@@ -86,6 +95,18 @@ from core.campaign_ops.insights import (
     INSIGHTS_RESOURCE_TYPES,
     INSIGHTS_STATUS_NOT_STARTED,
     validate_insights_status,
+)
+from core.campaign_ops.content_management import (
+    CONTENT_RESOURCE_TYPES,
+    CONTENT_STATUS_COMPLETE,
+    CONTENT_STATUS_LIVE,
+    CONTENT_STATUS_NOT_STARTED,
+    COPY_STATUSES,
+    GRAPHICS_STATUSES,
+    PUBLICATION_STATUSES,
+    SUBMISSION_STATUSES,
+    normalize_content_status,
+    normalize_optional_status,
 )
 from core.campaign_ops.retail_media import (
     RETAIL_MEDIA_RESOURCE_TYPES,
@@ -2589,6 +2610,505 @@ class CampaignOpsService:
             "channel_budget_total": sum(channel.budget or 0 for channel in channels),
             "channel_spend_total": sum(channel.spend_to_date or 0 for channel in channels),
         }
+
+    def _content_actor_label(self, actor: CampaignOpsUser | None) -> str:
+        return actor.display_name if actor else "System"
+
+    def _require_content_program(self, repository: CampaignOpsRepository, content_program_id: str) -> ContentProgramRecord:
+        program = repository.get_content_program(content_program_id)
+        if program is None:
+            raise CampaignOpsNotFoundError("Content Program was not found.")
+        return program
+
+    def _validate_content_access(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, program_id: str) -> Program:
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this Content Management program.")
+        if not program.is_active:
+            raise CampaignOpsValidationError("Archived programs cannot have Content Management changes.")
+        return program
+
+    def _non_negative_optional(self, value: Any, label: str) -> int | None:
+        if value in (None, ""):
+            return None
+        number = int(value)
+        if number < 0:
+            raise CampaignOpsValidationError(f"{label} must be non-negative.")
+        return number
+
+    def _validate_content_program_payload(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, payload: dict[str, Any], before: ContentProgramRecord | None = None) -> dict[str, Any]:
+        program_id = payload.get("program_id") or (before.program_id if before else None)
+        if not program_id:
+            raise CampaignOpsValidationError("Program is required.")
+        self._validate_content_access(repository, actor, str(program_id))
+        title = require_text(payload.get("content_program_title") or (before.content_program_title if before else None), "Content Program title")
+        workstream_id = payload.get("workstream_id") if "workstream_id" in payload else (before.workstream_id if before else None)
+        if workstream_id:
+            workstream = self._require_workstream(repository, str(program_id), str(workstream_id))
+            if not workstream.is_active:
+                raise CampaignOpsValidationError("Inactive workstreams cannot receive active Content Management changes.")
+        owner_user_id = payload.get("owner_user_id") if "owner_user_id" in payload else (before.owner_user_id if before else None)
+        if owner_user_id:
+            self._require_active_user(repository, str(owner_user_id), "Owner")
+        monitoring_start = payload.get("monitoring_start_date") if "monitoring_start_date" in payload else (before.monitoring_start_date if before else None)
+        maintenance_end = payload.get("maintenance_end_date") if "maintenance_end_date" in payload else (before.maintenance_end_date if before else None)
+        if monitoring_start and maintenance_end and maintenance_end < monitoring_start:
+            raise CampaignOpsValidationError("Maintenance end date cannot precede monitoring start date.")
+        return {
+            "program_id": str(program_id),
+            "workstream_id": str(workstream_id) if workstream_id else None,
+            "content_program_title": title,
+            "content_status": normalize_content_status(payload.get("content_status") or (before.content_status if before else CONTENT_STATUS_NOT_STARTED)),
+            "latest_update": self._clean_optional_text(payload.get("latest_update") if "latest_update" in payload else (before.latest_update if before else None)),
+            "waiting_on": self._clean_optional_text(payload.get("waiting_on") if "waiting_on" in payload else (before.waiting_on if before else None)),
+            "owner_user_id": str(owner_user_id) if owner_user_id else None,
+            "total_sku_count": self._non_negative_optional(payload.get("total_sku_count") if "total_sku_count" in payload else (before.total_sku_count if before else None), "Total SKU count"),
+            "default_graphics_per_sku": self._non_negative_optional(payload.get("default_graphics_per_sku") if "default_graphics_per_sku" in payload else (before.default_graphics_per_sku if before else None), "Graphics per SKU"),
+            "monitoring_start_date": monitoring_start,
+            "maintenance_end_date": maintenance_end,
+            "reporting_cadence": self._clean_optional_text(payload.get("reporting_cadence") if "reporting_cadence" in payload else (before.reporting_cadence if before else None)),
+            "is_invoiced": bool(payload.get("is_invoiced") if "is_invoiced" in payload else (before.is_invoiced if before else False)),
+            "invoice_status": self._clean_optional_text(payload.get("invoice_status") if "invoice_status" in payload else (before.invoice_status if before else None)),
+        }
+
+    def create_content_program(self, actor: CampaignOpsUser | None, **kwargs: Any) -> ContentProgramRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentProgramRecord:
+            payload = self._validate_content_program_payload(repository, actor, kwargs)
+            if repository.get_active_content_program_by_title(payload["program_id"], payload["content_program_title"]):
+                raise CampaignOpsValidationError("An active Content Program with this title already exists for this shared program.")
+            for resource_type, url in (kwargs.get("initial_resources") or {}).items():
+                if resource_type in CONTENT_RESOURCE_TYPES and url:
+                    self._validate_resource_url(str(url))
+            workstream_id = payload.get("workstream_id")
+            if not workstream_id:
+                existing = next((w for w in repository.list_all_workstreams_by_program(payload["program_id"]) if w.workstream_type == WorkstreamType.ECOMMERCE.value and w.is_active), None)
+                workstream_id = existing.id if existing else repository.create_workstream(payload["program_id"], WorkstreamType.ECOMMERCE.value, actor_user_id=actor.id if actor else None, owner_user_id=payload.get("owner_user_id")).id
+            payload["workstream_id"] = workstream_id
+            groups = kwargs.get("initial_sku_groups") or []
+            group_total = sum(int(g.get("expected_sku_count") or 0) for g in groups if isinstance(g, dict))
+            if payload.get("total_sku_count") is not None and group_total > payload["total_sku_count"]:
+                raise CampaignOpsValidationError("Initial SKU group counts cannot exceed total SKU count.")
+            seen_groups: set[str] = set()
+            content = repository.create_content_program(actor_user_id=actor.id if actor else None, **payload)
+            for index, group in enumerate(groups):
+                group_name = require_text(str(group.get("group_name") if isinstance(group, dict) else group), "SKU group name")
+                if group_name.lower() in seen_groups:
+                    raise CampaignOpsValidationError("Duplicate active SKU groups are not allowed.")
+                seen_groups.add(group_name.lower())
+                data = dict(group) if isinstance(group, dict) else {}
+                data.pop("group_name", None)
+                data["sort_order"] = data.get("sort_order", index)
+                repository.create_content_sku_group(content.id, group_name, **data)
+                repository.append_event(event_type="content_sku_group_created", entity_type="content_sku_group", entity_id=content.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} added SKU group {group_name}.")
+            for resource_type, url in (kwargs.get("initial_resources") or {}).items():
+                if resource_type in CONTENT_RESOURCE_TYPES:
+                    resource = repository.create_resource(program_id=content.program_id, workstream_id=content.workstream_id, resource_type=resource_type, title=resource_type, url=self._validate_resource_url(url) if url else None, actor_user_id=actor.id if actor else None)
+                    repository.append_event(event_type="resource_created", entity_type="resource", entity_id=resource.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} added {resource.resource_type} for Content Program {content.content_program_title}.")
+            repository.append_event(event_type="content_program_created", entity_type="content_program", entity_id=content.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, new_value_json={"content_program_title": content.content_program_title}, message=f"{self._content_actor_label(actor)} created Content Program {content.content_program_title}.")
+            return content
+
+        return self._transaction(operation)
+
+    def update_content_program(self, actor: CampaignOpsUser | None, content_program_id: str, **kwargs: Any) -> ContentProgramRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentProgramRecord:
+            before = self._require_content_program(repository, content_program_id)
+            payload = self._validate_content_program_payload(repository, actor, kwargs, before)
+            duplicate = repository.get_active_content_program_by_title(payload["program_id"], payload["content_program_title"])
+            if duplicate and duplicate.id != content_program_id:
+                raise CampaignOpsValidationError("An active Content Program with this title already exists for this shared program.")
+            changes = {f: v for f, v in payload.items() if f != "program_id" and getattr(before, f) != v}
+            if not changes:
+                return before
+            merged = {f: getattr(before, f) for f in payload if f != "program_id"}
+            merged.update(changes)
+            updated = repository.update_content_program(content_program_id, **merged)
+            for field, value in changes.items():
+                repository.append_event(event_type=f"content_program_{field}_changed", entity_type="content_program", entity_id=content_program_id, program_id=updated.program_id, workstream_id=updated.workstream_id, actor_user_id=actor.id if actor else None, old_value_json={field: self._activity_value(getattr(before, field))}, new_value_json={field: self._activity_value(value)}, message=f"{self._content_actor_label(actor)} changed Content {field.replace('_', ' ')} from {getattr(before, field) or '-'} to {value or '-'}.")
+            return updated
+
+        return self._transaction(operation)
+
+    def list_content_programs(self, actor: CampaignOpsUser | None, include_inactive: bool = False) -> list[ContentPortfolioRow]:
+        repository = self.repository or CampaignOpsRepository()
+        rows = repository.list_content_programs(include_inactive=include_inactive)
+        if can_access_admin(actor):
+            return rows
+        return [row for row in rows if can_view_program(actor, self._require_program(repository, row.program_id), repository.list_assignments_by_program(row.program_id))]
+
+    def get_content_program_detail(self, actor: CampaignOpsUser | None, content_program_id: str) -> ContentProgramDetail:
+        repository = self.repository or CampaignOpsRepository()
+        detail = repository.get_content_program_detail(content_program_id)
+        if detail is None:
+            raise CampaignOpsNotFoundError("Content Program was not found.")
+        if not can_view_program(actor, self._require_program(repository, detail.program_id), repository.list_assignments_by_program(detail.program_id)):
+            raise CampaignOpsPermissionError("You do not have access to this Content Program.")
+        return detail
+
+    def deactivate_content_program(self, actor: CampaignOpsUser | None, content_program_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            content = self._require_content_program(repository, content_program_id)
+            self._validate_content_access(repository, actor, content.program_id)
+            repository.deactivate_content_program(content_program_id)
+            repository.append_event(event_type="content_program_deactivated", entity_type="content_program", entity_id=content_program_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} deactivated Content Program {content.content_program_title}.")
+
+        self._transaction(operation)
+
+    def reactivate_content_program(self, actor: CampaignOpsUser | None, content_program_id: str) -> ContentProgramRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentProgramRecord:
+            content = self._require_content_program(repository, content_program_id)
+            self._validate_content_access(repository, actor, content.program_id)
+            updated = repository.reactivate_content_program(content_program_id)
+            repository.append_event(event_type="content_program_reactivated", entity_type="content_program", entity_id=content_program_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} reactivated Content Program {content.content_program_title}.")
+            return updated
+
+        return self._transaction(operation)
+
+    def _content_child_context(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, content_program_id: str) -> ContentProgramRecord:
+        content = self._require_content_program(repository, content_program_id)
+        self._validate_content_access(repository, actor, content.program_id)
+        return content
+
+    def _validate_content_group(self, repository: CampaignOpsRepository, content_program_id: str, group_id: str | None) -> None:
+        if group_id and not any(g.id == group_id for g in repository.list_content_sku_groups(content_program_id, include_inactive=True)):
+            raise CampaignOpsValidationError("Selected SKU group must belong to this Content Program.")
+
+    def _validate_content_sku_link(self, repository: CampaignOpsRepository, content_program_id: str, sku_id: str | None) -> None:
+        if sku_id and not any(s.id == sku_id for s in repository.list_content_skus(content_program_id, include_inactive=True)):
+            raise CampaignOpsValidationError("Selected SKU must belong to this Content Program.")
+
+    def create_content_sku_group(self, actor: CampaignOpsUser | None, content_program_id: str, group_name: str, **kwargs: Any) -> ContentSkuGroupRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSkuGroupRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            if any(g.group_name.lower() == group_name.strip().lower() for g in repository.list_content_sku_groups(content_program_id)):
+                raise CampaignOpsValidationError("Duplicate active SKU groups are not allowed.")
+            expected = self._non_negative_optional(kwargs.get("expected_sku_count"), "Expected SKU count")
+            graphics = self._non_negative_optional(kwargs.get("graphics_per_sku"), "Graphics per SKU")
+            group = repository.create_content_sku_group(content_program_id, group_name, brand_name=self._clean_optional_text(kwargs.get("brand_name")), expected_sku_count=expected, graphics_per_sku=graphics, status=self._clean_optional_text(kwargs.get("status")), latest_update=self._clean_optional_text(kwargs.get("latest_update")), waiting_on=self._clean_optional_text(kwargs.get("waiting_on")), sort_order=int(kwargs.get("sort_order") or 0))
+            repository.append_event(event_type="content_sku_group_created", entity_type="content_sku_group", entity_id=group.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} added SKU group {group.group_name}.")
+            return group
+
+        return self._transaction(operation)
+
+    def list_content_sku_groups(self, actor: CampaignOpsUser | None, content_program_id: str, include_inactive: bool = False) -> list[ContentSkuGroupRecord]:
+        self.get_content_program_detail(actor, content_program_id)
+        return (self.repository or CampaignOpsRepository()).list_content_sku_groups(content_program_id, include_inactive=include_inactive)
+
+    def update_content_sku_group(self, actor: CampaignOpsUser | None, content_program_id: str, group_id: str, **kwargs: Any) -> ContentSkuGroupRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSkuGroupRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            before = next((g for g in repository.list_content_sku_groups(content_program_id, include_inactive=True) if g.id == group_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("SKU group was not found.")
+            group_name = require_text(kwargs.get("group_name") or before.group_name, "SKU group")
+            if any(g.id != group_id and g.group_name.lower() == group_name.lower() for g in repository.list_content_sku_groups(content_program_id)):
+                raise CampaignOpsValidationError("Duplicate active SKU groups are not allowed.")
+            payload = {"group_name": group_name, "brand_name": self._clean_optional_text(kwargs.get("brand_name") if "brand_name" in kwargs else before.brand_name), "expected_sku_count": self._non_negative_optional(kwargs.get("expected_sku_count") if "expected_sku_count" in kwargs else before.expected_sku_count, "Expected SKU count"), "graphics_per_sku": self._non_negative_optional(kwargs.get("graphics_per_sku") if "graphics_per_sku" in kwargs else before.graphics_per_sku, "Graphics per SKU"), "status": self._clean_optional_text(kwargs.get("status") if "status" in kwargs else before.status), "latest_update": self._clean_optional_text(kwargs.get("latest_update") if "latest_update" in kwargs else before.latest_update), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else before.waiting_on), "sort_order": int(kwargs.get("sort_order") if "sort_order" in kwargs else before.sort_order)}
+            if not any(getattr(before, f) != v for f, v in payload.items()):
+                return before
+            updated = repository.update_content_sku_group(group_id, **payload)
+            repository.append_event(event_type="content_sku_group_updated", entity_type="content_sku_group", entity_id=group_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} updated SKU group {updated.group_name}.")
+            return updated
+
+        return self._transaction(operation)
+
+    def reorder_content_sku_groups(self, actor: CampaignOpsUser | None, content_program_id: str, ordered_ids: list[str]) -> list[ContentSkuGroupRecord]:
+        return [self.update_content_sku_group(actor, content_program_id, group_id, sort_order=index) for index, group_id in enumerate(ordered_ids)]
+
+    def deactivate_content_sku_group(self, actor: CampaignOpsUser | None, content_program_id: str, group_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            content = self._content_child_context(repository, actor, content_program_id)
+            repository.deactivate_content_sku_group(group_id)
+            repository.append_event(event_type="content_sku_group_deactivated", entity_type="content_sku_group", entity_id=group_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} deactivated a SKU group.")
+        self._transaction(operation)
+
+    def reactivate_content_sku_group(self, actor: CampaignOpsUser | None, content_program_id: str, group_id: str) -> ContentSkuGroupRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSkuGroupRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            group = repository.reactivate_content_sku_group(group_id)
+            repository.append_event(event_type="content_sku_group_reactivated", entity_type="content_sku_group", entity_id=group_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} reactivated SKU group {group.group_name}.")
+            return group
+        return self._transaction(operation)
+
+    def _sku_payload(self, repository: CampaignOpsRepository, content_program_id: str, kwargs: dict[str, Any], before: ContentSkuRecord | None = None) -> dict[str, Any]:
+        group_id = kwargs.get("sku_group_id") if "sku_group_id" in kwargs else (before.sku_group_id if before else None)
+        self._validate_content_group(repository, content_program_id, str(group_id) if group_id else None)
+        live_url = kwargs.get("live_url") if "live_url" in kwargs else (before.live_url if before else None)
+        return {"sku_group_id": str(group_id) if group_id else None, "sku_code": self._clean_optional_text(kwargs.get("sku_code") if "sku_code" in kwargs else (before.sku_code if before else None)), "product_name": require_text(kwargs.get("product_name") or (before.product_name if before else None), "Product name"), "retailer_sku": self._clean_optional_text(kwargs.get("retailer_sku") if "retailer_sku" in kwargs else (before.retailer_sku if before else None)), "upc": self._clean_optional_text(kwargs.get("upc") if "upc" in kwargs else (before.upc if before else None)), "variant": self._clean_optional_text(kwargs.get("variant") if "variant" in kwargs else (before.variant if before else None)), "content_status": normalize_content_status(kwargs.get("content_status") or (before.content_status if before else CONTENT_STATUS_NOT_STARTED)), "copy_status": normalize_optional_status(kwargs.get("copy_status") if "copy_status" in kwargs else (before.copy_status if before else None), COPY_STATUSES, "Copy status"), "attribute_status": self._clean_optional_text(kwargs.get("attribute_status") if "attribute_status" in kwargs else (before.attribute_status if before else None)), "graphics_status": normalize_optional_status(kwargs.get("graphics_status") if "graphics_status" in kwargs else (before.graphics_status if before else None), GRAPHICS_STATUSES, "Graphics status"), "submission_status": normalize_optional_status(kwargs.get("submission_status") if "submission_status" in kwargs else (before.submission_status if before else None), SUBMISSION_STATUSES, "Submission status"), "publication_status": normalize_optional_status(kwargs.get("publication_status") if "publication_status" in kwargs else (before.publication_status if before else None), PUBLICATION_STATUSES, "Publication status"), "live_url": self._validate_resource_url(live_url) if live_url else None, "last_checked_at": kwargs.get("last_checked_at") if "last_checked_at" in kwargs else (before.last_checked_at if before else None), "issue_status": self._clean_optional_text(kwargs.get("issue_status") if "issue_status" in kwargs else (before.issue_status if before else None)), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "maintenance_required": bool(kwargs.get("maintenance_required") if "maintenance_required" in kwargs else (before.maintenance_required if before else False))}
+
+    def create_content_sku(self, actor: CampaignOpsUser | None, content_program_id: str, **kwargs: Any) -> ContentSkuRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSkuRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            payload = self._sku_payload(repository, content_program_id, kwargs)
+            if payload["sku_code"] and any(s.sku_code == payload["sku_code"] and s.is_active for s in repository.list_content_skus(content_program_id, include_inactive=True)):
+                raise CampaignOpsValidationError("Duplicate active SKU code is not allowed in one Content Program.")
+            sku = repository.create_content_sku(content_program_id, **payload)
+            repository.append_event(event_type="content_sku_created", entity_type="content_sku", entity_id=sku.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} added SKU {sku.product_name}.")
+            return sku
+        return self._transaction(operation)
+
+    def list_content_skus(self, actor: CampaignOpsUser | None, content_program_id: str, include_inactive: bool = False) -> list[ContentSkuRecord]:
+        self.get_content_program_detail(actor, content_program_id)
+        return (self.repository or CampaignOpsRepository()).list_content_skus(content_program_id, include_inactive=include_inactive)
+
+    def update_content_sku(self, actor: CampaignOpsUser | None, content_program_id: str, sku_id: str, **kwargs: Any) -> ContentSkuRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSkuRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            before = repository.get_content_sku(sku_id)
+            if before is None or before.content_program_id != content_program_id:
+                raise CampaignOpsNotFoundError("SKU was not found.")
+            payload = self._sku_payload(repository, content_program_id, kwargs, before)
+            if payload["sku_code"] and any(s.id != sku_id and s.sku_code == payload["sku_code"] and s.is_active for s in repository.list_content_skus(content_program_id, include_inactive=True)):
+                raise CampaignOpsValidationError("Duplicate active SKU code is not allowed in one Content Program.")
+            if not any(getattr(before, f) != v for f, v in payload.items()):
+                return before
+            updated = repository.update_content_sku(sku_id, **payload)
+            repository.append_event(event_type="content_sku_updated", entity_type="content_sku", entity_id=sku_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} updated SKU {updated.product_name}.")
+            return updated
+        return self._transaction(operation)
+
+    def mark_content_sku_live(self, actor: CampaignOpsUser | None, content_program_id: str, sku_id: str, live_url: str | None = None) -> ContentSkuRecord:
+        return self.update_content_sku(actor, content_program_id, sku_id, publication_status="live", content_status=CONTENT_STATUS_LIVE, live_url=live_url, last_checked_at=datetime.now(UTC))
+
+    def mark_content_sku_issue_found(self, actor: CampaignOpsUser | None, content_program_id: str, sku_id: str, issue_status: str = "issue_found") -> ContentSkuRecord:
+        return self.update_content_sku(actor, content_program_id, sku_id, publication_status="issue_found", issue_status=issue_status, last_checked_at=datetime.now(UTC))
+
+    def clear_content_sku_issue(self, actor: CampaignOpsUser | None, content_program_id: str, sku_id: str) -> ContentSkuRecord:
+        return self.update_content_sku(actor, content_program_id, sku_id, issue_status=None, publication_status="monitoring", last_checked_at=datetime.now(UTC))
+
+    def deactivate_content_sku(self, actor: CampaignOpsUser | None, content_program_id: str, sku_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            content = self._content_child_context(repository, actor, content_program_id)
+            repository.deactivate_content_sku(sku_id)
+            repository.append_event(event_type="content_sku_deactivated", entity_type="content_sku", entity_id=sku_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} deactivated a SKU.")
+        self._transaction(operation)
+
+    def reactivate_content_sku(self, actor: CampaignOpsUser | None, content_program_id: str, sku_id: str) -> ContentSkuRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSkuRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            sku = repository.reactivate_content_sku(sku_id)
+            repository.append_event(event_type="content_sku_reactivated", entity_type="content_sku", entity_id=sku_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} reactivated SKU {sku.product_name}.")
+            return sku
+        return self._transaction(operation)
+
+    def _validate_content_quantities(self, required: Any, completed: Any) -> tuple[int | None, int | None]:
+        req = self._non_negative_optional(required, "Required quantity")
+        comp = self._non_negative_optional(completed, "Completed quantity")
+        if req is not None and comp is not None and comp > req:
+            raise CampaignOpsValidationError("Completed quantity cannot exceed required quantity in this baseline.")
+        return req, comp
+
+    def _deliverable_payload(self, repository: CampaignOpsRepository, content_program_id: str, kwargs: dict[str, Any], before: ContentDeliverableRecord | None = None) -> dict[str, Any]:
+        group_id = kwargs.get("sku_group_id") if "sku_group_id" in kwargs else (before.sku_group_id if before else None)
+        sku_id = kwargs.get("sku_id") if "sku_id" in kwargs else (before.sku_id if before else None)
+        self._validate_content_group(repository, content_program_id, str(group_id) if group_id else None)
+        self._validate_content_sku_link(repository, content_program_id, str(sku_id) if sku_id else None)
+        req, comp = self._validate_content_quantities(kwargs.get("required_quantity") if "required_quantity" in kwargs else (before.required_quantity if before else None), kwargs.get("completed_quantity") if "completed_quantity" in kwargs else (before.completed_quantity if before else None))
+        return {"sku_group_id": str(group_id) if group_id else None, "sku_id": str(sku_id) if sku_id else None, "deliverable_name": require_text(kwargs.get("deliverable_name") or (before.deliverable_name if before else None), "Deliverable name"), "deliverable_type": self._clean_optional_text(kwargs.get("deliverable_type") if "deliverable_type" in kwargs else (before.deliverable_type if before else None)), "status": self._clean_optional_text(kwargs.get("status") if "status" in kwargs else (before.status if before else None)), "approval_status": self._clean_optional_text(kwargs.get("approval_status") if "approval_status" in kwargs else (before.approval_status if before else None)), "due_date": kwargs.get("due_date") if "due_date" in kwargs else (before.due_date if before else None), "delivered_date": kwargs.get("delivered_date") if "delivered_date" in kwargs else (before.delivered_date if before else None), "approved_date": kwargs.get("approved_date") if "approved_date" in kwargs else (before.approved_date if before else None), "required_quantity": req, "completed_quantity": comp, "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None))}
+
+    def create_content_deliverable(self, actor: CampaignOpsUser | None, content_program_id: str, **kwargs: Any) -> ContentDeliverableRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentDeliverableRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            deliverable = repository.create_content_deliverable(content_program_id, **self._deliverable_payload(repository, content_program_id, kwargs))
+            repository.append_event(event_type="content_deliverable_created", entity_type="content_deliverable", entity_id=deliverable.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} added deliverable {deliverable.deliverable_name}.")
+            return deliverable
+        return self._transaction(operation)
+
+    def list_content_deliverables(self, actor: CampaignOpsUser | None, content_program_id: str, include_inactive: bool = False) -> list[ContentDeliverableRecord]:
+        self.get_content_program_detail(actor, content_program_id)
+        return (self.repository or CampaignOpsRepository()).list_content_deliverables(content_program_id, include_inactive=include_inactive)
+
+    def update_content_deliverable(self, actor: CampaignOpsUser | None, content_program_id: str, deliverable_id: str, **kwargs: Any) -> ContentDeliverableRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentDeliverableRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            before = next((d for d in repository.list_content_deliverables(content_program_id, include_inactive=True) if d.id == deliverable_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Deliverable was not found.")
+            payload = self._deliverable_payload(repository, content_program_id, kwargs, before)
+            if not any(getattr(before, f) != v for f, v in payload.items()):
+                return before
+            updated = repository.update_content_deliverable(deliverable_id, **payload)
+            repository.append_event(event_type="content_deliverable_updated", entity_type="content_deliverable", entity_id=deliverable_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} updated deliverable {updated.deliverable_name}.")
+            return updated
+        return self._transaction(operation)
+
+    def mark_content_deliverable_delivered(self, actor: CampaignOpsUser | None, content_program_id: str, deliverable_id: str, delivered_date: date | None = None) -> ContentDeliverableRecord:
+        return self.update_content_deliverable(actor, content_program_id, deliverable_id, status="delivered", delivered_date=delivered_date or date.today())
+
+    def mark_content_deliverable_approved(self, actor: CampaignOpsUser | None, content_program_id: str, deliverable_id: str, approved_date: date | None = None) -> ContentDeliverableRecord:
+        return self.update_content_deliverable(actor, content_program_id, deliverable_id, status="approved", approval_status="approved", approved_date=approved_date or date.today())
+
+    def reopen_content_deliverable(self, actor: CampaignOpsUser | None, content_program_id: str, deliverable_id: str) -> ContentDeliverableRecord:
+        return self.update_content_deliverable(actor, content_program_id, deliverable_id, status="in_progress", approval_status=None, delivered_date=None, approved_date=None)
+
+    def deactivate_content_deliverable(self, actor: CampaignOpsUser | None, content_program_id: str, deliverable_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            content = self._content_child_context(repository, actor, content_program_id)
+            repository.deactivate_content_deliverable(deliverable_id)
+            repository.append_event(event_type="content_deliverable_deactivated", entity_type="content_deliverable", entity_id=deliverable_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} deactivated a deliverable.")
+        self._transaction(operation)
+
+    def reactivate_content_deliverable(self, actor: CampaignOpsUser | None, content_program_id: str, deliverable_id: str) -> ContentDeliverableRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentDeliverableRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            deliverable = repository.reactivate_content_deliverable(deliverable_id)
+            repository.append_event(event_type="content_deliverable_reactivated", entity_type="content_deliverable", entity_id=deliverable_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} reactivated deliverable {deliverable.deliverable_name}.")
+            return deliverable
+        return self._transaction(operation)
+
+    def _submission_payload(self, repository: CampaignOpsRepository, content_program_id: str, kwargs: dict[str, Any], before: ContentSubmissionRecord | None = None) -> dict[str, Any]:
+        group_id = kwargs.get("sku_group_id") if "sku_group_id" in kwargs else (before.sku_group_id if before else None)
+        sku_id = kwargs.get("sku_id") if "sku_id" in kwargs else (before.sku_id if before else None)
+        self._validate_content_group(repository, content_program_id, str(group_id) if group_id else None)
+        self._validate_content_sku_link(repository, content_program_id, str(sku_id) if sku_id else None)
+        live_url = kwargs.get("live_url") if "live_url" in kwargs else (before.live_url if before else None)
+        return {"sku_group_id": str(group_id) if group_id else None, "sku_id": str(sku_id) if sku_id else None, "retailer_or_platform": self._clean_optional_text(kwargs.get("retailer_or_platform") if "retailer_or_platform" in kwargs else (before.retailer_or_platform if before else None)), "submission_type": self._clean_optional_text(kwargs.get("submission_type") if "submission_type" in kwargs else (before.submission_type if before else None)), "status": self._clean_optional_text(kwargs.get("status") if "status" in kwargs else (before.status if before else None)), "submitted_date": kwargs.get("submitted_date") if "submitted_date" in kwargs else (before.submitted_date if before else None), "approved_date": kwargs.get("approved_date") if "approved_date" in kwargs else (before.approved_date if before else None), "published_date": kwargs.get("published_date") if "published_date" in kwargs else (before.published_date if before else None), "expected_live_date": kwargs.get("expected_live_date") if "expected_live_date" in kwargs else (before.expected_live_date if before else None), "live_url": self._validate_resource_url(live_url) if live_url else None, "issue_text": self._clean_optional_text(kwargs.get("issue_text") if "issue_text" in kwargs else (before.issue_text if before else None)), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None))}
+
+    def create_content_submission(self, actor: CampaignOpsUser | None, content_program_id: str, **kwargs: Any) -> ContentSubmissionRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSubmissionRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            sub = repository.create_content_submission(content_program_id, **self._submission_payload(repository, content_program_id, kwargs))
+            repository.append_event(event_type="content_submission_created", entity_type="content_submission", entity_id=sub.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} added a content submission.")
+            return sub
+        return self._transaction(operation)
+
+    def list_content_submissions(self, actor: CampaignOpsUser | None, content_program_id: str, include_inactive: bool = False) -> list[ContentSubmissionRecord]:
+        self.get_content_program_detail(actor, content_program_id)
+        return (self.repository or CampaignOpsRepository()).list_content_submissions(content_program_id, include_inactive=include_inactive)
+
+    def update_content_submission(self, actor: CampaignOpsUser | None, content_program_id: str, submission_id: str, **kwargs: Any) -> ContentSubmissionRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSubmissionRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            before = next((s for s in repository.list_content_submissions(content_program_id, include_inactive=True) if s.id == submission_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Submission was not found.")
+            payload = self._submission_payload(repository, content_program_id, kwargs, before)
+            if not any(getattr(before, f) != v for f, v in payload.items()):
+                return before
+            updated = repository.update_content_submission(submission_id, **payload)
+            repository.append_event(event_type="content_submission_updated", entity_type="content_submission", entity_id=submission_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} updated a content submission.")
+            return updated
+        return self._transaction(operation)
+
+    def mark_content_submission_submitted(self, actor: CampaignOpsUser | None, content_program_id: str, submission_id: str, submitted_date: date | None = None) -> ContentSubmissionRecord:
+        return self.update_content_submission(actor, content_program_id, submission_id, status="submitted", submitted_date=submitted_date or date.today())
+
+    def mark_content_submission_approved(self, actor: CampaignOpsUser | None, content_program_id: str, submission_id: str, approved_date: date | None = None) -> ContentSubmissionRecord:
+        return self.update_content_submission(actor, content_program_id, submission_id, status="approved", approved_date=approved_date or date.today())
+
+    def mark_content_submission_published(self, actor: CampaignOpsUser | None, content_program_id: str, submission_id: str, published_date: date | None = None, live_url: str | None = None) -> ContentSubmissionRecord:
+        return self.update_content_submission(actor, content_program_id, submission_id, status="live", published_date=published_date or date.today(), live_url=live_url)
+
+    def mark_content_submission_issue(self, actor: CampaignOpsUser | None, content_program_id: str, submission_id: str, issue_text: str) -> ContentSubmissionRecord:
+        return self.update_content_submission(actor, content_program_id, submission_id, status="issue_found", issue_text=require_text(issue_text, "Issue"))
+
+    def resolve_content_submission_issue(self, actor: CampaignOpsUser | None, content_program_id: str, submission_id: str) -> ContentSubmissionRecord:
+        return self.update_content_submission(actor, content_program_id, submission_id, status="monitoring", issue_text=None)
+
+    def deactivate_content_submission(self, actor: CampaignOpsUser | None, content_program_id: str, submission_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            content = self._content_child_context(repository, actor, content_program_id)
+            repository.deactivate_content_submission(submission_id)
+            repository.append_event(event_type="content_submission_deactivated", entity_type="content_submission", entity_id=submission_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} deactivated a content submission.")
+        self._transaction(operation)
+
+    def reactivate_content_submission(self, actor: CampaignOpsUser | None, content_program_id: str, submission_id: str) -> ContentSubmissionRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentSubmissionRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            sub = repository.reactivate_content_submission(submission_id)
+            repository.append_event(event_type="content_submission_reactivated", entity_type="content_submission", entity_id=submission_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} reactivated a content submission.")
+            return sub
+        return self._transaction(operation)
+
+    def create_content_monitoring_update(self, actor: CampaignOpsUser | None, content_program_id: str, update_date: date, update_text: str, **kwargs: Any) -> ContentMonitoringUpdateRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentMonitoringUpdateRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            self._validate_content_group(repository, content_program_id, kwargs.get("sku_group_id"))
+            self._validate_content_sku_link(repository, content_program_id, kwargs.get("sku_id"))
+            live_reviews = self._non_negative_optional(kwargs.get("live_review_count"), "Live review count")
+            update = repository.create_content_monitoring_update(content_program_id, update_date, update_text, actor_user_id=actor.id if actor else None, sku_group_id=kwargs.get("sku_group_id"), sku_id=kwargs.get("sku_id"), update_type=self._clean_optional_text(kwargs.get("update_type")), live_review_count=live_reviews, publication_state=self._clean_optional_text(kwargs.get("publication_state")))
+            repository.append_event(event_type="content_monitoring_update_created", entity_type="content_monitoring_update", entity_id=update.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} added monitoring update {update.update_text}.")
+            return update
+        return self._transaction(operation)
+
+    def list_content_monitoring_updates(self, actor: CampaignOpsUser | None, content_program_id: str, include_inactive: bool = False) -> list[ContentMonitoringUpdateRecord]:
+        self.get_content_program_detail(actor, content_program_id)
+        return (self.repository or CampaignOpsRepository()).list_content_monitoring_updates(content_program_id, include_inactive=include_inactive)
+
+    def update_content_monitoring_update(self, actor: CampaignOpsUser | None, content_program_id: str, update_id: str, **kwargs: Any) -> ContentMonitoringUpdateRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentMonitoringUpdateRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            before = next((u for u in repository.list_content_monitoring_updates(content_program_id, include_inactive=True) if u.id == update_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Monitoring update was not found.")
+            self._validate_content_group(repository, content_program_id, kwargs.get("sku_group_id") if "sku_group_id" in kwargs else before.sku_group_id)
+            self._validate_content_sku_link(repository, content_program_id, kwargs.get("sku_id") if "sku_id" in kwargs else before.sku_id)
+            payload = {"sku_group_id": kwargs.get("sku_group_id") if "sku_group_id" in kwargs else before.sku_group_id, "sku_id": kwargs.get("sku_id") if "sku_id" in kwargs else before.sku_id, "update_date": kwargs.get("update_date") if "update_date" in kwargs else before.update_date, "update_type": self._clean_optional_text(kwargs.get("update_type") if "update_type" in kwargs else before.update_type), "update_text": require_text(kwargs.get("update_text") or before.update_text, "Monitoring update"), "live_review_count": self._non_negative_optional(kwargs.get("live_review_count") if "live_review_count" in kwargs else before.live_review_count, "Live review count"), "publication_state": self._clean_optional_text(kwargs.get("publication_state") if "publication_state" in kwargs else before.publication_state)}
+            updated = repository.update_content_monitoring_update(update_id, **payload)
+            repository.append_event(event_type="content_monitoring_update_updated", entity_type="content_monitoring_update", entity_id=update_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} updated monitoring update {updated.update_text}.")
+            return updated
+        return self._transaction(operation)
+
+    def deactivate_content_monitoring_update(self, actor: CampaignOpsUser | None, content_program_id: str, update_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            content = self._content_child_context(repository, actor, content_program_id)
+            repository.deactivate_content_monitoring_update(update_id)
+            repository.append_event(event_type="content_monitoring_update_deactivated", entity_type="content_monitoring_update", entity_id=update_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} deactivated a monitoring update.")
+        self._transaction(operation)
+
+    def reactivate_content_monitoring_update(self, actor: CampaignOpsUser | None, content_program_id: str, update_id: str) -> ContentMonitoringUpdateRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentMonitoringUpdateRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            update = repository.reactivate_content_monitoring_update(update_id)
+            repository.append_event(event_type="content_monitoring_update_reactivated", entity_type="content_monitoring_update", entity_id=update_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} reactivated monitoring update {update.update_text}.")
+            return update
+        return self._transaction(operation)
+
+    def create_content_invoice_checkpoint(self, actor: CampaignOpsUser | None, content_program_id: str, checkpoint_name: str, **kwargs: Any) -> ContentInvoiceCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentInvoiceCheckpointRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            amount = self._non_negative_number(kwargs.get("amount"), "Invoice amount")
+            checkpoint = repository.create_content_invoice_checkpoint(content_program_id, checkpoint_name, invoice_date=kwargs.get("invoice_date"), due_date=kwargs.get("due_date"), status=self._clean_optional_text(kwargs.get("status")), amount=amount, notes=self._clean_optional_text(kwargs.get("notes")))
+            repository.append_event(event_type="content_invoice_checkpoint_created", entity_type="content_invoice_checkpoint", entity_id=checkpoint.id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} added invoice checkpoint {checkpoint.checkpoint_name}.")
+            return checkpoint
+        return self._transaction(operation)
+
+    def list_content_invoice_checkpoints(self, actor: CampaignOpsUser | None, content_program_id: str, include_inactive: bool = False) -> list[ContentInvoiceCheckpointRecord]:
+        self.get_content_program_detail(actor, content_program_id)
+        return (self.repository or CampaignOpsRepository()).list_content_invoice_checkpoints(content_program_id, include_inactive=include_inactive)
+
+    def update_content_invoice_checkpoint(self, actor: CampaignOpsUser | None, content_program_id: str, checkpoint_id: str, **kwargs: Any) -> ContentInvoiceCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentInvoiceCheckpointRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            before = next((c for c in repository.list_content_invoice_checkpoints(content_program_id, include_inactive=True) if c.id == checkpoint_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Invoice checkpoint was not found.")
+            payload = {"checkpoint_name": require_text(kwargs.get("checkpoint_name") or before.checkpoint_name, "Checkpoint name"), "invoice_date": kwargs.get("invoice_date") if "invoice_date" in kwargs else before.invoice_date, "due_date": kwargs.get("due_date") if "due_date" in kwargs else before.due_date, "status": self._clean_optional_text(kwargs.get("status") if "status" in kwargs else before.status), "amount": self._non_negative_number(kwargs.get("amount") if "amount" in kwargs else before.amount, "Invoice amount"), "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else before.notes)}
+            updated = repository.update_content_invoice_checkpoint(checkpoint_id, **payload)
+            repository.append_event(event_type="content_invoice_checkpoint_updated", entity_type="content_invoice_checkpoint", entity_id=checkpoint_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} updated invoice checkpoint {updated.checkpoint_name}.")
+            return updated
+        return self._transaction(operation)
+
+    def mark_content_invoice_sent(self, actor: CampaignOpsUser | None, content_program_id: str, checkpoint_id: str, invoice_date: date | None = None) -> ContentInvoiceCheckpointRecord:
+        return self.update_content_invoice_checkpoint(actor, content_program_id, checkpoint_id, status="sent", invoice_date=invoice_date or date.today())
+
+    def mark_content_invoice_paid(self, actor: CampaignOpsUser | None, content_program_id: str, checkpoint_id: str) -> ContentInvoiceCheckpointRecord:
+        return self.update_content_invoice_checkpoint(actor, content_program_id, checkpoint_id, status="paid")
+
+    def deactivate_content_invoice_checkpoint(self, actor: CampaignOpsUser | None, content_program_id: str, checkpoint_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            content = self._content_child_context(repository, actor, content_program_id)
+            repository.deactivate_content_invoice_checkpoint(checkpoint_id)
+            repository.append_event(event_type="content_invoice_checkpoint_deactivated", entity_type="content_invoice_checkpoint", entity_id=checkpoint_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} deactivated an invoice checkpoint.")
+        self._transaction(operation)
+
+    def reactivate_content_invoice_checkpoint(self, actor: CampaignOpsUser | None, content_program_id: str, checkpoint_id: str) -> ContentInvoiceCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> ContentInvoiceCheckpointRecord:
+            content = self._content_child_context(repository, actor, content_program_id)
+            checkpoint = repository.reactivate_content_invoice_checkpoint(checkpoint_id)
+            repository.append_event(event_type="content_invoice_checkpoint_reactivated", entity_type="content_invoice_checkpoint", entity_id=checkpoint_id, program_id=content.program_id, workstream_id=content.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._content_actor_label(actor)} reactivated invoice checkpoint {checkpoint.checkpoint_name}.")
+            return checkpoint
+        return self._transaction(operation)
 
     def create_resource(
         self,
