@@ -604,6 +604,13 @@ class DashboardWorkflowCard:
     target_section: str = "Program Workspace"
 
 
+InfluencerDashboardCard = DashboardWorkflowCard
+RetailMediaDashboardCard = DashboardWorkflowCard
+ContentDashboardCard = DashboardWorkflowCard
+InsightsDashboardCard = DashboardWorkflowCard
+RequestDashboardCard = DashboardWorkflowCard
+
+
 @dataclass(slots=True)
 class DashboardProgramRow:
     id: str
