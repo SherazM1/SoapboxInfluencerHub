@@ -47,6 +47,11 @@ from core.campaign_ops.models import (
     InfluencerLivePortfolioRow,
     InfluencerPlanningPortfolioRow,
     InfluencerPlanningStepRecord,
+    InfluencerRecapCheckpointRecord,
+    InfluencerRecapLaunchItemRecord,
+    InfluencerRecapPortfolioRow,
+    InfluencerRecapRecord,
+    InfluencerRecapRequirementRecord,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectRecord,
@@ -196,6 +201,7 @@ class CampaignOpsRepository:
             primary_owner_name=normalized.get("primary_owner_name"),
             assigned_user_ids=normalize_optional_list(normalized.get("assigned_user_ids")),
             assigned_user_names=normalize_optional_list(normalized.get("assigned_user_names")),
+            latest_update=normalized.get("latest_update"),
             start_date=normalized.get("start_date"),
             target_end_date=normalized.get("target_end_date"),
             updated_at=normalized.get("updated_at"),
@@ -552,6 +558,7 @@ class CampaignOpsRepository:
                 po.display_name as primary_owner_name,
                 coalesce(aa.user_ids, array[]::uuid[]) as assigned_user_ids,
                 coalesce(aa.user_names, array[]::text[]) as assigned_user_names,
+                p.latest_update,
                 p.start_date,
                 p.target_end_date,
                 p.updated_at,
@@ -1196,6 +1203,49 @@ class CampaignOpsRepository:
             for row in self._fetch_raw_all(query, tuple(params))
         ]
 
+    def list_dashboard_task_rows(
+        self,
+        include_inactive: bool = False,
+        permitted_user_id: str | None = None,
+    ) -> list[TaskListRow]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_inactive:
+            clauses.append("t.is_active = true")
+            clauses.append("p.is_active = true")
+        if permitted_user_id:
+            clauses.append(
+                """
+                exists (
+                    select 1 from campaign_ops_assignments a
+                    where a.program_id = p.id
+                      and a.user_id = %s
+                      and a.is_active = true
+                )
+                """
+            )
+            params.append(permitted_user_id)
+        where_clause = "where " + " and ".join(clauses) if clauses else ""
+        query = f"""
+            select
+                t.*,
+                p.program_name,
+                c.name as client_name,
+                w.workstream_type,
+                u.display_name as assigned_user_name
+            from campaign_ops_tasks t
+            join campaign_ops_programs p on p.id = t.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_workstreams w on w.id = t.workstream_id
+            left join campaign_ops_users u on u.id = t.assigned_user_id
+            {where_clause}
+            order by t.due_date asc nulls last, t.hard_deadline desc, t.updated_at desc
+        """
+        return [
+            self._task_list_row_from_db(row)
+            for row in self._fetch_raw_all(query, tuple(params))
+        ]
+
     def list_tasks_by_program(self, program_id: str) -> list[Task]:
         return self._fetch_all(
             """
@@ -1542,6 +1592,50 @@ class CampaignOpsRepository:
             for row in self._fetch_raw_all(query, tuple(params))
         ]
 
+    def list_dashboard_milestone_rows(
+        self,
+        include_inactive: bool = False,
+        permitted_user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_inactive:
+            clauses.append("m.is_active = true")
+            clauses.append("p.is_active = true")
+        if permitted_user_id:
+            clauses.append(
+                """
+                exists (
+                    select 1 from campaign_ops_assignments a
+                    where a.program_id = p.id
+                      and a.user_id = %s
+                      and a.is_active = true
+                )
+                """
+            )
+            params.append(permitted_user_id)
+        where_clause = "where " + " and ".join(clauses) if clauses else ""
+        return self._fetch_raw_all(
+            f"""
+            select
+                m.*,
+                p.program_name,
+                c.name as client_name,
+                w.workstream_type,
+                u.display_name as owner_user_name
+            from campaign_ops_milestones m
+            join campaign_ops_programs p on p.id = m.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_workstreams w on w.id = m.workstream_id
+            left join campaign_ops_users u on u.id = m.owner_user_id
+            {where_clause}
+            order by coalesce(m.target_date, m.start_date, m.end_date) asc nulls last,
+                     m.hard_deadline desc,
+                     m.created_at asc
+            """,
+            tuple(params),
+        )
+
     def create_resource(
         self,
         program_id: str,
@@ -1603,6 +1697,54 @@ class CampaignOpsRepository:
             """,
             (program_id,),
             Resource,
+        )
+
+    def list_dashboard_resource_rows(
+        self,
+        include_inactive: bool = False,
+        permitted_user_id: str | None = None,
+    ) -> list[ResourceListRow]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_inactive:
+            clauses.append("r.is_active = true")
+            clauses.append("p.is_active = true")
+        if permitted_user_id:
+            clauses.append(
+                """
+                exists (
+                    select 1 from campaign_ops_assignments a
+                    where a.program_id = p.id
+                      and a.user_id = %s
+                      and a.is_active = true
+                )
+                """
+            )
+            params.append(permitted_user_id)
+        where_clause = "where " + " and ".join(clauses) if clauses else ""
+        return self._fetch_all(
+            f"""
+            select
+                r.id,
+                r.program_id,
+                r.title,
+                r.resource_type,
+                r.workstream_id,
+                r.url,
+                r.notes,
+                r.is_required,
+                r.is_active,
+                r.created_at,
+                r.updated_at,
+                w.workstream_type
+            from campaign_ops_resources r
+            join campaign_ops_programs p on p.id = r.program_id
+            left join campaign_ops_workstreams w on w.id = r.workstream_id
+            {where_clause}
+            order by r.created_at asc
+            """,
+            tuple(params),
+            ResourceListRow,
         )
 
     def update_resource(
@@ -3386,6 +3528,228 @@ class CampaignOpsRepository:
 
     def reactivate_influencer_live_exception(self, exception_id: str) -> InfluencerLiveExceptionRecord:
         return self._write_returning("update campaign_ops_influencer_live_exceptions set is_active = true where id = %s and is_active = false returning *", (exception_id,), InfluencerLiveExceptionRecord)
+
+    def create_or_update_influencer_recap_record(self, influencer_campaign_id: str, **kwargs: Any) -> InfluencerRecapRecord:
+        fields = [
+            "recap_status", "latest_update", "waiting_on", "reporting_due_date", "draft_recap_due_date",
+            "internal_review_date", "client_review_date", "client_recap_date", "recap_delivered_date",
+            "final_close_date", "final_invoice_sent_date", "sales_lift_analysis_required", "sales_lift_analysis_status",
+            "final_performance_data_status", "creator_closeout_status", "eop_survey_status", "invoice_status",
+            "financial_close_status", "lessons_learned", "is_active",
+        ]
+        return self._write_returning(
+            f"""
+            insert into campaign_ops_influencer_recap_records (influencer_campaign_id, {', '.join(fields)})
+            values (%s, {', '.join(['%s'] * len(fields))})
+            on conflict (influencer_campaign_id) do update set {', '.join(f'{field} = excluded.{field}' for field in fields)}
+            returning *
+            """,
+            (
+                influencer_campaign_id,
+                *tuple(
+                    False if field == "sales_lift_analysis_required" and field not in kwargs
+                    else True if field == "is_active" and field not in kwargs
+                    else kwargs.get(field)
+                    for field in fields
+                ),
+            ),
+            InfluencerRecapRecord,
+        )
+
+    def get_influencer_recap_record(self, influencer_campaign_id: str) -> InfluencerRecapRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_influencer_recap_records where influencer_campaign_id = %s",
+            (influencer_campaign_id,),
+            InfluencerRecapRecord,
+        )
+
+    def update_influencer_recap_record(self, recap_record_id: str, **kwargs: Any) -> InfluencerRecapRecord:
+        fields = [
+            "recap_status", "latest_update", "waiting_on", "reporting_due_date", "draft_recap_due_date",
+            "internal_review_date", "client_review_date", "client_recap_date", "recap_delivered_date",
+            "final_close_date", "final_invoice_sent_date", "sales_lift_analysis_required", "sales_lift_analysis_status",
+            "final_performance_data_status", "creator_closeout_status", "eop_survey_status", "invoice_status",
+            "financial_close_status", "lessons_learned", "is_active",
+        ]
+        return self._update_content_child("campaign_ops_influencer_recap_records", InfluencerRecapRecord, recap_record_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def _influencer_recap_portfolio_row_from_db(self, row: dict[str, Any]) -> InfluencerRecapPortfolioRow:
+        normalized = normalize_row(row)
+        return InfluencerRecapPortfolioRow(
+            id=str(normalized["id"]), program_id=str(normalized["program_id"]), program_name=str(normalized["program_name"]),
+            client_name=normalized.get("client_name"), workstream_id=normalize_id(normalized.get("workstream_id")),
+            campaign_title=str(normalized["campaign_title"]), manager_user_id=normalize_id(normalized.get("manager_user_id")),
+            manager_display_name=normalized.get("manager_display_name"), influencer_stage=str(normalized["influencer_stage"]),
+            recap_record_id=normalize_id(normalized.get("recap_record_id")), recap_status=normalized.get("recap_status"),
+            latest_update=normalized.get("recap_latest_update") or normalized.get("latest_update"), waiting_on=normalized.get("recap_waiting_on") or normalized.get("waiting_on"),
+            all_creators_live=bool(normalized.get("all_creators_live", False)), creator_closeout_status=normalized.get("creator_closeout_status"),
+            eop_survey_status=normalized.get("eop_survey_status"), final_performance_data_status=normalized.get("final_performance_data_status"),
+            sales_lift_analysis_required=bool(normalized.get("sales_lift_analysis_required", False)),
+            sales_lift_analysis_status=normalized.get("sales_lift_analysis_status"), recap_deck_status=normalized.get("recap_deck_status"),
+            client_recap_date=normalized.get("client_recap_date"), invoice_status=normalized.get("recap_invoice_status") or normalized.get("invoice_status"),
+            financial_close_status=normalized.get("financial_close_status"), open_requirement_count=int(normalized.get("open_requirement_count") or 0),
+            launch_item_count=int(normalized.get("launch_item_count") or 0), open_exception_count=int(normalized.get("open_exception_count") or 0),
+            total_creator_count=int(normalized.get("total_creator_count") or 0), live_creator_count=int(normalized.get("live_creator_count") or 0),
+            completed_creator_count=int(normalized.get("completed_creator_count") or 0), missing_final_links_count=int(normalized.get("missing_final_links_count") or 0),
+            missing_final_impressions_count=int(normalized.get("missing_final_impressions_count") or 0), paid_live_incomplete_count=int(normalized.get("paid_live_incomplete_count") or 0),
+            program_status=str(normalized["program_status"]), program_risk=str(normalized["program_risk"]),
+            reporting_due_date=normalized.get("reporting_due_date"), next_checkpoint=normalized.get("next_checkpoint"),
+            next_checkpoint_due_date=normalized.get("next_checkpoint_due_date"), track_sheet_url=normalized.get("track_sheet_url"),
+            influencer_brief_url=normalized.get("influencer_brief_url"), click2cart_link_url=normalized.get("click2cart_link_url"),
+            bitly_link_url=normalized.get("bitly_link_url"), invoice_url=normalized.get("invoice_url"), eop_survey_url=normalized.get("eop_survey_url"),
+            live_content_tracker_url=normalized.get("live_content_tracker_url"), recap_deck_url=normalized.get("recap_deck_url"),
+            final_performance_data_url=normalized.get("final_performance_data_url"), sales_lift_analysis_url=normalized.get("sales_lift_analysis_url"),
+            ready_to_close_state=str(normalized.get("ready_to_close_state") or "Not Ready"),
+            is_active=bool(normalized.get("is_active", True)), created_at=normalized.get("created_at"), updated_at=normalized.get("updated_at"),
+        )
+
+    def list_influencer_recap_campaigns(self, include_inactive: bool = False, manager_user_id: str | None = None) -> list[InfluencerRecapPortfolioRow]:
+        clauses = ["ic.influencer_stage in ('recapping','complete')" if include_inactive else "ic.influencer_stage = 'recapping'"]
+        params: list[Any] = []
+        if not include_inactive:
+            clauses.append("ic.is_active = true")
+        if manager_user_id:
+            clauses.append("ic.manager_user_id = %s")
+            params.append(manager_user_id)
+        query = f"""
+            with next_checkpoint as (
+                select distinct on (influencer_campaign_id) influencer_campaign_id, checkpoint_title, due_date
+                from campaign_ops_influencer_recap_checkpoints
+                where is_active = true and coalesce(status, '') <> 'complete' and completed_date is null
+                order by influencer_campaign_id, due_date asc nulls last, sequence_order asc, created_at asc
+            ), req_agg as (
+                select influencer_campaign_id,
+                       count(*) filter (where is_active = true and required = true and coalesce(status, 'not_started') not in ('complete','not_required','cancelled')) as open_requirement_count,
+                       max(status) filter (where is_active = true and requirement_type = 'Recap Deck') as recap_deck_status
+                from campaign_ops_influencer_recap_requirements group by influencer_campaign_id
+            ), launch_agg as (
+                select influencer_campaign_id, count(*) filter (where is_active = true) as launch_item_count
+                from campaign_ops_influencer_recap_launch_items group by influencer_campaign_id
+            ), creator_agg as (
+                select influencer_campaign_id,
+                       count(*) filter (where is_active = true) as total_creator_count,
+                       count(*) filter (where is_active = true and live_status in ('live','paid_live_complete','complete')) as live_creator_count,
+                       count(*) filter (where is_active = true and live_status in ('paid_live_complete','complete')) as completed_creator_count,
+                       count(*) filter (where is_active = true and (content_url is null or content_url = '')) as missing_final_links_count,
+                       count(*) filter (where is_active = true and impressions_reporting_required = true and latest_impressions is null) as missing_final_impressions_count,
+                       count(*) filter (where is_active = true and coalesce(live_status, '') not in ('paid_live_complete','complete','cancelled')) as paid_live_incomplete_count
+                from campaign_ops_influencer_live_creators group by influencer_campaign_id
+            ), exception_agg as (
+                select influencer_campaign_id,
+                       count(*) filter (where is_active = true and coalesce(status, 'open') not in ('resolved','cancelled')) as open_exception_count
+                from campaign_ops_influencer_live_exceptions group by influencer_campaign_id
+            ), resource_agg as (
+                select program_id,
+                    max(url) filter (where resource_type = 'Track Sheet' and is_active = true) as track_sheet_url,
+                    max(url) filter (where resource_type = 'Influencer Brief' and is_active = true) as influencer_brief_url,
+                    max(url) filter (where resource_type = 'Click2Cart Link' and is_active = true) as click2cart_link_url,
+                    max(url) filter (where resource_type = 'Bitly Link' and is_active = true) as bitly_link_url,
+                    max(url) filter (where resource_type = 'Invoice' and is_active = true) as invoice_url,
+                    max(url) filter (where resource_type = 'EOP Survey' and is_active = true) as eop_survey_url,
+                    max(url) filter (where resource_type = 'Live Content Tracker' and is_active = true) as live_content_tracker_url,
+                    max(url) filter (where resource_type in ('Recap Deck','Results Deck','Client Recap Deck') and is_active = true) as recap_deck_url,
+                    max(url) filter (where resource_type = 'Final Performance Data' and is_active = true) as final_performance_data_url,
+                    max(url) filter (where resource_type = 'Sales Lift Analysis' and is_active = true) as sales_lift_analysis_url
+                from campaign_ops_resources group by program_id
+            )
+            select ic.*, rr.id as recap_record_id, rr.recap_status, rr.latest_update as recap_latest_update,
+                   rr.waiting_on as recap_waiting_on, rr.reporting_due_date, rr.client_recap_date,
+                   rr.sales_lift_analysis_required, rr.sales_lift_analysis_status, rr.final_performance_data_status,
+                   rr.creator_closeout_status, rr.eop_survey_status, rr.invoice_status as recap_invoice_status,
+                   rr.financial_close_status,
+                   p.program_name, p.status as program_status, p.risk_level as program_risk,
+                   c.name as client_name, u.display_name as manager_display_name,
+                   coalesce(ca.total_creator_count, 0) as total_creator_count,
+                   coalesce(ca.live_creator_count, 0) as live_creator_count,
+                   coalesce(ca.completed_creator_count, 0) as completed_creator_count,
+                   coalesce(ca.missing_final_links_count, 0) as missing_final_links_count,
+                   coalesce(ca.missing_final_impressions_count, 0) as missing_final_impressions_count,
+                   coalesce(ca.paid_live_incomplete_count, 0) as paid_live_incomplete_count,
+                   coalesce(ea.open_exception_count, 0) as open_exception_count,
+                   coalesce(req.open_requirement_count, 0) as open_requirement_count,
+                   req.recap_deck_status, coalesce(la.launch_item_count, 0) as launch_item_count,
+                   nc.checkpoint_title as next_checkpoint, nc.due_date as next_checkpoint_due_date,
+                   ra.track_sheet_url, ra.influencer_brief_url, ra.click2cart_link_url, ra.bitly_link_url,
+                   ra.invoice_url, ra.eop_survey_url, ra.live_content_tracker_url, ra.recap_deck_url,
+                   ra.final_performance_data_url, ra.sales_lift_analysis_url,
+                   case
+                     when coalesce(ea.open_exception_count, 0) > 0 then 'Needs Attention'
+                     when coalesce(req.open_requirement_count, 0) > 0 or coalesce(ca.paid_live_incomplete_count, 0) > 0 then 'Not Ready'
+                     when ic.influencer_stage = 'complete' or rr.recap_status = 'complete' then 'Complete'
+                     else 'Ready to Close'
+                   end as ready_to_close_state
+            from campaign_ops_influencer_campaigns ic
+            join campaign_ops_programs p on p.id = ic.program_id
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join campaign_ops_users u on u.id = ic.manager_user_id
+            left join campaign_ops_influencer_recap_records rr on rr.influencer_campaign_id = ic.id
+            left join req_agg req on req.influencer_campaign_id = ic.id
+            left join launch_agg la on la.influencer_campaign_id = ic.id
+            left join creator_agg ca on ca.influencer_campaign_id = ic.id
+            left join exception_agg ea on ea.influencer_campaign_id = ic.id
+            left join next_checkpoint nc on nc.influencer_campaign_id = ic.id
+            left join resource_agg ra on ra.program_id = ic.program_id
+            where {' and '.join(clauses)}
+            order by ic.updated_at desc, ic.campaign_title asc
+        """
+        return [self._influencer_recap_portfolio_row_from_db(row) for row in self._fetch_raw_all(query, tuple(params))]
+
+    def get_influencer_recap_campaign_detail(self, campaign_id: str) -> InfluencerRecapPortfolioRow | None:
+        return next((row for row in self.list_influencer_recap_campaigns(include_inactive=True) if row.id == campaign_id), None)
+
+    def create_influencer_recap_checkpoint(self, influencer_campaign_id: str, checkpoint_title: str, **kwargs: Any) -> InfluencerRecapCheckpointRecord:
+        fields = ["influencer_campaign_id", "checkpoint_type", "checkpoint_title", "sequence_order", "responsible_party", "assigned_user_id", "due_date", "completed_date", "status", "waiting_on", "notes", "hard_deadline"]
+        return self._create_content_child("campaign_ops_influencer_recap_checkpoints", InfluencerRecapCheckpointRecord, fields, (influencer_campaign_id, kwargs.get("checkpoint_type"), require_text(checkpoint_title, "checkpoint_title"), kwargs.get("sequence_order", 0), kwargs.get("responsible_party"), kwargs.get("assigned_user_id"), kwargs.get("due_date"), kwargs.get("completed_date"), kwargs.get("status"), kwargs.get("waiting_on"), kwargs.get("notes"), bool(kwargs.get("hard_deadline", False))))
+
+    def list_influencer_recap_checkpoints(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapCheckpointRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_recap_checkpoints where influencer_campaign_id = %s {clause} order by sequence_order asc, due_date asc nulls last, created_at asc", (influencer_campaign_id,), InfluencerRecapCheckpointRecord)
+
+    def update_influencer_recap_checkpoint(self, checkpoint_id: str, **kwargs: Any) -> InfluencerRecapCheckpointRecord:
+        fields = ["checkpoint_type", "checkpoint_title", "sequence_order", "responsible_party", "assigned_user_id", "due_date", "completed_date", "status", "waiting_on", "notes", "hard_deadline"]
+        return self._update_content_child("campaign_ops_influencer_recap_checkpoints", InfluencerRecapCheckpointRecord, checkpoint_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_recap_checkpoint(self, checkpoint_id: str) -> None:
+        self._execute("update campaign_ops_influencer_recap_checkpoints set is_active = false where id = %s and is_active = true", (checkpoint_id,))
+
+    def reactivate_influencer_recap_checkpoint(self, checkpoint_id: str) -> InfluencerRecapCheckpointRecord:
+        return self._write_returning("update campaign_ops_influencer_recap_checkpoints set is_active = true where id = %s and is_active = false returning *", (checkpoint_id,), InfluencerRecapCheckpointRecord)
+
+    def create_influencer_recap_requirement(self, influencer_campaign_id: str, requirement_type: str, requirement_title: str, **kwargs: Any) -> InfluencerRecapRequirementRecord:
+        fields = ["influencer_campaign_id", "requirement_type", "requirement_title", "status", "required", "due_date", "received_date", "completed_date", "waiting_on", "resource_id", "reporting_request_id", "notes"]
+        return self._create_content_child("campaign_ops_influencer_recap_requirements", InfluencerRecapRequirementRecord, fields, (influencer_campaign_id, require_text(requirement_type, "requirement_type"), require_text(requirement_title, "requirement_title"), kwargs.get("status"), bool(kwargs.get("required", True)), kwargs.get("due_date"), kwargs.get("received_date"), kwargs.get("completed_date"), kwargs.get("waiting_on"), kwargs.get("resource_id"), kwargs.get("reporting_request_id"), kwargs.get("notes")))
+
+    def list_influencer_recap_requirements(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapRequirementRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_recap_requirements where influencer_campaign_id = %s {clause} order by required desc, due_date asc nulls last, requirement_type asc, created_at asc", (influencer_campaign_id,), InfluencerRecapRequirementRecord)
+
+    def update_influencer_recap_requirement(self, requirement_id: str, **kwargs: Any) -> InfluencerRecapRequirementRecord:
+        fields = ["requirement_type", "requirement_title", "status", "required", "due_date", "received_date", "completed_date", "waiting_on", "resource_id", "reporting_request_id", "notes"]
+        return self._update_content_child("campaign_ops_influencer_recap_requirements", InfluencerRecapRequirementRecord, requirement_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_recap_requirement(self, requirement_id: str) -> None:
+        self._execute("update campaign_ops_influencer_recap_requirements set is_active = false where id = %s and is_active = true", (requirement_id,))
+
+    def reactivate_influencer_recap_requirement(self, requirement_id: str) -> InfluencerRecapRequirementRecord:
+        return self._write_returning("update campaign_ops_influencer_recap_requirements set is_active = true where id = %s and is_active = false returning *", (requirement_id,), InfluencerRecapRequirementRecord)
+
+    def create_influencer_recap_launch_item(self, influencer_campaign_id: str, product_name: str, **kwargs: Any) -> InfluencerRecapLaunchItemRecord:
+        fields = ["influencer_campaign_id", "group_name", "product_name", "retailer_name", "online_launch_date", "in_store_launch_date", "launch_status", "product_url", "retailer_url", "notes", "sort_order"]
+        return self._create_content_child("campaign_ops_influencer_recap_launch_items", InfluencerRecapLaunchItemRecord, fields, (influencer_campaign_id, kwargs.get("group_name"), require_text(product_name, "product_name"), kwargs.get("retailer_name"), kwargs.get("online_launch_date"), kwargs.get("in_store_launch_date"), kwargs.get("launch_status"), kwargs.get("product_url"), kwargs.get("retailer_url"), kwargs.get("notes"), kwargs.get("sort_order", 0)))
+
+    def list_influencer_recap_launch_items(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapLaunchItemRecord]:
+        clause = "" if include_inactive else "and is_active = true"
+        return self._fetch_all(f"select * from campaign_ops_influencer_recap_launch_items where influencer_campaign_id = %s {clause} order by sort_order asc, group_name asc nulls last, product_name asc", (influencer_campaign_id,), InfluencerRecapLaunchItemRecord)
+
+    def update_influencer_recap_launch_item(self, launch_item_id: str, **kwargs: Any) -> InfluencerRecapLaunchItemRecord:
+        fields = ["group_name", "product_name", "retailer_name", "online_launch_date", "in_store_launch_date", "launch_status", "product_url", "retailer_url", "notes", "sort_order"]
+        return self._update_content_child("campaign_ops_influencer_recap_launch_items", InfluencerRecapLaunchItemRecord, launch_item_id, fields, tuple(kwargs.get(field) for field in fields))
+
+    def deactivate_influencer_recap_launch_item(self, launch_item_id: str) -> None:
+        self._execute("update campaign_ops_influencer_recap_launch_items set is_active = false where id = %s and is_active = true", (launch_item_id,))
+
+    def reactivate_influencer_recap_launch_item(self, launch_item_id: str) -> InfluencerRecapLaunchItemRecord:
+        return self._write_returning("update campaign_ops_influencer_recap_launch_items set is_active = true where id = %s and is_active = false returning *", (launch_item_id,), InfluencerRecapLaunchItemRecord)
 
     def append_event(
         self,

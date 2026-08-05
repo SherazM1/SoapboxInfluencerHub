@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.campaign_ops.ui.navigation import clear_all_specialized_state
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.permissions import can_access_admin
 
@@ -41,6 +42,7 @@ SESSION_KEYS = {
     "campaign_ops_initialization_message",
     "campaign_ops_initialization_error",
     "campaign_ops_initialization_result",
+    "campaign_ops_styles_applied",
     "campaign_ops_workspace_tab",
     "campaign_ops_milestone_create_open",
     "campaign_ops_milestone_edit_id",
@@ -111,6 +113,47 @@ SESSION_KEYS = {
     "campaign_ops_influencer_live_creator_edit_id",
     "campaign_ops_influencer_exception_edit_id",
     "campaign_ops_influencer_live_show_inactive",
+    "campaign_ops_influencer_recap_view",
+    "campaign_ops_influencer_recap_manager_filter",
+    "campaign_ops_selected_influencer_recap_campaign_id",
+    "campaign_ops_influencer_recap_filters",
+    "campaign_ops_influencer_recap_checkpoint_edit_id",
+    "campaign_ops_influencer_recap_requirement_edit_id",
+    "campaign_ops_influencer_recap_launch_item_edit_id",
+    "campaign_ops_influencer_recap_show_inactive",
+    "campaign_ops_cross_team_filters",
+    "campaign_ops_cross_team_person_view",
+    "campaign_ops_cross_team_include_test_records",
+    "campaign_ops_cross_team_upcoming_days",
+    "campaign_ops_cross_team_attention_filter",
+    "campaign_ops_cross_team_waiting_filter",
+    "campaign_ops_cross_team_workflow_filter",
+    "campaign_ops_cross_team_selected_program_id",
+    "campaign_ops_cross_team_last_refresh",
+    "campaign_ops_cross_team_program_view_mode",
+    "campaign_ops_cross_team_owner",
+    "campaign_ops_cross_team_assigned",
+    "campaign_ops_cross_team_client",
+    "campaign_ops_cross_team_program",
+    "campaign_ops_cross_team_primary_workflow",
+    "campaign_ops_cross_team_connected_workstream",
+    "campaign_ops_cross_team_influencer_stage",
+    "campaign_ops_cross_team_cross_stage",
+    "campaign_ops_cross_team_status",
+    "campaign_ops_cross_team_risk",
+    "campaign_ops_cross_team_waiting_on",
+    "campaign_ops_cross_team_active_state",
+    "campaign_ops_cross_team_search",
+    "campaign_ops_cross_team_needs_only",
+    "campaign_ops_cross_team_start_from",
+    "campaign_ops_cross_team_target_to",
+    "campaign_ops_cross_team_refresh",
+    "campaign_ops_cross_team_clear",
+    "campaign_ops_cross_team_open_my_work",
+    "campaign_ops_cross_team_open_my_programs",
+    "campaign_ops_cross_team_open_program_select",
+    "campaign_ops_cross_team_open_program",
+    "campaign_ops_cross_team_export_csv",
 }
 
 
@@ -139,6 +182,8 @@ def update_viewer_state(
     sections = get_sections_for_user(user, viewer)
     if previous_viewer != viewer:
         clear_selected_program(session_state)
+        clear_all_specialized_state(session_state)
+        session_state.pop("campaign_ops_cross_team_selected_program_id", None)
         session_state["campaign_ops_previous_viewer"] = viewer
     if session_state.get("campaign_ops_section") not in sections:
         session_state["campaign_ops_section"] = get_default_section(user, viewer)

@@ -277,6 +277,13 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         service.update_influencer_live_overview(actor, campaign.id, manager_user_id=user_options[manager], planning_status=live_status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), is_on_hold=on_hold, hold_reason=trim_or_none(hold_reason), launch_date=launch, wrap_date=wrap, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status), invoice_amount=invoice_amount)
         st.rerun()
     st.write(f"Planning history: {len(summary.planning_steps)} planning steps, {len(summary.approval_rounds)} approvals, {len(summary.content_rounds)} content rounds preserved.")
+    override = st.checkbox("Administrator override unresolved Live readiness", key=f"campaign_ops_influencer_live_recap_override_{campaign.id}")
+    if st.button("Move Campaign to Recapping", key=f"campaign_ops_influencer_live_to_recap_{campaign.id}"):
+        service.transition_influencer_campaign_to_recapping(actor, campaign.id, allow_override=override)
+        st.session_state["campaign_ops_selected_influencer_recap_campaign_id"] = campaign.id
+        st.session_state.pop("campaign_ops_selected_influencer_live_campaign_id", None)
+        st.session_state["campaign_ops_influencer_view"] = "Recapping"
+        st.rerun()
     cols = st.columns(2)
     if campaign.is_active and cols[0].button("Deactivate Campaign", key=f"campaign_ops_influencer_live_deactivate_{campaign.id}"):
         service.deactivate_influencer_campaign(actor, campaign.id); st.rerun()

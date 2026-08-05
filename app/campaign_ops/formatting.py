@@ -3,6 +3,11 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from app.campaign_ops.ui.formatting import (
+    format_currency as format_display_currency,
+    format_display_date,
+    format_display_datetime,
+)
 from core.campaign_ops.enums import (
     AssignmentRole,
     CrossStage,
@@ -29,15 +34,15 @@ def enum_label_map(enum_type: type) -> dict[str, str]:
 
 
 def format_date(value: date | datetime | None) -> str:
-    if value is None:
-        return "-"
-    return value.strftime("%Y-%m-%d")
+    return format_display_date(value, empty="-")
 
 
 def format_datetime(value: datetime | None) -> str:
-    if value is None:
-        return "-"
-    return value.strftime("%Y-%m-%d %H:%M")
+    return format_display_datetime(value, empty="-")
+
+
+def format_currency(value: float | int | None) -> str:
+    return format_display_currency(value, empty="-")
 
 
 def format_list(values: list[str] | tuple[str, ...] | None) -> str:

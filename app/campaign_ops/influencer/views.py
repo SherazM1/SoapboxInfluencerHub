@@ -9,6 +9,7 @@ import streamlit as st
 from app.campaign_ops.formatting import RISK_LABELS, format_date, format_datetime, safe_text, title_label
 from app.campaign_ops.influencer.formatting import PORTFOLIO_COLUMNS, planning_portfolio_rows, status_label
 from app.campaign_ops.influencer.live_views import render_live
+from app.campaign_ops.influencer.recap_views import render_recapping
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
 from app.campaign_ops.state import set_selected_program
@@ -48,7 +49,7 @@ def render_influencer(actor: CampaignOpsUser, service: CampaignOpsService, users
         render_live(actor, service, users)
         return
     if section == "Recapping":
-        st.info("Influencer Recapping will extend the same Influencer campaign records in a later pass.")
+        render_recapping(actor, service, users)
         return
     selected_id = st.session_state.get("campaign_ops_selected_influencer_campaign_id")
     if selected_id:

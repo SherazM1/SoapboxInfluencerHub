@@ -13,6 +13,7 @@ from app.campaign_ops.formatting import (
     safe_text,
 )
 from app.campaign_ops.state import clear_selected_program
+from app.campaign_ops.ui.components import render_page_header, render_section_header
 from app.campaign_ops.timeline_views import render_timeline
 from app.campaign_ops.resource_views import render_resources
 from app.campaign_ops.note_views import render_notes
@@ -67,11 +68,11 @@ def render_program_workspace(
 def render_workspace_header(summary: ProgramWorkspaceSummary) -> None:
     program = summary.program
     owner = primary_owner(summary.assignments, summary.users)
-    st.subheader(program.program_name)
-    st.caption(
-        f"{safe_text(summary.client.name if summary.client else None)} | "
-        f"{WORKFLOW_LABELS.get(program.primary_workstream_type or '', '-')} | "
-        f"{'Active' if program.is_active else 'Archived'}"
+    render_page_header(
+        program.program_name,
+        f"{safe_text(summary.client.name if summary.client else None)} | {WORKFLOW_LABELS.get(program.primary_workstream_type or '', '-')} | {'Active' if program.is_active else 'Archived'}",
+        active_module="Program Workspace",
+        status=program.status,
     )
     cols = st.columns(4)
     cols[0].metric("Status", STATUS_LABELS.get(program.status, program.status))
@@ -145,8 +146,7 @@ def render_admin_archive_controls(
 
 
 def render_overview(summary: ProgramWorkspaceSummary, actor: CampaignOpsUser | None = None) -> None:
-    st.markdown("### Overview")
-    st.caption("Persisted shared program details.")
+    render_section_header("Overview", "Persisted shared program details.")
     program = summary.program
     editable = can_edit_program(actor, program, [a for a in summary.assignments if a.is_active])
     if editable:
@@ -567,6 +567,7 @@ def render_activity(summary: ProgramWorkspaceSummary) -> None:
             "Reporting Requests",
             "Influencer",
             "Influencer Live",
+            "Influencer Recapping",
             "Insights",
             "Retail Media",
             "Content Management",
@@ -620,6 +621,8 @@ def activity_matches_filter(event_type: str, filter_label: str) -> bool:
         return event_type.startswith("influencer_")
     if filter_label == "Influencer Live":
         return event_type.startswith("influencer_live_") or event_type.startswith("influencer_creator_") or event_type == "influencer_stage_moved_to_live"
+    if filter_label == "Influencer Recapping":
+        return event_type.startswith("influencer_recap_") or event_type in ("influencer_stage_moved_to_recapping", "influencer_stage_completed")
     if filter_label == "Insights":
         return event_type.startswith("insights_")
     if filter_label == "Retail Media":

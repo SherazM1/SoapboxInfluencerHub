@@ -185,6 +185,103 @@ def normalize_live_status(value: str | None) -> str:
     return _normalize(value, LIVE_STATUS_READY_TO_LAUNCH, LIVE_STATUSES, "Live status")
 
 
+RECAP_STATUS_READY_TO_RECAP = "ready_to_recap"
+RECAP_STATUS_COLLECTING_DATA = "collecting_data"
+RECAP_STATUS_WAITING_ON_FINAL_LINKS = "waiting_on_final_links"
+RECAP_STATUS_WAITING_ON_CLIENT = "waiting_on_client"
+RECAP_STATUS_WAITING_ON_REPORTING = "waiting_on_reporting"
+RECAP_STATUS_DRAFTING_RECAP = "drafting_recap"
+RECAP_STATUS_INTERNAL_REVIEW = "internal_review"
+RECAP_STATUS_CLIENT_REVIEW = "client_review"
+RECAP_STATUS_REVISIONS = "revisions"
+RECAP_STATUS_RECAP_SCHEDULED = "recap_scheduled"
+RECAP_STATUS_RECAP_DELIVERED = "recap_delivered"
+RECAP_STATUS_FINANCIAL_CLOSEOUT = "financial_closeout"
+RECAP_STATUS_READY_TO_CLOSE = "ready_to_close"
+RECAP_STATUS_COMPLETE = "complete"
+RECAP_STATUS_ON_HOLD = "on_hold"
+RECAP_STATUS_CANCELLED = "cancelled"
+
+RECAP_STATUSES = (
+    RECAP_STATUS_READY_TO_RECAP,
+    RECAP_STATUS_COLLECTING_DATA,
+    RECAP_STATUS_WAITING_ON_FINAL_LINKS,
+    RECAP_STATUS_WAITING_ON_CLIENT,
+    RECAP_STATUS_WAITING_ON_REPORTING,
+    RECAP_STATUS_DRAFTING_RECAP,
+    RECAP_STATUS_INTERNAL_REVIEW,
+    RECAP_STATUS_CLIENT_REVIEW,
+    RECAP_STATUS_REVISIONS,
+    RECAP_STATUS_RECAP_SCHEDULED,
+    RECAP_STATUS_RECAP_DELIVERED,
+    RECAP_STATUS_FINANCIAL_CLOSEOUT,
+    RECAP_STATUS_READY_TO_CLOSE,
+    RECAP_STATUS_COMPLETE,
+    RECAP_STATUS_ON_HOLD,
+    RECAP_STATUS_CANCELLED,
+)
+
+RECAP_CHECKPOINT_STATUSES = ("not_started", "in_progress", "waiting", "complete", "reopened", "cancelled")
+RECAP_REQUIREMENT_STATUSES = ("not_started", "requested", "waiting", "received", "complete", "reopened", "not_required", "cancelled")
+RECAP_LAUNCH_STATUSES = ("not_started", "online_live", "in_store_live", "live", "delayed", "cancelled")
+RECAP_REQUIREMENT_TYPES = (
+    "Final Creator Links",
+    "Final Impressions",
+    "Performance Data",
+    "Sales Lift Analysis",
+    "EOP Survey",
+    "Recap Deck",
+    "Live Content Tracker",
+    "Invoice",
+    "Client Recap",
+    "Product Launch Confirmation",
+    "Custom",
+)
+
+RECAP_RESOURCE_TYPES = (
+    "Track Sheet",
+    "Influencer Brief",
+    "Click2Cart Link",
+    "Bitly Link",
+    "Invoice",
+    "EOP Survey",
+    "Live Content Tracker",
+    "Recap Deck",
+    "Results Deck",
+    "Final Performance Data",
+    "Sales Lift Analysis",
+    "Client Recap Deck",
+    "Product Link",
+    "Retailer Link",
+    "Custom",
+)
+
+STANDARD_RECAP_CHECKLIST_TEMPLATE = (
+    "Confirm all creators are live",
+    "Confirm all creator links are collected",
+    "Confirm final impressions are collected",
+    "Confirm paid-live periods are complete",
+    "Resolve remaining creator exceptions",
+    "Send or confirm EOP Survey",
+    "Receive final performance data",
+    "Complete sales lift analysis when required",
+    "Build recap deck",
+    "Internal recap review",
+    "Send recap deck to client",
+    "Receive client revisions",
+    "Deliver final recap",
+    "Hold client recap meeting",
+    "Send final invoice",
+    "Confirm financial closeout",
+    "Record lessons learned",
+    "Mark campaign complete",
+)
+
+
+def normalize_recap_status(value: str | None) -> str:
+    return _normalize(value, RECAP_STATUS_READY_TO_RECAP, RECAP_STATUSES, "Recap status")
+
+
 def normalize_optional_status(value: str | None, allowed: tuple[str, ...], label: str) -> str | None:
     if value in (None, ""):
         return None

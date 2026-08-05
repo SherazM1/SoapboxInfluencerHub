@@ -7,6 +7,7 @@ import streamlit as st
 
 from app.campaign_ops.formatting import ROLE_LABELS
 from app.campaign_ops.state import get_sections_for_user, set_section
+from app.campaign_ops.ui.components import render_empty_state, render_page_header, render_section_header
 from core.campaign_ops.db import CampaignOpsSetupStatus
 from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.migrations import initialize_campaign_ops_database
@@ -155,13 +156,13 @@ def render_database_setup(
 def render_role_caption(user: CampaignOpsUser | None) -> None:
     if user is None:
         return
-    st.caption(f"Role: {ROLE_LABELS.get(user.role, user.role)}")
+    st.caption(f"Viewer context: {user.display_name} | Role: {ROLE_LABELS.get(user.role, user.role)}")
 
 
 def render_section_navigation(user: CampaignOpsUser | None, viewer: str) -> str:
     sections = get_sections_for_user(user, viewer)
     active_section = st.session_state.get("campaign_ops_section", sections[0])
-    st.subheader("Workspace Areas")
+    render_section_header("Workspace Areas", "Choose the active Campaign Operations module.")
     columns = st.columns(4)
     for index, section in enumerate(sections):
         with columns[index % 4]:
@@ -176,5 +177,5 @@ def render_section_navigation(user: CampaignOpsUser | None, viewer: str) -> str:
 
 
 def render_placeholder(section: str) -> None:
-    st.subheader(section)
-    st.info("This Campaign Operations area is reserved for a later implementation pass.")
+    render_page_header(section, "This Campaign Operations area is reserved for a later implementation pass.", active_module=section)
+    render_empty_state("module not initialized")

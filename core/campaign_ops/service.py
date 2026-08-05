@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -34,6 +34,11 @@ from core.campaign_ops.models import (
     ContentSkuGroupRecord,
     ContentSkuRecord,
     ContentSubmissionRecord,
+    CrossTeamDashboardSummary,
+    DashboardMetricSet,
+    DashboardProgramRow,
+    DashboardTaskRow,
+    DashboardWorkflowCard,
     InfluencerApprovalRoundRecord,
     InfluencerCampaignDetail,
     InfluencerCampaignRecord,
@@ -47,12 +52,20 @@ from core.campaign_ops.models import (
     InfluencerLiveWorkspaceSummary,
     InfluencerPlanningPortfolioRow,
     InfluencerPlanningStepRecord,
+    InfluencerCreatorCloseoutSummary,
+    InfluencerRecapCheckpointRecord,
+    InfluencerRecapLaunchItemRecord,
+    InfluencerRecapPortfolioRow,
+    InfluencerRecapRecord,
+    InfluencerRecapRequirementRecord,
+    InfluencerRecapWorkspaceSummary,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectDetail,
     InsightsProjectRecord,
     Milestone,
     MilestoneListRow,
+    NeedsAttentionRow,
     NoteListRow,
     Program,
     ProgramAssignment,
@@ -73,6 +86,9 @@ from core.campaign_ops.models import (
     ResourceListRow,
     Task,
     TaskListRow,
+    UpcomingMilestoneRow,
+    WaitingOnRow,
+    WorkloadByPersonRow,
     Workstream,
     enum_value,
     require_text,
@@ -129,6 +145,8 @@ from core.campaign_ops.influencer import (
     INFLUENCER_RESOURCE_TYPES,
     INFLUENCER_STAGE_LIVE,
     INFLUENCER_STAGE_PLANNING,
+    INFLUENCER_STAGE_RECAPPING,
+    INFLUENCER_STAGE_COMPLETE,
     LIVE_CHECKPOINT_STATUSES,
     LIVE_EXCEPTION_STATUSES,
     LIVE_EXCEPTION_TYPES,
@@ -138,9 +156,19 @@ from core.campaign_ops.influencer import (
     PLANNING_STATUS_ON_HOLD,
     PLANNING_STATUS_NOT_STARTED,
     PLANNING_STEP_STATUSES,
+    RECAP_CHECKPOINT_STATUSES,
+    RECAP_LAUNCH_STATUSES,
+    RECAP_REQUIREMENT_STATUSES,
+    RECAP_REQUIREMENT_TYPES,
+    RECAP_RESOURCE_TYPES,
+    RECAP_STATUS_COMPLETE,
+    RECAP_STATUS_READY_TO_CLOSE,
+    RECAP_STATUS_READY_TO_RECAP,
+    RECAP_STATUSES,
     RESPONSIBLE_PARTIES,
     STANDARD_LIVE_CHECKPOINT_TEMPLATE,
     STANDARD_PLANNING_TEMPLATE,
+    STANDARD_RECAP_CHECKLIST_TEMPLATE,
     WAVE_STATUSES,
     CREATOR_APPROVAL_STATUSES,
     CREATOR_DRAFT_STATUSES,
@@ -149,6 +177,7 @@ from core.campaign_ops.influencer import (
     normalize_live_status,
     normalize_optional_status as normalize_influencer_optional_status,
     normalize_planning_status,
+    normalize_recap_status,
 )
 from core.campaign_ops.retail_media import (
     RETAIL_MEDIA_RESOURCE_TYPES,
@@ -630,6 +659,530 @@ class CampaignOpsService:
             risk_level=filters.get("risk_level"),
             active_state=filters.get("active_state", "active"),
         )
+
+    def normalize_waiting_on_category(self, value: str | None) -> str:
+        text = (value or "").strip().lower().replace("_", " ")
+        if not text or text == "none":
+            return "Other"
+        if "client" in text:
+            return "Client"
+        if "internal" in text or "team" in text:
+            return "Internal Team"
+        if "creator" in text or "influencer" in text:
+            return "Creator / Influencer"
+        if "retailer" in text:
+            return "Retailer"
+        if "platform" in text:
+            return "Platform"
+        if "vendor" in text:
+            return "Vendor"
+        if "asset" in text:
+            return "Assets"
+        if "approval" in text:
+            return "Approval"
+        if "feedback" in text or "review" in text:
+            return "Feedback"
+        if "data" in text or "report" in text:
+            return "Data"
+        return "Other"
+
+    def calculate_days_overdue(self, due_date: date | None, today: date | None = None) -> int | None:
+        if due_date is None:
+            return None
+        today = today or date.today()
+        return max((today - due_date).days, 0)
+
+    def calculate_days_until(self, target_date: date | None, today: date | None = None) -> int | None:
+        if target_date is None:
+            return None
+        today = today or date.today()
+        return (target_date - today).days
+
+    def calculate_attention_severity(
+        self,
+        reason: str,
+        days_overdue: int | None = None,
+        hard_deadline: bool = False,
+        risk: str | None = None,
+        highlighted: bool = False,
+    ) -> str:
+        if hard_deadline and (days_overdue or 0) > 0:
+            return "Critical"
+        if highlighted and (days_overdue or 0) > 0:
+            return "Critical"
+        if risk in {RiskLevel.AT_RISK.value} and (days_overdue or 0) > 0:
+            return "Critical"
+        if (days_overdue or 0) > 0:
+            return "High"
+        if reason in {"High Risk", "Influencer On Hold", "Retail Media Over Budget"}:
+            return "High"
+        if reason in {"Needs Attention Risk", "Waiting on Client", "Waiting on Internal Team", "Retail Media Paused"}:
+            return "Medium"
+        return "Low"
+
+    def derive_specialized_stage(
+        self,
+        program_id: str,
+        influencer_rows: list[Any],
+        retail_rows: list[RetailMediaPortfolioRow],
+        content_rows: list[ContentPortfolioRow],
+        insights_rows: list[InsightsPortfolioRow],
+        request_rows: list[ReportingRequestListRow],
+    ) -> str | None:
+        stages: list[str] = []
+        for row in influencer_rows:
+            if row.program_id == program_id:
+                status = getattr(row, "recap_status", None) or getattr(row, "live_status", None) or getattr(row, "planning_status", None)
+                stages.append(f"Influencer: {getattr(row, 'influencer_stage', '-')}/{status or '-'}")
+        for row in retail_rows:
+            if row.program_id == program_id:
+                stages.append(f"Retail Media: {row.retail_media_status or '-'}")
+        for row in content_rows:
+            if row.program_id == program_id:
+                stages.append(f"Content: {row.content_status or '-'}")
+        for row in insights_rows:
+            if row.program_id == program_id:
+                stages.append(f"Insights: {row.insights_status or '-'}")
+        req_count = len([row for row in request_rows if row.program_id == program_id])
+        if req_count:
+            stages.append(f"Requests: {req_count} open")
+        return "; ".join(stages[:4]) if stages else None
+
+    def validate_cross_team_person_view(self, actor: CampaignOpsUser | None, person_view: str | None) -> str:
+        if can_access_admin(actor):
+            return person_view or "Cross-Team"
+        if actor is None:
+            raise CampaignOpsPermissionError("A Campaign Operations user is required.")
+        return actor.display_name
+
+    def validate_cross_team_filters(self, actor: CampaignOpsUser | None, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        filters = dict(filters or {})
+        filters["person_view"] = self.validate_cross_team_person_view(actor, filters.get("person_view"))
+        filters["include_test_records"] = bool(filters.get("include_test_records", False))
+        filters["upcoming_days"] = self._non_negative_int(filters.get("upcoming_days", 14), "Upcoming days") or 14
+        if filters.get("owner_user_id"):
+            self._require_active_user(self.repository or CampaignOpsRepository(), str(filters["owner_user_id"]), "Owner")
+        if filters.get("assigned_user_id"):
+            self._require_active_user(self.repository or CampaignOpsRepository(), str(filters["assigned_user_id"]), "Assigned person")
+        for key, enum_type, label in (
+            ("primary_workflow", WorkstreamType, "Primary workflow"),
+            ("connected_workstream", WorkstreamType, "Connected workstream"),
+            ("cross_stage", CrossStage, "Cross stage"),
+            ("program_status", ProgramStatus, "Program status"),
+            ("risk", RiskLevel, "Risk"),
+            ("waiting_on", WaitingOn, "Waiting on"),
+        ):
+            if filters.get(key):
+                filters[key] = enum_value(enum_type, filters[key], label)
+        return filters
+
+    def _dashboard_program_filters(self, actor: CampaignOpsUser | None, filters: dict[str, Any]) -> dict[str, Any]:
+        active_state = filters.get("active_state") or "active"
+        portfolio_active_state = "archived" if active_state == "inactive" else active_state
+        program_filters = {
+            "search": filters.get("search"),
+            "client_id": filters.get("client_id"),
+            "program_name": filters.get("program_name"),
+            "primary_workstream_type": filters.get("primary_workflow"),
+            "connected_workstream_type": filters.get("connected_workstream"),
+            "cross_stage": filters.get("cross_stage"),
+            "status": filters.get("program_status"),
+            "risk_level": filters.get("risk"),
+            "primary_owner_user_id": filters.get("owner_user_id"),
+            "assigned_user_id": filters.get("assigned_user_id"),
+            "active_state": portfolio_active_state,
+            "sort_by": filters.get("sort_by", "recently_updated"),
+        }
+        person_view = filters.get("person_view")
+        if person_view and person_view != "Cross-Team":
+            user = (self.repository or CampaignOpsRepository()).get_user_by_display_name(person_view)
+            if user:
+                if filters.get("owner_or_assigned", True):
+                    program_filters.pop("primary_owner_user_id", None)
+                    program_filters.pop("assigned_user_id", None)
+                else:
+                    program_filters["assigned_user_id"] = user.id
+        return program_filters
+
+    def _filter_test_programs(self, rows: list[ProgramPortfolioRow], include_test_records: bool) -> list[ProgramPortfolioRow]:
+        if include_test_records:
+            return rows
+        return [row for row in rows if not row.program_name.upper().startswith("TEST -")]
+
+    def _dashboard_visible_programs(self, actor: CampaignOpsUser | None, filters: dict[str, Any]) -> list[ProgramPortfolioRow]:
+        rows = self.list_program_portfolio(actor, self._dashboard_program_filters(actor, filters))
+        rows = self._filter_test_programs(rows, filters.get("include_test_records", False))
+        person_view = filters.get("person_view")
+        if person_view and person_view != "Cross-Team":
+            user = (self.repository or CampaignOpsRepository()).get_user_by_display_name(person_view)
+            if user:
+                rows = [row for row in rows if row.primary_owner_user_id == user.id or user.id in row.assigned_user_ids]
+        return rows
+
+    def _matches_dashboard_filters(self, program: ProgramPortfolioRow, filters: dict[str, Any]) -> bool:
+        start_from = filters.get("start_date_from")
+        start_to = filters.get("start_date_to")
+        end_from = filters.get("target_end_date_from")
+        end_to = filters.get("target_end_date_to")
+        if start_from and (program.start_date is None or program.start_date < start_from):
+            return False
+        if start_to and (program.start_date is None or program.start_date > start_to):
+            return False
+        if end_from and (program.target_end_date is None or program.target_end_date < end_from):
+            return False
+        if end_to and (program.target_end_date is None or program.target_end_date > end_to):
+            return False
+        return True
+
+    def _milestone_row_from_dashboard_raw(self, row: dict[str, Any], today: date) -> UpcomingMilestoneRow:
+        best_date = row.get("target_date") or row.get("start_date") or row.get("end_date")
+        return UpcomingMilestoneRow(
+            id=str(row["id"]),
+            program_id=str(row["program_id"]),
+            milestone=str(row["title"]),
+            program_name=str(row["program_name"]),
+            client_name=row.get("client_name"),
+            workstream=row.get("workstream_type"),
+            owner_user_id=str(row["owner_user_id"]) if row.get("owner_user_id") else None,
+            owner_name=row.get("owner_user_name"),
+            status=str(row["status"]),
+            best_available_date=best_date,
+            days_until=self.calculate_days_until(best_date, today),
+            hard_deadline=bool(row.get("hard_deadline", False)),
+            highlighted=bool(row.get("is_highlighted", False)),
+        )
+
+    def _dashboard_task_row(self, task: TaskListRow, today: date) -> DashboardTaskRow:
+        return DashboardTaskRow(
+            id=task.id,
+            program_id=task.program_id,
+            task=task.title,
+            program_name=task.program_name,
+            client_name=task.client_name,
+            workstream=task.workstream_type,
+            assigned_user_id=task.assigned_user_id,
+            assigned_user_name=task.assigned_user_name,
+            responsible_party=task.responsible_party,
+            status=task.status,
+            risk=task.risk_level,
+            due_date=task.due_date,
+            days_overdue=self.calculate_days_overdue(task.due_date, today) or 0,
+            waiting_on=task.waiting_on,
+            hard_deadline=task.hard_deadline,
+        )
+
+    def _attention_row(
+        self,
+        key: str,
+        program: ProgramPortfolioRow,
+        workflow: str,
+        reason: str,
+        due_date: date | None,
+        today: date,
+        owner_user_id: str | None = None,
+        owner_name: str | None = None,
+        assigned_user_id: str | None = None,
+        assigned_name: str | None = None,
+        stage: str | None = None,
+        waiting_on: str | None = None,
+        latest_update: str | None = None,
+        hard_deadline: bool = False,
+        highlighted: bool = False,
+        target_section: str = "Program Workspace",
+        target_record_id: str | None = None,
+    ) -> NeedsAttentionRow:
+        days = self.calculate_days_overdue(due_date, today)
+        return NeedsAttentionRow(
+            id=key,
+            program_id=program.id,
+            program_name=program.program_name,
+            client_name=program.client_name,
+            workflow=workflow,
+            stage=stage or program.cross_stage,
+            owner_user_id=owner_user_id or program.primary_owner_user_id,
+            owner_name=owner_name or program.primary_owner_name,
+            assigned_user_id=assigned_user_id,
+            assigned_name=assigned_name,
+            attention_reason=reason,
+            severity=self.calculate_attention_severity(reason, days, hard_deadline, program.risk_level, highlighted),
+            risk=program.risk_level,
+            waiting_on=waiting_on,
+            due_date=due_date,
+            days_overdue=days,
+            latest_update=latest_update or program.latest_update,
+            target_section=target_section,
+            target_record_id=target_record_id,
+        )
+
+    def _waiting_row(
+        self,
+        key: str,
+        program: ProgramPortfolioRow,
+        workflow: str,
+        record_type: str,
+        item: str,
+        waiting_on: str | None,
+        due_date: date | None,
+        today: date,
+        owner_user_id: str | None = None,
+        owner_name: str | None = None,
+        latest_update: str | None = None,
+        target_section: str = "Program Workspace",
+        target_record_id: str | None = None,
+    ) -> WaitingOnRow:
+        return WaitingOnRow(
+            id=key,
+            program_id=program.id,
+            program_name=program.program_name,
+            client_name=program.client_name,
+            workflow=workflow,
+            record_type=record_type,
+            item=item,
+            owner_user_id=owner_user_id or program.primary_owner_user_id,
+            owner_name=owner_name or program.primary_owner_name,
+            waiting_on=waiting_on,
+            waiting_category=self.normalize_waiting_on_category(waiting_on),
+            due_date=due_date,
+            age=self.calculate_days_overdue(due_date, today),
+            latest_update=latest_update or program.latest_update,
+            target_section=target_section,
+            target_record_id=target_record_id,
+        )
+
+    def _sort_attention(self, rows: list[NeedsAttentionRow]) -> list[NeedsAttentionRow]:
+        severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+        deduped = {f"{row.program_id}:{row.workflow}:{row.attention_reason}:{row.target_record_id or row.id}": row for row in rows}
+        return sorted(deduped.values(), key=lambda row: (severity_rank.get(row.severity, 9), row.due_date or date.max, row.program_name))
+
+    def prioritize_workflow_cards(self, cards: list[DashboardWorkflowCard], limit: int = 2) -> list[DashboardWorkflowCard]:
+        return sorted(cards, key=lambda card: (not card.needs_attention, card.next_date or date.max, card.title))[:limit]
+
+    def get_cross_team_dashboard_summary(self, actor: CampaignOpsUser | None, filters: dict[str, Any] | None = None) -> CrossTeamDashboardSummary:
+        filters = self.validate_cross_team_filters(actor, filters)
+        today = date.today()
+        week_end = today + timedelta(days=6 - today.weekday())
+        upcoming_end = today + timedelta(days=int(filters.get("upcoming_days", 14)))
+        repository = self.repository or CampaignOpsRepository()
+        permitted_user_id = None if can_access_admin(actor) else actor.id if actor else ""
+        programs = [row for row in self._dashboard_visible_programs(actor, filters) if self._matches_dashboard_filters(row, filters)]
+        program_ids = {row.id for row in programs}
+        program_map = {row.id: row for row in programs}
+        include_child_inactive = filters.get("active_state") in {"inactive", "all"}
+        tasks = [row for row in repository.list_dashboard_task_rows(include_inactive=include_child_inactive, permitted_user_id=permitted_user_id) if row.program_id in program_ids]
+        milestone_raw = [row for row in repository.list_dashboard_milestone_rows(include_inactive=include_child_inactive, permitted_user_id=permitted_user_id) if str(row["program_id"]) in program_ids]
+        milestones = [self._milestone_row_from_dashboard_raw(row, today) for row in milestone_raw]
+        resources = [row for row in repository.list_dashboard_resource_rows(include_inactive=include_child_inactive, permitted_user_id=permitted_user_id) if row.program_id in program_ids]
+        influencer_planning = [row for row in self.list_influencer_campaigns(actor, include_inactive=True, stage=INFLUENCER_STAGE_PLANNING) if row.program_id in program_ids]
+        influencer_live = [row for row in self.list_influencer_live_campaigns(actor, include_inactive=True) if row.program_id in program_ids]
+        influencer_recap = [row for row in self.list_influencer_recap_campaigns(actor, include_inactive=True) if row.program_id in program_ids]
+        retail_rows = [row for row in self.list_retail_media_campaigns(actor, include_inactive=True) if row.program_id in program_ids]
+        content_rows = [row for row in self.list_content_programs(actor, include_inactive=True) if row.program_id in program_ids]
+        insights_rows = [row for row in self.list_insights_projects(actor, include_inactive=True) if row.program_id in program_ids]
+        request_rows = [row for row in self.list_reporting_requests(actor, include_inactive=True) if row.program_id in program_ids]
+
+        def waiting_filter(value: str | None) -> bool:
+            return not filters.get("waiting_on") or value == filters.get("waiting_on") or self.normalize_waiting_on_category(value) == self.normalize_waiting_on_category(filters.get("waiting_on"))
+
+        attention: list[NeedsAttentionRow] = []
+        for program in programs:
+            if program.risk_level == RiskLevel.AT_RISK.value:
+                attention.append(self._attention_row(f"risk-high-{program.id}", program, "Shared", "High Risk", program.target_end_date, today))
+            if program.risk_level == RiskLevel.NEEDS_ATTENTION.value:
+                attention.append(self._attention_row(f"risk-needs-{program.id}", program, "Shared", "Needs Attention Risk", program.target_end_date, today))
+        for task in tasks:
+            if task.status not in {TaskStatus.COMPLETED.value, TaskStatus.NOT_APPLICABLE.value} and task.due_date and task.due_date < today:
+                program = program_map[task.program_id]
+                attention.append(self._attention_row(f"task-{task.id}", program, task.workstream_type or "Shared", "Overdue Task", task.due_date, today, assigned_user_id=task.assigned_user_id, assigned_name=task.assigned_user_name, waiting_on=task.waiting_on, hard_deadline=task.hard_deadline, target_record_id=task.id))
+        for milestone in milestones:
+            if milestone.status != TaskStatus.COMPLETED.value and milestone.best_available_date and milestone.best_available_date < today:
+                program = program_map[milestone.program_id]
+                attention.append(self._attention_row(f"milestone-{milestone.id}", program, milestone.workstream or "Shared", "Overdue Milestone", milestone.best_available_date, today, owner_user_id=milestone.owner_user_id, owner_name=milestone.owner_name, hard_deadline=milestone.hard_deadline, highlighted=milestone.highlighted, target_record_id=milestone.id))
+        for resource in resources:
+            if resource.is_required and not resource.url:
+                program = program_map[resource.program_id]
+                attention.append(self._attention_row(f"resource-{resource.id}", program, resource.workstream_type or "Shared", "Missing Required Resource", None, today, target_record_id=resource.id))
+
+        waiting: list[WaitingOnRow] = []
+        for task in tasks:
+            if task.waiting_on and task.waiting_on != WaitingOn.NONE.value and waiting_filter(task.waiting_on):
+                waiting.append(self._waiting_row(f"task-{task.id}", program_map[task.program_id], task.workstream_type or "Shared", "Task", task.title, task.waiting_on, task.due_date, today, owner_user_id=task.assigned_user_id, owner_name=task.assigned_user_name, target_record_id=task.id))
+
+        influencer_cards: list[DashboardWorkflowCard] = []
+        for row in [*influencer_planning, *influencer_live, *influencer_recap]:
+            program = program_map[row.program_id]
+            stage = getattr(row, "influencer_stage", None)
+            status = getattr(row, "recap_status", None) or getattr(row, "live_status", None) or getattr(row, "planning_status", None)
+            next_item = getattr(row, "next_planning_step", None) or getattr(row, "next_checkpoint", None)
+            next_date = getattr(row, "next_planning_step_due_date", None) or getattr(row, "next_checkpoint_due_date", None) or getattr(row, "wrap_date", None)
+            needs = bool(getattr(row, "is_on_hold", False) or getattr(row, "open_exception_count", 0) or getattr(row, "open_requirement_count", 0) or program.risk_level in {RiskLevel.AT_RISK.value, RiskLevel.NEEDS_ATTENTION.value})
+            if getattr(row, "is_on_hold", False):
+                attention.append(self._attention_row(f"influencer-hold-{row.id}", program, "Influencer", "Influencer On Hold", getattr(row, "launch_date", None), today, owner_user_id=row.manager_user_id, owner_name=row.manager_display_name, stage=stage, waiting_on=getattr(row, "waiting_on", None), latest_update=getattr(row, "latest_update", None), target_section="Influencer", target_record_id=row.id))
+            if getattr(row, "open_exception_count", 0):
+                attention.append(self._attention_row(f"influencer-exception-{row.id}", program, "Influencer", "Influencer Live Exception", next_date, today, owner_user_id=row.manager_user_id, owner_name=row.manager_display_name, stage=stage, waiting_on=getattr(row, "waiting_on", None), latest_update=getattr(row, "latest_update", None), target_section="Influencer", target_record_id=row.id))
+            if getattr(row, "open_requirement_count", 0):
+                attention.append(self._attention_row(f"influencer-recap-req-{row.id}", program, "Influencer", "Influencer Recap Requirement", getattr(row, "reporting_due_date", None), today, owner_user_id=row.manager_user_id, owner_name=row.manager_display_name, stage=stage, waiting_on=getattr(row, "waiting_on", None), latest_update=getattr(row, "latest_update", None), target_section="Influencer", target_record_id=row.id))
+            if getattr(row, "waiting_on", None) and waiting_filter(getattr(row, "waiting_on", None)):
+                waiting.append(self._waiting_row(f"influencer-{row.id}", program, "Influencer", "Influencer Campaign", row.campaign_title, getattr(row, "waiting_on", None), next_date, today, owner_user_id=row.manager_user_id, owner_name=row.manager_display_name, latest_update=getattr(row, "latest_update", None), target_section="Influencer", target_record_id=row.id))
+            influencer_cards.append(DashboardWorkflowCard(row.id, row.program_id, row.campaign_title, row.client_name, "Influencer", row.manager_user_id, row.manager_display_name, stage, status, getattr(row, "latest_update", None), getattr(row, "waiting_on", None), next_item, next_date, row.program_risk, needs, f"Creators: {getattr(row, 'live_creator_count', getattr(row, 'approved_creator_count', 0)) or 0}; Exceptions: {getattr(row, 'open_exception_count', 0)}; Ready: {getattr(row, 'ready_to_close_state', '-')}", "Influencer"))
+
+        retail_cards: list[DashboardWorkflowCard] = []
+        for row in retail_rows:
+            program = program_map[row.program_id]
+            over_budget = bool((row.total_spend or row.channel_spend_total or 0) > (row.overall_budget or row.channel_budget_total or 0) > 0)
+            needs = over_budget or row.is_paused or program.risk_level in {RiskLevel.AT_RISK.value, RiskLevel.NEEDS_ATTENTION.value}
+            if over_budget:
+                attention.append(self._attention_row(f"retail-budget-{row.id}", program, "Retail Media", "Retail Media Over Budget", row.wrap_date, today, owner_user_id=row.owner_user_id, owner_name=row.owner_display_name, stage=row.retail_media_status, waiting_on=row.waiting_on, latest_update=row.latest_update, target_section="Retail Media", target_record_id=row.id))
+            if row.is_paused:
+                attention.append(self._attention_row(f"retail-paused-{row.id}", program, "Retail Media", "Retail Media Paused", row.launch_date, today, owner_user_id=row.owner_user_id, owner_name=row.owner_display_name, stage=row.retail_media_status, waiting_on=row.waiting_on, latest_update=row.latest_update, target_section="Retail Media", target_record_id=row.id))
+            if row.waiting_on and waiting_filter(row.waiting_on):
+                waiting.append(self._waiting_row(f"retail-{row.id}", program, "Retail Media", "Retail Media Campaign", row.campaign_title, row.waiting_on, row.next_milestone_date, today, owner_user_id=row.owner_user_id, owner_name=row.owner_display_name, latest_update=row.latest_update, target_section="Retail Media", target_record_id=row.id))
+            retail_cards.append(DashboardWorkflowCard(row.id, row.program_id, row.campaign_title, row.client_name, "Retail Media", row.owner_user_id, row.owner_display_name, None, row.retail_media_status, row.latest_update, row.waiting_on, row.next_milestone, row.next_milestone_date, row.program_risk, needs, f"Channels: {', '.join(row.channel_mix) or '-'}; Budget: {row.overall_budget or row.channel_budget_total or 0}; Spend: {row.total_spend or row.channel_spend_total or 0}", "Retail Media"))
+
+        content_cards: list[DashboardWorkflowCard] = []
+        for row in content_rows:
+            program = program_map[row.program_id]
+            needs = row.issue_count > 0 or program.risk_level in {RiskLevel.AT_RISK.value, RiskLevel.NEEDS_ATTENTION.value}
+            if row.issue_count > 0:
+                attention.append(self._attention_row(f"content-issue-{row.id}", program, "eCommerce / Content", "Content Publication Issue", row.next_milestone_date or row.maintenance_end_date, today, owner_user_id=row.owner_user_id, owner_name=row.owner_display_name, stage=row.content_status, waiting_on=row.waiting_on, latest_update=row.latest_update, target_section="eCommerce / Content", target_record_id=row.id))
+            if row.waiting_on and waiting_filter(row.waiting_on):
+                waiting.append(self._waiting_row(f"content-{row.id}", program, "eCommerce / Content", "Content Program", row.content_program_title, row.waiting_on, row.next_milestone_date, today, owner_user_id=row.owner_user_id, owner_name=row.owner_display_name, latest_update=row.latest_update, target_section="eCommerce / Content", target_record_id=row.id))
+            content_cards.append(DashboardWorkflowCard(row.id, row.program_id, row.content_program_title, row.client_name, "eCommerce / Content", row.owner_user_id, row.owner_display_name, None, row.content_status, row.latest_update, row.waiting_on, row.next_milestone, row.next_milestone_date, row.program_risk, needs, f"SKUs: {row.total_sku_count or row.active_sku_count}; Live: {row.live_count}; Issues: {row.issue_count}", "eCommerce / Content"))
+
+        insights_cards: list[DashboardWorkflowCard] = []
+        for row in insights_rows:
+            program = program_map[row.program_id]
+            missing = not (row.tracksheet_url or row.results_deck_url or row.raw_data_url)
+            if missing:
+                attention.append(self._attention_row(f"insights-resource-{row.id}", program, "Insights", "Missing Required Resource", row.next_milestone_date, today, owner_user_id=row.owner_user_id, owner_name=row.owner_display_name, stage=row.insights_status, latest_update=row.latest_update, target_section="Insights", target_record_id=row.id))
+            if row.next_milestone_date and row.next_milestone_date < today:
+                attention.append(self._attention_row(f"insights-milestone-{row.id}", program, "Insights", "Insights Overdue Milestone", row.next_milestone_date, today, owner_user_id=row.owner_user_id, owner_name=row.owner_display_name, stage=row.insights_status, latest_update=row.latest_update, target_section="Insights", target_record_id=row.id))
+            insights_cards.append(DashboardWorkflowCard(row.id, row.program_id, row.project_title, row.client_name, "Insights", row.owner_user_id, row.owner_display_name, None, row.insights_status, row.latest_update, None, row.next_milestone, row.next_milestone_date, row.program_risk, missing, f"Job: {row.job_number or '-'}; Sample: {row.sample_size or '-'}; Budget: {row.budget or '-'}", "Insights"))
+
+        request_cards: list[DashboardWorkflowCard] = []
+        for row in request_rows:
+            program = program_map[row.program_id]
+            reason = "Survey Request Overdue" if row.request_category == REQUEST_CATEGORY_SURVEY else "Reporting Request Overdue"
+            if row.status != REQUEST_STATUS_COMPLETED and row.due_date and row.due_date < today:
+                attention.append(self._attention_row(f"request-{row.id}", program, "Reporting & Survey Requests", reason, row.due_date, today, owner_user_id=row.am_user_id, owner_name=row.am_display_name, assigned_user_id=row.assigned_user_id, assigned_name=row.assigned_display_name, stage=row.status, waiting_on=row.waiting_on, target_section="Requests", target_record_id=row.id))
+            if row.waiting_on and waiting_filter(row.waiting_on):
+                waiting.append(self._waiting_row(f"request-{row.id}", program, "Reporting & Survey Requests", "Request", row.request_type, row.waiting_on, row.due_date, today, owner_user_id=row.am_user_id, owner_name=row.am_display_name, latest_update=None, target_section="Requests", target_record_id=row.id))
+            label = "Survey Request" if row.request_category == REQUEST_CATEGORY_SURVEY else "Reporting Request"
+            request_cards.append(DashboardWorkflowCard(row.id, row.program_id, f"{label}: {row.request_type}", row.client_name, "Reporting & Survey Requests", row.am_user_id, row.am_display_name, None, row.status, None, row.waiting_on, "Due", row.due_date, row.risk, bool(row.due_date and row.due_date < today), f"Delivered: {row.delivered}; Review: {row.review_complete}; Approval: {row.approved}", "Requests"))
+
+        overdue_tasks = [self._dashboard_task_row(task, today) for task in tasks if task.status not in {TaskStatus.COMPLETED.value, TaskStatus.NOT_APPLICABLE.value} and task.due_date and task.due_date < today]
+        upcoming_milestones = [row for row in milestones if row.status != TaskStatus.COMPLETED.value and row.best_available_date and today <= row.best_available_date <= upcoming_end]
+        attention = self._sort_attention(attention)
+        if filters.get("needs_attention_only"):
+            program_ids = {row.program_id for row in attention}
+            programs = [row for row in programs if row.id in program_ids]
+        waiting = sorted(waiting, key=lambda row: (row.due_date or date.max, row.program_name, row.item))
+
+        active_program_ids = {row.id for row in programs if row.is_active}
+        completed_recently = [
+            row for row in programs
+            if row.status == ProgramStatus.COMPLETE.value and row.updated_at and row.updated_at.date() >= today - timedelta(days=7)
+        ]
+        metrics = DashboardMetricSet(
+            active_programs=len(active_program_ids),
+            needs_attention=len({row.program_id for row in attention}),
+            high_risk=len([row for row in programs if row.risk_level == RiskLevel.AT_RISK.value]),
+            overdue_tasks=len(overdue_tasks),
+            due_this_week=len([task for task in tasks if task.status not in {TaskStatus.COMPLETED.value, TaskStatus.NOT_APPLICABLE.value} and task.due_date and today <= task.due_date <= week_end]),
+            upcoming_milestones=len(upcoming_milestones),
+            waiting_on_client=len([row for row in waiting if row.waiting_category == "Client"]),
+            waiting_on_internal_team=len([row for row in waiting if row.waiting_category == "Internal Team"]),
+            paused_on_hold=len([row for row in programs if row.status == ProgramStatus.ON_HOLD.value or row.cross_stage == CrossStage.ON_HOLD.value]) + len([row for row in influencer_planning + influencer_live + influencer_recap if getattr(row, "is_on_hold", False)]) + len([row for row in retail_rows if row.is_paused]),
+            ready_for_recap=len([row for row in influencer_live if getattr(row, "planning_status", None) == "ready_for_recap" or getattr(row, "live_status", None) == "ready_for_recap"]),
+            ready_to_close=len([row for row in influencer_recap if row.ready_to_close_state == "Ready to Close" or row.recap_status == RECAP_STATUS_READY_TO_CLOSE]),
+            completed_recently=len(completed_recently),
+        )
+
+        user_rows = [user for user in self.list_active_users() if user.display_name in {"Bailey", "T", "L"}]
+        workload: list[WorkloadByPersonRow] = []
+        attention_programs_by_user = {user.id: {row.program_id for row in attention if row.owner_user_id == user.id or row.assigned_user_id == user.id} for user in user_rows}
+        for user in user_rows:
+            assigned_program_ids = {program.id for program in programs if user.id in program.assigned_user_ids}
+            workload.append(WorkloadByPersonRow(
+                user_id=user.id,
+                display_name=user.display_name,
+                owned_active_programs=len([program for program in programs if program.primary_owner_user_id == user.id and program.is_active]),
+                assigned_active_programs=len(assigned_program_ids),
+                open_tasks=len([task for task in tasks if task.assigned_user_id == user.id and task.status not in {TaskStatus.COMPLETED.value, TaskStatus.NOT_APPLICABLE.value}]),
+                overdue_tasks=len([task for task in overdue_tasks if task.assigned_user_id == user.id]),
+                due_this_week=len([task for task in tasks if task.assigned_user_id == user.id and task.due_date and today <= task.due_date <= week_end and task.status not in {TaskStatus.COMPLETED.value, TaskStatus.NOT_APPLICABLE.value}]),
+                active_milestones_owned=len([m for m in milestones if m.owner_user_id == user.id and m.status != TaskStatus.COMPLETED.value]),
+                needs_attention_programs=len(attention_programs_by_user[user.id]),
+                waiting_items=len([row for row in waiting if row.owner_user_id == user.id]),
+                influencer_planning=len([row for row in influencer_planning if row.manager_user_id == user.id]),
+                influencer_live=len([row for row in influencer_live if row.manager_user_id == user.id]),
+                influencer_recapping=len([row for row in influencer_recap if row.manager_user_id == user.id]),
+                reporting_requests=len([row for row in request_rows if row.am_user_id == user.id or row.assigned_user_id == user.id]),
+                insights_projects=len([row for row in insights_rows if row.owner_user_id == user.id]),
+                retail_media_campaigns=len([row for row in retail_rows if row.owner_user_id == user.id]),
+                content_programs=len([row for row in content_rows if row.owner_user_id == user.id]),
+            ))
+
+        next_milestone_by_program = {}
+        for milestone in upcoming_milestones:
+            next_milestone_by_program.setdefault(milestone.program_id, milestone)
+        attention_reasons_by_program: dict[str, list[str]] = {}
+        for row in attention:
+            attention_reasons_by_program.setdefault(row.program_id, [])
+            if row.attention_reason not in attention_reasons_by_program[row.program_id]:
+                attention_reasons_by_program[row.program_id].append(row.attention_reason)
+        all_influencer_rows = [*influencer_planning, *influencer_live, *influencer_recap]
+        program_rows = [
+            DashboardProgramRow(
+                id=program.id,
+                program_name=program.program_name,
+                client_name=program.client_name,
+                primary_workflow=program.primary_workstream_type,
+                connected_workstreams=program.workstream_types,
+                program_status=program.status,
+                cross_stage=program.cross_stage,
+                specialized_stage=self.derive_specialized_stage(program.id, all_influencer_rows, retail_rows, content_rows, insights_rows, request_rows),
+                risk=program.risk_level,
+                priority=program.priority,
+                primary_owner_user_id=program.primary_owner_user_id,
+                primary_owner_name=program.primary_owner_name,
+                assigned_people=program.assigned_user_names,
+                latest_update=program.latest_update,
+                waiting_on=None,
+                open_tasks=program.open_task_count,
+                overdue_tasks=program.overdue_task_count,
+                next_task_due=program.nearest_task_due_date,
+                next_milestone=next_milestone_by_program.get(program.id).milestone if program.id in next_milestone_by_program else None,
+                needs_attention_reasons=attention_reasons_by_program.get(program.id, []),
+                start_date=program.start_date,
+                target_end_date=program.target_end_date,
+                updated_at=program.updated_at,
+                active_state="Active" if program.is_active else "Inactive",
+            )
+            for program in programs
+        ]
+
+        return CrossTeamDashboardSummary(
+            metrics=metrics,
+            needs_attention=attention,
+            waiting_on=waiting,
+            overdue_tasks=sorted(overdue_tasks, key=lambda row: (not row.hard_deadline, row.due_date or date.max, row.program_name)),
+            upcoming_milestones=sorted(upcoming_milestones, key=lambda row: (row.best_available_date or date.max, not row.hard_deadline, row.program_name)),
+            workload=workload,
+            influencer_cards=self.prioritize_workflow_cards(influencer_cards),
+            retail_media_cards=self.prioritize_workflow_cards(retail_cards),
+            content_cards=self.prioritize_workflow_cards(content_cards),
+            insights_cards=self.prioritize_workflow_cards(insights_cards),
+            request_cards=self.prioritize_workflow_cards(request_cards),
+            programs=program_rows,
+        )
+
+    def validate_cross_team_drillthrough(self, actor: CampaignOpsUser | None, program_id: str) -> Program:
+        repository = self.repository or CampaignOpsRepository()
+        program = self._require_program(repository, program_id)
+        assignments = repository.list_assignments_by_program(program_id)
+        if not can_view_program(actor, program, assignments):
+            raise CampaignOpsPermissionError("You do not have access to this dashboard target.")
+        return program
 
     def create_program_with_workstreams_and_assignments(
         self,
@@ -2717,7 +3270,14 @@ class CampaignOpsService:
         contracted = self._non_negative_int(payload.get("contracted_creator_count") if "contracted_creator_count" in payload else (before.contracted_creator_count if before else None), "Contracted creator count")
         stage = normalize_influencer_stage(payload.get("influencer_stage") if "influencer_stage" in payload else (before.influencer_stage if before else INFLUENCER_STAGE_PLANNING))
         status_value = payload.get("planning_status") if "planning_status" in payload else (before.planning_status if before else None)
-        status = normalize_live_status(status_value) if stage == INFLUENCER_STAGE_LIVE else normalize_planning_status(status_value)
+        if stage == INFLUENCER_STAGE_LIVE:
+            status = normalize_live_status(status_value)
+        elif stage == INFLUENCER_STAGE_RECAPPING:
+            status = normalize_recap_status(status_value)
+        elif stage == INFLUENCER_STAGE_COMPLETE:
+            status = RECAP_STATUS_COMPLETE
+        else:
+            status = normalize_planning_status(status_value)
         return {
             "program_id": str(program_id),
             "workstream_id": str(workstream_id) if workstream_id else None,
@@ -3201,8 +3761,10 @@ class CampaignOpsService:
         return self._transaction(operation)
 
     def list_influencer_live_checkpoints(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCheckpointRecord]:
-        self.get_influencer_live_campaign_detail(actor, campaign_id)
-        return (self.repository or CampaignOpsRepository()).list_influencer_live_checkpoints(campaign_id, include_inactive=include_inactive)
+        repository = self.repository or CampaignOpsRepository()
+        campaign = self._require_influencer_campaign(repository, campaign_id)
+        self._validate_influencer_access(repository, actor, campaign.program_id)
+        return repository.list_influencer_live_checkpoints(campaign_id, include_inactive=include_inactive)
 
     def update_influencer_live_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str, **kwargs: Any) -> InfluencerLiveCheckpointRecord:
         def operation(repository: CampaignOpsRepository) -> InfluencerLiveCheckpointRecord:
@@ -3275,8 +3837,10 @@ class CampaignOpsService:
         return self._transaction(operation)
 
     def list_influencer_creator_waves(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerCreatorWaveRecord]:
-        self.get_influencer_live_campaign_detail(actor, campaign_id)
-        return (self.repository or CampaignOpsRepository()).list_influencer_creator_waves(campaign_id, include_inactive=include_inactive)
+        repository = self.repository or CampaignOpsRepository()
+        campaign = self._require_influencer_campaign(repository, campaign_id)
+        self._validate_influencer_access(repository, actor, campaign.program_id)
+        return repository.list_influencer_creator_waves(campaign_id, include_inactive=include_inactive)
 
     def update_influencer_creator_wave(self, actor: CampaignOpsUser | None, campaign_id: str, wave_id: str, **kwargs: Any) -> InfluencerCreatorWaveRecord:
         def operation(repository: CampaignOpsRepository) -> InfluencerCreatorWaveRecord:
@@ -3342,8 +3906,10 @@ class CampaignOpsService:
         return self._transaction(operation)
 
     def list_influencer_live_creators(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCreatorRecord]:
-        self.get_influencer_live_campaign_detail(actor, campaign_id)
-        return (self.repository or CampaignOpsRepository()).list_influencer_live_creators(campaign_id, include_inactive=include_inactive)
+        repository = self.repository or CampaignOpsRepository()
+        campaign = self._require_influencer_campaign(repository, campaign_id)
+        self._validate_influencer_access(repository, actor, campaign.program_id)
+        return repository.list_influencer_live_creators(campaign_id, include_inactive=include_inactive)
 
     def update_influencer_live_creator(self, actor: CampaignOpsUser | None, campaign_id: str, creator_id: str, **kwargs: Any) -> InfluencerLiveCreatorRecord:
         def operation(repository: CampaignOpsRepository) -> InfluencerLiveCreatorRecord:
@@ -3423,8 +3989,10 @@ class CampaignOpsService:
         return self._transaction(operation)
 
     def list_influencer_live_exceptions(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveExceptionRecord]:
-        self.get_influencer_live_campaign_detail(actor, campaign_id)
-        return (self.repository or CampaignOpsRepository()).list_influencer_live_exceptions(campaign_id, include_inactive=include_inactive)
+        repository = self.repository or CampaignOpsRepository()
+        campaign = self._require_influencer_campaign(repository, campaign_id)
+        self._validate_influencer_access(repository, actor, campaign.program_id)
+        return repository.list_influencer_live_exceptions(campaign_id, include_inactive=include_inactive)
 
     def update_influencer_live_exception(self, actor: CampaignOpsUser | None, campaign_id: str, exception_id: str, **kwargs: Any) -> InfluencerLiveExceptionRecord:
         def operation(repository: CampaignOpsRepository) -> InfluencerLiveExceptionRecord:
@@ -3473,6 +4041,475 @@ class CampaignOpsService:
         if campaign.wrap_date and campaign.wrap_date <= date.today():
             return "Wrapped"
         return "Ready to Wrap"
+
+    def transition_influencer_campaign_to_recapping(self, actor: CampaignOpsUser | None, campaign_id: str, recap_status: str | None = None, allow_override: bool = False) -> InfluencerCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCampaignRecord:
+            before = self._require_influencer_campaign(repository, campaign_id)
+            self._validate_influencer_access(repository, actor, before.program_id)
+            if not before.is_active:
+                raise CampaignOpsValidationError("Inactive Influencer campaigns cannot move to Recapping.")
+            if before.influencer_stage == INFLUENCER_STAGE_RECAPPING:
+                return before
+            if before.influencer_stage != INFLUENCER_STAGE_LIVE:
+                raise CampaignOpsValidationError("Only Live Influencer campaigns can move to Recapping.")
+            live_detail = repository.get_influencer_live_campaign_detail(campaign_id)
+            if live_detail is None:
+                raise CampaignOpsNotFoundError("Live campaign was not found.")
+            readiness = self.influencer_live_wrap_readiness(
+                live_detail,
+                repository.list_influencer_live_checkpoints(campaign_id),
+                repository.list_influencer_creator_waves(campaign_id),
+                repository.list_influencer_live_creators(campaign_id),
+                repository.list_influencer_live_exceptions(campaign_id),
+            )
+            if readiness in ("Not Ready", "Needs Attention") and not (allow_override and can_access_admin(actor)):
+                raise CampaignOpsValidationError("Live campaign is not ready for Recapping.")
+            updated = repository.update_influencer_campaign(
+                campaign_id,
+                workstream_id=before.workstream_id,
+                campaign_title=before.campaign_title,
+                manager_user_id=before.manager_user_id,
+                influencer_stage=INFLUENCER_STAGE_RECAPPING,
+                planning_status=normalize_recap_status(recap_status or RECAP_STATUS_READY_TO_RECAP),
+                latest_update=before.latest_update,
+                waiting_on=before.waiting_on,
+                is_on_hold=before.is_on_hold,
+                hold_reason=before.hold_reason,
+                application_open_date=before.application_open_date,
+                application_close_date=before.application_close_date,
+                influencer_approval_due_date=before.influencer_approval_due_date,
+                scripts_due_date=before.scripts_due_date,
+                first_content_due_date=before.first_content_due_date,
+                launch_date=before.launch_date,
+                wrap_date=before.wrap_date,
+                invoice_date=before.invoice_date,
+                invoice_status=before.invoice_status,
+                invoice_amount=before.invoice_amount,
+                target_creator_count=before.target_creator_count,
+                approved_creator_count=before.approved_creator_count,
+                contracted_creator_count=before.contracted_creator_count,
+            )
+            record = repository.get_influencer_recap_record(campaign_id)
+            if record is None:
+                repository.create_or_update_influencer_recap_record(
+                    campaign_id,
+                    recap_status=updated.planning_status,
+                    latest_update=updated.latest_update,
+                    waiting_on=updated.waiting_on,
+                    invoice_status=updated.invoice_status,
+                    is_active=True,
+                )
+            repository.append_event(
+                event_type="influencer_stage_moved_to_recapping",
+                entity_type="influencer_campaign",
+                entity_id=campaign_id,
+                program_id=updated.program_id,
+                workstream_id=updated.workstream_id,
+                actor_user_id=actor.id if actor else None,
+                message=f"{self._influencer_actor_label(actor)} moved {updated.campaign_title} from Live to Recapping.",
+                old_value_json={"stage": before.influencer_stage, "readiness": readiness},
+                new_value_json={"stage": updated.influencer_stage, "recap_status": updated.planning_status},
+            )
+            return updated
+        return self._transaction(operation)
+
+    def _recap_campaign_context(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCampaignRecord:
+        campaign = self._require_influencer_campaign(repository, campaign_id)
+        self._validate_influencer_access(repository, actor, campaign.program_id)
+        if campaign.influencer_stage != INFLUENCER_STAGE_RECAPPING:
+            raise CampaignOpsValidationError("Influencer campaign is not in Recapping.")
+        return campaign
+
+    def _recap_record_payload(self, kwargs: dict[str, Any], before: InfluencerRecapRecord | None = None) -> dict[str, Any]:
+        final_close = kwargs.get("final_close_date") if "final_close_date" in kwargs else (before.final_close_date if before else None)
+        delivered = kwargs.get("recap_delivered_date") if "recap_delivered_date" in kwargs else (before.recap_delivered_date if before else None)
+        if final_close and delivered and final_close < delivered:
+            raise CampaignOpsValidationError("Final close date cannot be before recap delivered date.")
+        return {
+            "recap_status": normalize_recap_status(kwargs.get("recap_status") if "recap_status" in kwargs else (before.recap_status if before else None)),
+            "latest_update": self._clean_optional_text(kwargs.get("latest_update") if "latest_update" in kwargs else (before.latest_update if before else None)),
+            "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)),
+            "reporting_due_date": kwargs.get("reporting_due_date") if "reporting_due_date" in kwargs else (before.reporting_due_date if before else None),
+            "draft_recap_due_date": kwargs.get("draft_recap_due_date") if "draft_recap_due_date" in kwargs else (before.draft_recap_due_date if before else None),
+            "internal_review_date": kwargs.get("internal_review_date") if "internal_review_date" in kwargs else (before.internal_review_date if before else None),
+            "client_review_date": kwargs.get("client_review_date") if "client_review_date" in kwargs else (before.client_review_date if before else None),
+            "client_recap_date": kwargs.get("client_recap_date") if "client_recap_date" in kwargs else (before.client_recap_date if before else None),
+            "recap_delivered_date": delivered,
+            "final_close_date": final_close,
+            "final_invoice_sent_date": kwargs.get("final_invoice_sent_date") if "final_invoice_sent_date" in kwargs else (before.final_invoice_sent_date if before else None),
+            "sales_lift_analysis_required": bool(kwargs.get("sales_lift_analysis_required") if "sales_lift_analysis_required" in kwargs else (before.sales_lift_analysis_required if before else False)),
+            "sales_lift_analysis_status": self._clean_optional_text(kwargs.get("sales_lift_analysis_status") if "sales_lift_analysis_status" in kwargs else (before.sales_lift_analysis_status if before else None)),
+            "final_performance_data_status": self._clean_optional_text(kwargs.get("final_performance_data_status") if "final_performance_data_status" in kwargs else (before.final_performance_data_status if before else None)),
+            "creator_closeout_status": self._clean_optional_text(kwargs.get("creator_closeout_status") if "creator_closeout_status" in kwargs else (before.creator_closeout_status if before else None)),
+            "eop_survey_status": self._clean_optional_text(kwargs.get("eop_survey_status") if "eop_survey_status" in kwargs else (before.eop_survey_status if before else None)),
+            "invoice_status": self._clean_optional_text(kwargs.get("invoice_status") if "invoice_status" in kwargs else (before.invoice_status if before else None)),
+            "financial_close_status": self._clean_optional_text(kwargs.get("financial_close_status") if "financial_close_status" in kwargs else (before.financial_close_status if before else None)),
+            "lessons_learned": self._clean_optional_text(kwargs.get("lessons_learned") if "lessons_learned" in kwargs else (before.lessons_learned if before else None)),
+            "is_active": bool(kwargs.get("is_active") if "is_active" in kwargs else (before.is_active if before else True)),
+        }
+
+    def create_or_update_influencer_recap_record(self, actor: CampaignOpsUser | None, campaign_id: str, **kwargs: Any) -> InfluencerRecapRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            before = repository.get_influencer_recap_record(campaign_id)
+            payload = self._recap_record_payload(kwargs, before)
+            if before and not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            record = repository.update_influencer_recap_record(before.id, **payload) if before else repository.create_or_update_influencer_recap_record(campaign_id, **payload)
+            repository.update_influencer_campaign(
+                campaign_id,
+                workstream_id=campaign.workstream_id,
+                campaign_title=campaign.campaign_title,
+                manager_user_id=campaign.manager_user_id,
+                influencer_stage=campaign.influencer_stage,
+                planning_status=record.recap_status,
+                latest_update=record.latest_update,
+                waiting_on=record.waiting_on,
+                is_on_hold=campaign.is_on_hold,
+                hold_reason=campaign.hold_reason,
+                application_open_date=campaign.application_open_date,
+                application_close_date=campaign.application_close_date,
+                influencer_approval_due_date=campaign.influencer_approval_due_date,
+                scripts_due_date=campaign.scripts_due_date,
+                first_content_due_date=campaign.first_content_due_date,
+                launch_date=campaign.launch_date,
+                wrap_date=campaign.wrap_date,
+                invoice_date=campaign.invoice_date,
+                invoice_status=campaign.invoice_status,
+                invoice_amount=campaign.invoice_amount,
+                target_creator_count=campaign.target_creator_count,
+                approved_creator_count=campaign.approved_creator_count,
+                contracted_creator_count=campaign.contracted_creator_count,
+            )
+            event_type = "influencer_recap_record_updated" if before else "influencer_recap_record_created"
+            repository.append_event(event_type=event_type, entity_type="influencer_recap_record", entity_id=record.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated Recapping overview for {campaign.campaign_title}.")
+            return record
+        return self._transaction(operation)
+
+    def list_influencer_recap_campaigns(self, actor: CampaignOpsUser | None, include_inactive: bool = False, manager_user_id: str | None = None) -> list[InfluencerRecapPortfolioRow]:
+        repository = self.repository or CampaignOpsRepository()
+        rows = repository.list_influencer_recap_campaigns(include_inactive=include_inactive, manager_user_id=manager_user_id)
+        return [row for row in rows if can_view_program(actor, repository.get_program(row.program_id), repository.list_assignments_by_program(row.program_id))]
+
+    def get_influencer_recap_campaign_detail(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerRecapPortfolioRow:
+        repository = self.repository or CampaignOpsRepository()
+        detail = repository.get_influencer_recap_campaign_detail(campaign_id)
+        if detail is None:
+            raise CampaignOpsNotFoundError("Recapping campaign was not found.")
+        self._validate_influencer_access(repository, actor, detail.program_id)
+        return detail
+
+    def creator_closeout_summary(self, recap_record: InfluencerRecapRecord | None, creators: list[InfluencerLiveCreatorRecord], exceptions: list[InfluencerLiveExceptionRecord]) -> InfluencerCreatorCloseoutSummary:
+        active = [c for c in creators if c.is_active]
+        return InfluencerCreatorCloseoutSummary(
+            total_creators=len(active),
+            live_creators=len([c for c in active if c.live_status in ("live", "paid_live_complete", "complete")]),
+            completed_creators=len([c for c in active if c.live_status in ("paid_live_complete", "complete")]),
+            missing_final_links=len([c for c in active if not c.content_url]),
+            missing_final_impressions=len([c for c in active if c.impressions_reporting_required and c.latest_impressions is None]),
+            open_creator_exceptions=len([e for e in exceptions if e.is_active and e.status not in ("resolved", "cancelled")]),
+            paid_live_incomplete=len([c for c in active if c.live_status not in ("paid_live_complete", "complete", "cancelled")]),
+            creator_closeout_status=recap_record.creator_closeout_status if recap_record else None,
+        )
+
+    def influencer_recap_ready_to_close_state(self, recap_record: InfluencerRecapRecord | None, checkpoints: list[InfluencerRecapCheckpointRecord], requirements: list[InfluencerRecapRequirementRecord], closeout: InfluencerCreatorCloseoutSummary, exceptions: list[InfluencerLiveExceptionRecord]) -> str:
+        if any(e.is_active and e.status not in ("resolved", "cancelled") for e in exceptions):
+            return "Needs Attention"
+        if any(c.is_active and c.status != "complete" for c in checkpoints):
+            return "Not Ready"
+        if any(r.is_active and r.required and r.status not in ("complete", "not_required", "cancelled") for r in requirements):
+            return "Not Ready"
+        if closeout.open_creator_exceptions or closeout.paid_live_incomplete or closeout.missing_final_links or closeout.missing_final_impressions:
+            return "Not Ready"
+        if recap_record and recap_record.recap_status == RECAP_STATUS_COMPLETE:
+            return "Complete"
+        return "Ready to Close"
+
+    def get_influencer_recap_workspace_summary(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerRecapWorkspaceSummary:
+        campaign = self.get_influencer_recap_campaign_detail(actor, campaign_id)
+        repository = self.repository or CampaignOpsRepository()
+        recap_record = repository.get_influencer_recap_record(campaign_id)
+        creators = self.list_influencer_live_creators(actor, campaign_id, include_inactive=True)
+        exceptions = self.list_influencer_live_exceptions(actor, campaign_id, include_inactive=True)
+        checkpoints = self.list_influencer_recap_checkpoints(actor, campaign_id, include_inactive=True)
+        requirements = self.list_influencer_recap_requirements(actor, campaign_id, include_inactive=True)
+        closeout = self.creator_closeout_summary(recap_record, creators, exceptions)
+        ready = self.influencer_recap_ready_to_close_state(recap_record, checkpoints, requirements, closeout, exceptions)
+        return InfluencerRecapWorkspaceSummary(
+            campaign=campaign,
+            recap_record=recap_record,
+            planning_steps=self.list_influencer_planning_steps(actor, campaign_id, include_inactive=True),
+            approval_rounds=self.list_influencer_approval_rounds(actor, campaign_id, include_inactive=True),
+            content_rounds=self.list_influencer_content_rounds(actor, campaign_id, include_inactive=True),
+            live_checkpoints=self.list_influencer_live_checkpoints(actor, campaign_id, include_inactive=True),
+            waves=self.list_influencer_creator_waves(actor, campaign_id, include_inactive=True),
+            creators=creators,
+            exceptions=exceptions,
+            checkpoints=checkpoints,
+            requirements=requirements,
+            launch_items=self.list_influencer_recap_launch_items(actor, campaign_id, include_inactive=True),
+            creator_closeout=closeout,
+            ready_to_close_state=ready,
+        )
+
+    def _recap_checkpoint_payload(self, repository: CampaignOpsRepository, kwargs: dict[str, Any], before: InfluencerRecapCheckpointRecord | None = None) -> dict[str, Any]:
+        assigned = kwargs.get("assigned_user_id") if "assigned_user_id" in kwargs else (before.assigned_user_id if before else None)
+        if assigned:
+            self._require_active_user(repository, str(assigned), "Assigned user")
+        return {"checkpoint_type": self._clean_optional_text(kwargs.get("checkpoint_type") if "checkpoint_type" in kwargs else (before.checkpoint_type if before else None)), "checkpoint_title": require_text(kwargs.get("checkpoint_title") or (before.checkpoint_title if before else None), "Checkpoint title"), "sequence_order": self._non_negative_int(kwargs.get("sequence_order") if "sequence_order" in kwargs else (before.sequence_order if before else 0), "Sequence order") or 0, "responsible_party": self._clean_optional_text(kwargs.get("responsible_party") if "responsible_party" in kwargs else (before.responsible_party if before else None)), "assigned_user_id": str(assigned) if assigned else None, "due_date": kwargs.get("due_date") if "due_date" in kwargs else (before.due_date if before else None), "completed_date": kwargs.get("completed_date") if "completed_date" in kwargs else (before.completed_date if before else None), "status": normalize_influencer_optional_status(kwargs.get("status") if "status" in kwargs else (before.status if before else None), RECAP_CHECKPOINT_STATUSES, "Recap checkpoint status"), "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None)), "hard_deadline": bool(kwargs.get("hard_deadline") if "hard_deadline" in kwargs else (before.hard_deadline if before else False))}
+
+    def create_standard_influencer_recap_template(self, actor: CampaignOpsUser | None, campaign_id: str) -> list[InfluencerRecapCheckpointRecord]:
+        def operation(repository: CampaignOpsRepository) -> list[InfluencerRecapCheckpointRecord]:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            existing = {item.checkpoint_title.lower() for item in repository.list_influencer_recap_checkpoints(campaign_id, include_inactive=True)}
+            created = []
+            for index, title in enumerate(STANDARD_RECAP_CHECKLIST_TEMPLATE, start=1):
+                if title.lower() in existing:
+                    continue
+                checkpoint = repository.create_influencer_recap_checkpoint(campaign_id, title, checkpoint_type="standard_template", sequence_order=index, status="not_started")
+                repository.append_event(event_type="influencer_recap_checkpoint_created", entity_type="influencer_recap_checkpoint", entity_id=checkpoint.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added Recap checkpoint {checkpoint.checkpoint_title}.")
+                created.append(checkpoint)
+            return created
+        return self._transaction(operation)
+
+    def create_influencer_recap_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_title: str, **kwargs: Any) -> InfluencerRecapCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapCheckpointRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            checkpoint = repository.create_influencer_recap_checkpoint(campaign_id, **self._recap_checkpoint_payload(repository, {**kwargs, "checkpoint_title": checkpoint_title}))
+            repository.append_event(event_type="influencer_recap_checkpoint_created", entity_type="influencer_recap_checkpoint", entity_id=checkpoint.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added Recap checkpoint {checkpoint.checkpoint_title}.")
+            return checkpoint
+        return self._transaction(operation)
+
+    def list_influencer_recap_checkpoints(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapCheckpointRecord]:
+        self.get_influencer_recap_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_recap_checkpoints(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_recap_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str, **kwargs: Any) -> InfluencerRecapCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapCheckpointRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            before = next((item for item in repository.list_influencer_recap_checkpoints(campaign_id, include_inactive=True) if item.id == checkpoint_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Recap checkpoint was not found.")
+            payload = self._recap_checkpoint_payload(repository, kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            updated = repository.update_influencer_recap_checkpoint(checkpoint_id, **payload)
+            event_type = "influencer_recap_checkpoint_completed" if payload.get("status") == "complete" else "influencer_recap_checkpoint_updated"
+            repository.append_event(event_type=event_type, entity_type="influencer_recap_checkpoint", entity_id=checkpoint_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated Recap checkpoint {updated.checkpoint_title}.")
+            return updated
+        return self._transaction(operation)
+
+    def reorder_influencer_recap_checkpoints(self, actor: CampaignOpsUser | None, campaign_id: str, ordered_ids: list[str]) -> list[InfluencerRecapCheckpointRecord]:
+        return [self.update_influencer_recap_checkpoint(actor, campaign_id, checkpoint_id, sequence_order=index) for index, checkpoint_id in enumerate(ordered_ids, start=1)]
+
+    def complete_influencer_recap_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str, completed_date: date | None = None) -> InfluencerRecapCheckpointRecord:
+        return self.update_influencer_recap_checkpoint(actor, campaign_id, checkpoint_id, status="complete", completed_date=completed_date or date.today())
+
+    def reopen_influencer_recap_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str) -> InfluencerRecapCheckpointRecord:
+        return self.update_influencer_recap_checkpoint(actor, campaign_id, checkpoint_id, status="reopened", completed_date=None)
+
+    def deactivate_influencer_recap_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_recap_checkpoint(checkpoint_id)
+            repository.append_event(event_type="influencer_recap_checkpoint_deactivated", entity_type="influencer_recap_checkpoint", entity_id=checkpoint_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a Recap checkpoint.")
+        self._transaction(operation)
+
+    def reactivate_influencer_recap_checkpoint(self, actor: CampaignOpsUser | None, campaign_id: str, checkpoint_id: str) -> InfluencerRecapCheckpointRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapCheckpointRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            checkpoint = repository.reactivate_influencer_recap_checkpoint(checkpoint_id)
+            repository.append_event(event_type="influencer_recap_checkpoint_reactivated", entity_type="influencer_recap_checkpoint", entity_id=checkpoint_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated Recap checkpoint {checkpoint.checkpoint_title}.")
+            return checkpoint
+        return self._transaction(operation)
+
+    def _recap_requirement_payload(self, repository: CampaignOpsRepository, campaign_id: str, kwargs: dict[str, Any], before: InfluencerRecapRequirementRecord | None = None) -> dict[str, Any]:
+        requirement_type = require_text(kwargs.get("requirement_type") or (before.requirement_type if before else None), "Requirement type")
+        if requirement_type not in RECAP_REQUIREMENT_TYPES:
+            raise CampaignOpsValidationError("Requirement type is invalid.")
+        resource_id = kwargs.get("resource_id") if "resource_id" in kwargs else (before.resource_id if before else None)
+        if resource_id:
+            resource = repository.get_resource(str(resource_id))
+            campaign = self._require_influencer_campaign(repository, campaign_id)
+            if resource is None or resource.program_id != campaign.program_id:
+                raise CampaignOpsValidationError("Linked resource must belong to the same program.")
+        request_id = kwargs.get("reporting_request_id") if "reporting_request_id" in kwargs else (before.reporting_request_id if before else None)
+        if request_id:
+            request = repository.get_reporting_request(str(request_id))
+            campaign = self._require_influencer_campaign(repository, campaign_id)
+            if request is None or request.program_id != campaign.program_id:
+                raise CampaignOpsValidationError("Linked request must belong to the same program.")
+        received = kwargs.get("received_date") if "received_date" in kwargs else (before.received_date if before else None)
+        completed = kwargs.get("completed_date") if "completed_date" in kwargs else (before.completed_date if before else None)
+        if completed and received and completed < received:
+            raise CampaignOpsValidationError("Completed date cannot be before received date.")
+        return {"requirement_type": requirement_type, "requirement_title": require_text(kwargs.get("requirement_title") or (before.requirement_title if before else None), "Requirement title"), "status": normalize_influencer_optional_status(kwargs.get("status") if "status" in kwargs else (before.status if before else None), RECAP_REQUIREMENT_STATUSES, "Requirement status"), "required": bool(kwargs.get("required") if "required" in kwargs else (before.required if before else True)), "due_date": kwargs.get("due_date") if "due_date" in kwargs else (before.due_date if before else None), "received_date": received, "completed_date": completed, "waiting_on": self._clean_optional_text(kwargs.get("waiting_on") if "waiting_on" in kwargs else (before.waiting_on if before else None)), "resource_id": str(resource_id) if resource_id else None, "reporting_request_id": str(request_id) if request_id else None, "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None))}
+
+    def create_influencer_recap_requirement(self, actor: CampaignOpsUser | None, campaign_id: str, requirement_type: str, requirement_title: str, **kwargs: Any) -> InfluencerRecapRequirementRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapRequirementRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            req = repository.create_influencer_recap_requirement(campaign_id, **self._recap_requirement_payload(repository, campaign_id, {**kwargs, "requirement_type": requirement_type, "requirement_title": requirement_title}))
+            repository.append_event(event_type="influencer_recap_requirement_created", entity_type="influencer_recap_requirement", entity_id=req.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added {req.requirement_type} requirement {req.requirement_title}.")
+            return req
+        return self._transaction(operation)
+
+    def list_influencer_recap_requirements(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapRequirementRecord]:
+        self.get_influencer_recap_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_recap_requirements(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_recap_requirement(self, actor: CampaignOpsUser | None, campaign_id: str, requirement_id: str, **kwargs: Any) -> InfluencerRecapRequirementRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapRequirementRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            before = next((item for item in repository.list_influencer_recap_requirements(campaign_id, include_inactive=True) if item.id == requirement_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Recap requirement was not found.")
+            payload = self._recap_requirement_payload(repository, campaign_id, kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            req = repository.update_influencer_recap_requirement(requirement_id, **payload)
+            if "reporting_request_id" in kwargs:
+                event_type = "influencer_recap_reporting_request_linked"
+            elif req.requirement_type == "EOP Survey":
+                event_type = "influencer_recap_eop_survey_updated"
+            elif payload.get("status") == "received":
+                event_type = "influencer_recap_requirement_received"
+            elif payload.get("status") == "complete":
+                event_type = "influencer_recap_requirement_completed"
+            else:
+                event_type = "influencer_recap_requirement_updated"
+            repository.append_event(event_type=event_type, entity_type="influencer_recap_requirement", entity_id=requirement_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated {req.requirement_type} requirement {req.requirement_title}.")
+            return req
+        return self._transaction(operation)
+
+    def mark_influencer_recap_requirement_received(self, actor: CampaignOpsUser | None, campaign_id: str, requirement_id: str, received_date: date | None = None) -> InfluencerRecapRequirementRecord:
+        return self.update_influencer_recap_requirement(actor, campaign_id, requirement_id, status="received", received_date=received_date or date.today())
+
+    def complete_influencer_recap_requirement(self, actor: CampaignOpsUser | None, campaign_id: str, requirement_id: str, completed_date: date | None = None) -> InfluencerRecapRequirementRecord:
+        return self.update_influencer_recap_requirement(actor, campaign_id, requirement_id, status="complete", completed_date=completed_date or date.today())
+
+    def reopen_influencer_recap_requirement(self, actor: CampaignOpsUser | None, campaign_id: str, requirement_id: str) -> InfluencerRecapRequirementRecord:
+        return self.update_influencer_recap_requirement(actor, campaign_id, requirement_id, status="reopened", completed_date=None)
+
+    def deactivate_influencer_recap_requirement(self, actor: CampaignOpsUser | None, campaign_id: str, requirement_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_recap_requirement(requirement_id)
+            repository.append_event(event_type="influencer_recap_requirement_deactivated", entity_type="influencer_recap_requirement", entity_id=requirement_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a Recap requirement.")
+        self._transaction(operation)
+
+    def reactivate_influencer_recap_requirement(self, actor: CampaignOpsUser | None, campaign_id: str, requirement_id: str) -> InfluencerRecapRequirementRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapRequirementRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            req = repository.reactivate_influencer_recap_requirement(requirement_id)
+            repository.append_event(event_type="influencer_recap_requirement_reactivated", entity_type="influencer_recap_requirement", entity_id=requirement_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated Recap requirement {req.requirement_title}.")
+            return req
+        return self._transaction(operation)
+
+    def _recap_launch_payload(self, kwargs: dict[str, Any], before: InfluencerRecapLaunchItemRecord | None = None) -> dict[str, Any]:
+        product_url = kwargs.get("product_url") if "product_url" in kwargs else (before.product_url if before else None)
+        retailer_url = kwargs.get("retailer_url") if "retailer_url" in kwargs else (before.retailer_url if before else None)
+        return {"group_name": self._clean_optional_text(kwargs.get("group_name") if "group_name" in kwargs else (before.group_name if before else None)), "product_name": require_text(kwargs.get("product_name") or (before.product_name if before else None), "Product name"), "retailer_name": self._clean_optional_text(kwargs.get("retailer_name") if "retailer_name" in kwargs else (before.retailer_name if before else None)), "online_launch_date": kwargs.get("online_launch_date") if "online_launch_date" in kwargs else (before.online_launch_date if before else None), "in_store_launch_date": kwargs.get("in_store_launch_date") if "in_store_launch_date" in kwargs else (before.in_store_launch_date if before else None), "launch_status": normalize_influencer_optional_status(kwargs.get("launch_status") if "launch_status" in kwargs else (before.launch_status if before else None), RECAP_LAUNCH_STATUSES, "Launch status"), "product_url": self._validate_resource_url(product_url) if product_url else None, "retailer_url": self._validate_resource_url(retailer_url) if retailer_url else None, "notes": self._clean_optional_text(kwargs.get("notes") if "notes" in kwargs else (before.notes if before else None)), "sort_order": self._non_negative_int(kwargs.get("sort_order") if "sort_order" in kwargs else (before.sort_order if before else 0), "Sort order") or 0}
+
+    def create_influencer_recap_launch_item(self, actor: CampaignOpsUser | None, campaign_id: str, product_name: str, **kwargs: Any) -> InfluencerRecapLaunchItemRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapLaunchItemRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            item = repository.create_influencer_recap_launch_item(campaign_id, **self._recap_launch_payload({**kwargs, "product_name": product_name}))
+            repository.append_event(event_type="influencer_recap_launch_item_created", entity_type="influencer_recap_launch_item", entity_id=item.id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} added product launch item {item.product_name}.")
+            return item
+        return self._transaction(operation)
+
+    def list_influencer_recap_launch_items(self, actor: CampaignOpsUser | None, campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapLaunchItemRecord]:
+        self.get_influencer_recap_campaign_detail(actor, campaign_id)
+        return (self.repository or CampaignOpsRepository()).list_influencer_recap_launch_items(campaign_id, include_inactive=include_inactive)
+
+    def update_influencer_recap_launch_item(self, actor: CampaignOpsUser | None, campaign_id: str, launch_item_id: str, **kwargs: Any) -> InfluencerRecapLaunchItemRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapLaunchItemRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            before = next((item for item in repository.list_influencer_recap_launch_items(campaign_id, include_inactive=True) if item.id == launch_item_id), None)
+            if before is None:
+                raise CampaignOpsNotFoundError("Recap launch item was not found.")
+            payload = self._recap_launch_payload(kwargs, before)
+            if not any(getattr(before, field) != value for field, value in payload.items()):
+                return before
+            item = repository.update_influencer_recap_launch_item(launch_item_id, **payload)
+            repository.append_event(event_type="influencer_recap_launch_item_updated", entity_type="influencer_recap_launch_item", entity_id=launch_item_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} updated product launch item {item.product_name}.")
+            return item
+        return self._transaction(operation)
+
+    def mark_influencer_recap_launch_online(self, actor: CampaignOpsUser | None, campaign_id: str, launch_item_id: str, online_launch_date: date | None = None) -> InfluencerRecapLaunchItemRecord:
+        return self.update_influencer_recap_launch_item(actor, campaign_id, launch_item_id, launch_status="online_live", online_launch_date=online_launch_date or date.today())
+
+    def mark_influencer_recap_launch_in_store(self, actor: CampaignOpsUser | None, campaign_id: str, launch_item_id: str, in_store_launch_date: date | None = None) -> InfluencerRecapLaunchItemRecord:
+        return self.update_influencer_recap_launch_item(actor, campaign_id, launch_item_id, launch_status="in_store_live", in_store_launch_date=in_store_launch_date or date.today())
+
+    def reorder_influencer_recap_launch_items(self, actor: CampaignOpsUser | None, campaign_id: str, ordered_ids: list[str]) -> list[InfluencerRecapLaunchItemRecord]:
+        return [self.update_influencer_recap_launch_item(actor, campaign_id, item_id, sort_order=index) for index, item_id in enumerate(ordered_ids, start=1)]
+
+    def deactivate_influencer_recap_launch_item(self, actor: CampaignOpsUser | None, campaign_id: str, launch_item_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            repository.deactivate_influencer_recap_launch_item(launch_item_id)
+            repository.append_event(event_type="influencer_recap_launch_item_deactivated", entity_type="influencer_recap_launch_item", entity_id=launch_item_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} deactivated a Recap launch item.")
+        self._transaction(operation)
+
+    def reactivate_influencer_recap_launch_item(self, actor: CampaignOpsUser | None, campaign_id: str, launch_item_id: str) -> InfluencerRecapLaunchItemRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerRecapLaunchItemRecord:
+            campaign = self._recap_campaign_context(repository, actor, campaign_id)
+            item = repository.reactivate_influencer_recap_launch_item(launch_item_id)
+            repository.append_event(event_type="influencer_recap_launch_item_reactivated", entity_type="influencer_recap_launch_item", entity_id=launch_item_id, program_id=campaign.program_id, workstream_id=campaign.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} reactivated Recap launch item {item.product_name}.")
+            return item
+        return self._transaction(operation)
+
+    def complete_influencer_campaign_from_recapping(self, actor: CampaignOpsUser | None, campaign_id: str, allow_override: bool = False) -> InfluencerCampaignRecord:
+        def operation(repository: CampaignOpsRepository) -> InfluencerCampaignRecord:
+            before = self._recap_campaign_context(repository, actor, campaign_id)
+            recap_record = repository.get_influencer_recap_record(campaign_id)
+            creators = repository.list_influencer_live_creators(campaign_id)
+            exceptions = repository.list_influencer_live_exceptions(campaign_id)
+            checkpoints = repository.list_influencer_recap_checkpoints(campaign_id)
+            requirements = repository.list_influencer_recap_requirements(campaign_id)
+            ready_state = self.influencer_recap_ready_to_close_state(recap_record, checkpoints, requirements, self.creator_closeout_summary(recap_record, creators, exceptions), exceptions)
+            if ready_state not in ("Ready to Close", "Complete") and not (allow_override and can_access_admin(actor)):
+                raise CampaignOpsValidationError("Recapping campaign is not ready to complete.")
+            updated = repository.update_influencer_campaign(
+                campaign_id,
+                workstream_id=before.workstream_id,
+                campaign_title=before.campaign_title,
+                manager_user_id=before.manager_user_id,
+                influencer_stage=INFLUENCER_STAGE_COMPLETE,
+                planning_status=RECAP_STATUS_COMPLETE,
+                latest_update=before.latest_update,
+                waiting_on=before.waiting_on,
+                is_on_hold=before.is_on_hold,
+                hold_reason=before.hold_reason,
+                application_open_date=before.application_open_date,
+                application_close_date=before.application_close_date,
+                influencer_approval_due_date=before.influencer_approval_due_date,
+                scripts_due_date=before.scripts_due_date,
+                first_content_due_date=before.first_content_due_date,
+                launch_date=before.launch_date,
+                wrap_date=before.wrap_date,
+                invoice_date=before.invoice_date,
+                invoice_status=before.invoice_status,
+                invoice_amount=before.invoice_amount,
+                target_creator_count=before.target_creator_count,
+                approved_creator_count=before.approved_creator_count,
+                contracted_creator_count=before.contracted_creator_count,
+            )
+            if recap_record:
+                close_date = recap_record.final_close_date or date.today()
+                if recap_record.recap_delivered_date and close_date < recap_record.recap_delivered_date:
+                    close_date = recap_record.recap_delivered_date
+                repository.update_influencer_recap_record(
+                    recap_record.id,
+                    **self._recap_record_payload(
+                        {"recap_status": RECAP_STATUS_COMPLETE, "final_close_date": close_date},
+                        recap_record,
+                    ),
+                )
+            repository.append_event(event_type="influencer_stage_completed", entity_type="influencer_campaign", entity_id=campaign_id, program_id=updated.program_id, workstream_id=updated.workstream_id, actor_user_id=actor.id if actor else None, message=f"{self._influencer_actor_label(actor)} completed the Influencer campaign.", old_value_json={"stage": before.influencer_stage, "ready_to_close_state": ready_state}, new_value_json={"stage": updated.influencer_stage})
+            return updated
+        return self._transaction(operation)
 
     def _content_actor_label(self, actor: CampaignOpsUser | None) -> str:
         return actor.display_name if actor else "System"

@@ -17,9 +17,12 @@ from app.campaign_ops.components import (
     render_role_caption,
     render_section_navigation,
 )
+from app.campaign_ops.ui.components import render_page_header
+from app.campaign_ops.ui.styles import apply_campaign_ops_styles
 from app.campaign_ops.program_forms import render_new_program_form
 from app.campaign_ops.program_list import render_all_programs, render_my_programs
 from app.campaign_ops.program_workspace import render_program_workspace
+from app.campaign_ops.cross_team.views import render_cross_team_dashboard
 from app.campaign_ops.content_management.views import render_content_management
 from app.campaign_ops.influencer.views import render_influencer
 from app.campaign_ops.insights.views import render_insights
@@ -54,10 +57,10 @@ ROLE_LABELS = {
 
 
 def render_header() -> None:
-    st.title("Campaign Operations")
-    st.markdown(
-        "Manage persisted programs, workstreams, team assignments, requests, and "
-        "cross-team progress from one workspace."
+    render_page_header(
+        "Campaign Operations",
+        "Manage persisted programs, workstreams, team assignments, requests, and cross-team progress from one workspace.",
+        active_module="Campaign Operations",
     )
 
 
@@ -168,7 +171,7 @@ def render_active_section(
 ) -> None:
     clients = service.list_active_clients()
     if section == "Cross-Team":
-        render_cross_team_intro()
+        render_cross_team_dashboard(user, service, users)
     elif section == "All Programs":
         render_all_programs(user, service, users, clients)
     elif section == "My Programs":
@@ -195,6 +198,7 @@ def main() -> None:
     st.set_page_config(page_title="Campaign Operations", page_icon="??", layout="wide")
     hide_default_streamlit_sidebar_nav()
     clear_legacy_workflow_session_state()
+    apply_campaign_ops_styles()
 
     render_header()
     st.divider()

@@ -291,6 +291,7 @@ class ProgramPortfolioRow:
     primary_owner_name: str | None = None
     assigned_user_ids: list[str] = field(default_factory=list)
     assigned_user_names: list[str] = field(default_factory=list)
+    latest_update: str | None = None
     start_date: date | None = None
     target_end_date: date | None = None
     updated_at: datetime | None = None
@@ -464,6 +465,187 @@ class ReportingRequestListRow:
 
 
 ReportingRequestDetail = ReportingRequestListRow
+
+
+@dataclass(slots=True)
+class DashboardMetricSet:
+    active_programs: int = 0
+    needs_attention: int = 0
+    high_risk: int = 0
+    overdue_tasks: int = 0
+    due_this_week: int = 0
+    upcoming_milestones: int = 0
+    waiting_on_client: int = 0
+    waiting_on_internal_team: int = 0
+    paused_on_hold: int = 0
+    ready_for_recap: int = 0
+    ready_to_close: int = 0
+    completed_recently: int = 0
+
+
+@dataclass(slots=True)
+class NeedsAttentionRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    workflow: str
+    stage: str | None
+    owner_user_id: str | None
+    owner_name: str | None
+    assigned_user_id: str | None
+    assigned_name: str | None
+    attention_reason: str
+    severity: str
+    risk: str | None
+    waiting_on: str | None
+    due_date: date | None
+    days_overdue: int | None
+    latest_update: str | None
+    target_section: str = "Program Workspace"
+    target_record_id: str | None = None
+
+
+@dataclass(slots=True)
+class WaitingOnRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    workflow: str
+    record_type: str
+    item: str
+    owner_user_id: str | None
+    owner_name: str | None
+    waiting_on: str | None
+    waiting_category: str
+    due_date: date | None
+    age: int | None
+    latest_update: str | None
+    target_section: str = "Program Workspace"
+    target_record_id: str | None = None
+
+
+@dataclass(slots=True)
+class DashboardTaskRow:
+    id: str
+    program_id: str
+    task: str
+    program_name: str
+    client_name: str | None
+    workstream: str | None
+    assigned_user_id: str | None
+    assigned_user_name: str | None
+    responsible_party: str | None
+    status: str
+    risk: str
+    due_date: date | None
+    days_overdue: int
+    waiting_on: str | None
+    hard_deadline: bool
+
+
+@dataclass(slots=True)
+class UpcomingMilestoneRow:
+    id: str
+    program_id: str
+    milestone: str
+    program_name: str
+    client_name: str | None
+    workstream: str | None
+    owner_user_id: str | None
+    owner_name: str | None
+    status: str
+    best_available_date: date | None
+    days_until: int | None
+    hard_deadline: bool
+    highlighted: bool
+
+
+@dataclass(slots=True)
+class WorkloadByPersonRow:
+    user_id: str
+    display_name: str
+    owned_active_programs: int = 0
+    assigned_active_programs: int = 0
+    open_tasks: int = 0
+    overdue_tasks: int = 0
+    due_this_week: int = 0
+    active_milestones_owned: int = 0
+    needs_attention_programs: int = 0
+    waiting_items: int = 0
+    influencer_planning: int = 0
+    influencer_live: int = 0
+    influencer_recapping: int = 0
+    reporting_requests: int = 0
+    insights_projects: int = 0
+    retail_media_campaigns: int = 0
+    content_programs: int = 0
+
+
+@dataclass(slots=True)
+class DashboardWorkflowCard:
+    id: str
+    program_id: str
+    title: str
+    client_name: str | None
+    workflow: str
+    owner_user_id: str | None
+    owner_name: str | None
+    stage: str | None
+    status: str | None
+    latest_update: str | None
+    waiting_on: str | None
+    next_item: str | None
+    next_date: date | None
+    risk: str | None
+    needs_attention: bool
+    details: str | None = None
+    target_section: str = "Program Workspace"
+
+
+@dataclass(slots=True)
+class DashboardProgramRow:
+    id: str
+    program_name: str
+    client_name: str | None
+    primary_workflow: str | None
+    connected_workstreams: list[str]
+    program_status: str
+    cross_stage: str
+    specialized_stage: str | None
+    risk: str
+    priority: str | None
+    primary_owner_user_id: str | None
+    primary_owner_name: str | None
+    assigned_people: list[str]
+    latest_update: str | None
+    waiting_on: str | None
+    open_tasks: int
+    overdue_tasks: int
+    next_task_due: date | None
+    next_milestone: str | None
+    needs_attention_reasons: list[str]
+    start_date: date | None
+    target_end_date: date | None
+    updated_at: datetime | None
+    active_state: str
+
+
+@dataclass(slots=True)
+class CrossTeamDashboardSummary:
+    metrics: DashboardMetricSet
+    needs_attention: list[NeedsAttentionRow]
+    waiting_on: list[WaitingOnRow]
+    overdue_tasks: list[DashboardTaskRow]
+    upcoming_milestones: list[UpcomingMilestoneRow]
+    workload: list[WorkloadByPersonRow]
+    influencer_cards: list[DashboardWorkflowCard]
+    retail_media_cards: list[DashboardWorkflowCard]
+    content_cards: list[DashboardWorkflowCard]
+    insights_cards: list[DashboardWorkflowCard]
+    request_cards: list[DashboardWorkflowCard]
+    programs: list[DashboardProgramRow]
 
 
 @dataclass(slots=True)
@@ -1218,3 +1400,185 @@ class InfluencerLiveWorkspaceSummary:
     creators: list[InfluencerLiveCreatorRecord]
     exceptions: list[InfluencerLiveExceptionRecord]
     wrap_readiness: str
+
+
+@dataclass(slots=True)
+class InfluencerRecapRecord:
+    id: str
+    influencer_campaign_id: str
+    recap_status: str | None = None
+    latest_update: str | None = None
+    waiting_on: str | None = None
+    reporting_due_date: date | None = None
+    draft_recap_due_date: date | None = None
+    internal_review_date: date | None = None
+    client_review_date: date | None = None
+    client_recap_date: date | None = None
+    recap_delivered_date: date | None = None
+    final_close_date: date | None = None
+    final_invoice_sent_date: date | None = None
+    sales_lift_analysis_required: bool = False
+    sales_lift_analysis_status: str | None = None
+    final_performance_data_status: str | None = None
+    creator_closeout_status: str | None = None
+    eop_survey_status: str | None = None
+    invoice_status: str | None = None
+    financial_close_status: str | None = None
+    lessons_learned: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class InfluencerRecapPortfolioRow:
+    id: str
+    program_id: str
+    program_name: str
+    client_name: str | None
+    workstream_id: str | None
+    campaign_title: str
+    manager_user_id: str | None
+    manager_display_name: str | None
+    influencer_stage: str
+    recap_record_id: str | None
+    recap_status: str | None
+    latest_update: str | None
+    waiting_on: str | None
+    all_creators_live: bool
+    creator_closeout_status: str | None
+    eop_survey_status: str | None
+    final_performance_data_status: str | None
+    sales_lift_analysis_required: bool
+    sales_lift_analysis_status: str | None
+    recap_deck_status: str | None
+    client_recap_date: date | None
+    invoice_status: str | None
+    financial_close_status: str | None
+    open_requirement_count: int
+    launch_item_count: int
+    open_exception_count: int
+    total_creator_count: int
+    live_creator_count: int
+    completed_creator_count: int
+    missing_final_links_count: int
+    missing_final_impressions_count: int
+    paid_live_incomplete_count: int
+    program_status: str
+    program_risk: str
+    reporting_due_date: date | None
+    next_checkpoint: str | None
+    next_checkpoint_due_date: date | None
+    track_sheet_url: str | None
+    influencer_brief_url: str | None
+    click2cart_link_url: str | None
+    bitly_link_url: str | None
+    invoice_url: str | None
+    eop_survey_url: str | None
+    live_content_tracker_url: str | None
+    recap_deck_url: str | None
+    final_performance_data_url: str | None
+    sales_lift_analysis_url: str | None
+    ready_to_close_state: str
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+@dataclass(slots=True)
+class InfluencerRecapCheckpointRecord:
+    id: str
+    influencer_campaign_id: str
+    checkpoint_title: str
+    checkpoint_type: str | None = None
+    sequence_order: int = 0
+    responsible_party: str | None = None
+    assigned_user_id: str | None = None
+    due_date: date | None = None
+    completed_date: date | None = None
+    status: str | None = None
+    waiting_on: str | None = None
+    notes: str | None = None
+    hard_deadline: bool = False
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.checkpoint_title = require_text(self.checkpoint_title, "checkpoint_title")
+
+
+@dataclass(slots=True)
+class InfluencerRecapRequirementRecord:
+    id: str
+    influencer_campaign_id: str
+    requirement_type: str
+    requirement_title: str
+    status: str | None = None
+    required: bool = True
+    due_date: date | None = None
+    received_date: date | None = None
+    completed_date: date | None = None
+    waiting_on: str | None = None
+    resource_id: str | None = None
+    reporting_request_id: str | None = None
+    notes: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.requirement_type = require_text(self.requirement_type, "requirement_type")
+        self.requirement_title = require_text(self.requirement_title, "requirement_title")
+
+
+@dataclass(slots=True)
+class InfluencerRecapLaunchItemRecord:
+    id: str
+    influencer_campaign_id: str
+    product_name: str
+    group_name: str | None = None
+    retailer_name: str | None = None
+    online_launch_date: date | None = None
+    in_store_launch_date: date | None = None
+    launch_status: str | None = None
+    product_url: str | None = None
+    retailer_url: str | None = None
+    notes: str | None = None
+    sort_order: int = 0
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.product_name = require_text(self.product_name, "product_name")
+
+
+@dataclass(slots=True)
+class InfluencerCreatorCloseoutSummary:
+    total_creators: int
+    live_creators: int
+    completed_creators: int
+    missing_final_links: int
+    missing_final_impressions: int
+    open_creator_exceptions: int
+    paid_live_incomplete: int
+    creator_closeout_status: str | None = None
+
+
+@dataclass(slots=True)
+class InfluencerRecapWorkspaceSummary:
+    campaign: InfluencerRecapPortfolioRow
+    recap_record: InfluencerRecapRecord | None
+    planning_steps: list[InfluencerPlanningStepRecord]
+    approval_rounds: list[InfluencerApprovalRoundRecord]
+    content_rounds: list[InfluencerContentRoundRecord]
+    live_checkpoints: list[InfluencerLiveCheckpointRecord]
+    waves: list[InfluencerCreatorWaveRecord]
+    creators: list[InfluencerLiveCreatorRecord]
+    exceptions: list[InfluencerLiveExceptionRecord]
+    checkpoints: list[InfluencerRecapCheckpointRecord]
+    requirements: list[InfluencerRecapRequirementRecord]
+    launch_items: list[InfluencerRecapLaunchItemRecord]
+    creator_closeout: InfluencerCreatorCloseoutSummary
+    ready_to_close_state: str

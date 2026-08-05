@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,6 +68,11 @@ from core.campaign_ops.models import (
     InfluencerLivePortfolioRow,
     InfluencerPlanningPortfolioRow,
     InfluencerPlanningStepRecord,
+    InfluencerRecapCheckpointRecord,
+    InfluencerRecapLaunchItemRecord,
+    InfluencerRecapPortfolioRow,
+    InfluencerRecapRecord,
+    InfluencerRecapRequirementRecord,
     InsightsObjectiveRecord,
     InsightsPortfolioRow,
     InsightsProjectRecord,
@@ -76,6 +81,7 @@ from core.campaign_ops.models import (
     NoteListRow,
     Program,
     ProgramAssignment,
+    ProgramPortfolioRow,
     ProgramNote,
     ReportingRequestListRow,
     ReportingRequestRecord,
@@ -109,6 +115,7 @@ from core.campaign_ops.content_management import (
 from core.campaign_ops.influencer import (
     INFLUENCER_STAGE_PLANNING,
     INFLUENCER_STAGE_LIVE,
+    INFLUENCER_STAGE_RECAPPING,
     LIVE_STATUS_LIVE,
     LIVE_STATUS_READY_TO_LAUNCH,
     PLANNING_STATUS_BRIEF_DEVELOPMENT,
@@ -116,10 +123,15 @@ from core.campaign_ops.influencer import (
     PLANNING_STATUS_ON_HOLD,
     STANDARD_PLANNING_TEMPLATE,
     STANDARD_LIVE_CHECKPOINT_TEMPLATE,
+    RECAP_STATUS_READY_TO_RECAP,
+    RECAP_STATUS_COLLECTING_DATA,
+    RECAP_STATUS_READY_TO_CLOSE,
+    RECAP_STATUS_COMPLETE,
+    STANDARD_RECAP_CHECKLIST_TEMPLATE,
 )
 from core.campaign_ops.insights import INSIGHTS_STATUS_DRAFTING_SURVEY, INSIGHTS_STATUS_NOT_STARTED
 from core.campaign_ops.retail_media import RETAIL_MEDIA_STATUS_LIVE, RETAIL_MEDIA_STATUS_PLANNING
-from core.campaign_ops.reporting_requests import normalize_am_name
+from core.campaign_ops.reporting_requests import REQUEST_CATEGORY_REPORT, REQUEST_CATEGORY_SURVEY, normalize_am_name
 
 
 class FakeCursor:
@@ -277,6 +289,10 @@ class FakePrompt4ARepository:
         self.influencer_creator_waves: list[InfluencerCreatorWaveRecord] = []
         self.influencer_live_creators: list[InfluencerLiveCreatorRecord] = []
         self.influencer_live_exceptions: list[InfluencerLiveExceptionRecord] = []
+        self.influencer_recap_records: list[InfluencerRecapRecord] = []
+        self.influencer_recap_checkpoints: list[InfluencerRecapCheckpointRecord] = []
+        self.influencer_recap_requirements: list[InfluencerRecapRequirementRecord] = []
+        self.influencer_recap_launch_items: list[InfluencerRecapLaunchItemRecord] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -1561,6 +1577,151 @@ class FakePrompt4ARepository:
     def reactivate_influencer_live_exception(self, exception_id: str) -> InfluencerLiveExceptionRecord:
         return self.update_influencer_live_exception(exception_id, is_active=True)
 
+    def create_or_update_influencer_recap_record(self, influencer_campaign_id: str, **kwargs: object) -> InfluencerRecapRecord:
+        record = self.get_influencer_recap_record(influencer_campaign_id)
+        if record is None:
+            record = InfluencerRecapRecord(id=f"13131313-1313-4313-8313-{len(self.influencer_recap_records) + 1:012d}", influencer_campaign_id=influencer_campaign_id)
+            self.influencer_recap_records.append(record)
+        for key, value in kwargs.items():
+            setattr(record, key, value)
+        return record
+
+    def get_influencer_recap_record(self, influencer_campaign_id: str) -> InfluencerRecapRecord | None:
+        return next((item for item in self.influencer_recap_records if item.influencer_campaign_id == influencer_campaign_id), None)
+
+    def update_influencer_recap_record(self, recap_record_id: str, **kwargs: object) -> InfluencerRecapRecord:
+        record = next((item for item in self.influencer_recap_records if item.id == recap_record_id), None)
+        if record is None:
+            raise CampaignOpsNotFoundError("Recap record was not found.")
+        for key, value in kwargs.items():
+            setattr(record, key, value)
+        return record
+
+    def _influencer_recap_portfolio_row(self, campaign: InfluencerCampaignRecord) -> InfluencerRecapPortfolioRow:
+        program = self.get_program(campaign.program_id)
+        client = self.get_client(program.client_id) if program and program.client_id else None
+        manager = self.get_user_by_id(campaign.manager_user_id) if campaign.manager_user_id else None
+        record = self.get_influencer_recap_record(campaign.id)
+        checkpoints = [c for c in self.influencer_recap_checkpoints if c.influencer_campaign_id == campaign.id and c.is_active and c.status != "complete" and c.completed_date is None]
+        checkpoints.sort(key=lambda item: (item.due_date or date.max, item.sequence_order, item.created_at or datetime.min))
+        reqs = [r for r in self.influencer_recap_requirements if r.influencer_campaign_id == campaign.id and r.is_active]
+        launches = [i for i in self.influencer_recap_launch_items if i.influencer_campaign_id == campaign.id and i.is_active]
+        creators = [c for c in self.influencer_live_creators if c.influencer_campaign_id == campaign.id and c.is_active]
+        exceptions = [e for e in self.influencer_live_exceptions if e.influencer_campaign_id == campaign.id and e.is_active and e.status not in ("resolved", "cancelled")]
+        resources = [r for r in self.resources if r.program_id == campaign.program_id and r.is_active]
+
+        def resource_url(resource_type: str) -> str | None:
+            return next((resource.url for resource in resources if resource.resource_type == resource_type and resource.url), None)
+
+        open_req_count = len([r for r in reqs if r.required and r.status not in ("complete", "not_required", "cancelled")])
+        paid_incomplete = len([c for c in creators if c.live_status not in ("paid_live_complete", "complete", "cancelled")])
+        missing_links = len([c for c in creators if not c.content_url])
+        missing_impressions = len([c for c in creators if c.impressions_reporting_required and c.latest_impressions is None])
+        ready = "Needs Attention" if exceptions else "Not Ready" if open_req_count or paid_incomplete or missing_links or missing_impressions or checkpoints else "Ready to Close"
+        if campaign.influencer_stage == "complete" or (record and record.recap_status == "complete"):
+            ready = "Complete"
+        recap_deck = next((r.status for r in reqs if r.requirement_type == "Recap Deck"), None)
+        return InfluencerRecapPortfolioRow(
+            id=campaign.id, program_id=campaign.program_id, program_name=program.program_name if program else "", client_name=client.name if client else None,
+            workstream_id=campaign.workstream_id, campaign_title=campaign.campaign_title, manager_user_id=campaign.manager_user_id,
+            manager_display_name=manager.display_name if manager else None, influencer_stage=campaign.influencer_stage,
+            recap_record_id=record.id if record else None, recap_status=(record.recap_status if record else campaign.planning_status),
+            latest_update=(record.latest_update if record else campaign.latest_update), waiting_on=(record.waiting_on if record else campaign.waiting_on),
+            all_creators_live=bool(creators) and all(c.live_status in ("live", "paid_live_complete", "complete") for c in creators),
+            creator_closeout_status=record.creator_closeout_status if record else None, eop_survey_status=record.eop_survey_status if record else None,
+            final_performance_data_status=record.final_performance_data_status if record else None,
+            sales_lift_analysis_required=bool(record.sales_lift_analysis_required if record else False),
+            sales_lift_analysis_status=record.sales_lift_analysis_status if record else None, recap_deck_status=recap_deck,
+            client_recap_date=record.client_recap_date if record else None, invoice_status=(record.invoice_status if record and record.invoice_status else campaign.invoice_status),
+            financial_close_status=record.financial_close_status if record else None, open_requirement_count=open_req_count, launch_item_count=len(launches),
+            open_exception_count=len(exceptions), total_creator_count=len(creators),
+            live_creator_count=len([c for c in creators if c.live_status in ("live", "paid_live_complete", "complete")]),
+            completed_creator_count=len([c for c in creators if c.live_status in ("paid_live_complete", "complete")]),
+            missing_final_links_count=missing_links, missing_final_impressions_count=missing_impressions, paid_live_incomplete_count=paid_incomplete,
+            program_status=program.status if program else ProgramStatus.ACTIVE.value, program_risk=program.risk_level if program else RiskLevel.UNRATED.value,
+            reporting_due_date=record.reporting_due_date if record else None, next_checkpoint=checkpoints[0].checkpoint_title if checkpoints else None,
+            next_checkpoint_due_date=checkpoints[0].due_date if checkpoints else None, track_sheet_url=resource_url("Track Sheet"),
+            influencer_brief_url=resource_url("Influencer Brief"), click2cart_link_url=resource_url("Click2Cart Link"),
+            bitly_link_url=resource_url("Bitly Link"), invoice_url=resource_url("Invoice"), eop_survey_url=resource_url("EOP Survey"),
+            live_content_tracker_url=resource_url("Live Content Tracker"), recap_deck_url=resource_url("Recap Deck"),
+            final_performance_data_url=resource_url("Final Performance Data"), sales_lift_analysis_url=resource_url("Sales Lift Analysis"),
+            ready_to_close_state=ready, is_active=campaign.is_active, created_at=campaign.created_at, updated_at=campaign.updated_at,
+        )
+
+    def list_influencer_recap_campaigns(self, include_inactive: bool = False, manager_user_id: str | None = None) -> list[InfluencerRecapPortfolioRow]:
+        stages = {INFLUENCER_STAGE_RECAPPING, "complete"} if include_inactive else {INFLUENCER_STAGE_RECAPPING}
+        return [self._influencer_recap_portfolio_row(item) for item in self.influencer_campaigns if item.influencer_stage in stages and (include_inactive or item.is_active) and (not manager_user_id or item.manager_user_id == manager_user_id)]
+
+    def get_influencer_recap_campaign_detail(self, campaign_id: str) -> InfluencerRecapPortfolioRow | None:
+        campaign = self.get_influencer_campaign(campaign_id)
+        return self._influencer_recap_portfolio_row(campaign) if campaign and campaign.influencer_stage in {INFLUENCER_STAGE_RECAPPING, "complete"} else None
+
+    def create_influencer_recap_checkpoint(self, influencer_campaign_id: str, checkpoint_title: str, **kwargs: object) -> InfluencerRecapCheckpointRecord:
+        checkpoint = InfluencerRecapCheckpointRecord(id=f"12121212-1212-4212-8212-{len(self.influencer_recap_checkpoints) + 1:012d}", influencer_campaign_id=influencer_campaign_id, checkpoint_title=checkpoint_title, **kwargs)
+        self.influencer_recap_checkpoints.append(checkpoint)
+        return checkpoint
+
+    def list_influencer_recap_checkpoints(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapCheckpointRecord]:
+        return sorted([item for item in self.influencer_recap_checkpoints if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.sequence_order, item.due_date or date.max))
+
+    def update_influencer_recap_checkpoint(self, checkpoint_id: str, **kwargs: object) -> InfluencerRecapCheckpointRecord:
+        checkpoint = next((item for item in self.influencer_recap_checkpoints if item.id == checkpoint_id), None)
+        if checkpoint is None:
+            raise CampaignOpsNotFoundError("Recap checkpoint was not found.")
+        for key, value in kwargs.items():
+            setattr(checkpoint, key, value)
+        return checkpoint
+
+    def deactivate_influencer_recap_checkpoint(self, checkpoint_id: str) -> None:
+        self.update_influencer_recap_checkpoint(checkpoint_id, is_active=False)
+
+    def reactivate_influencer_recap_checkpoint(self, checkpoint_id: str) -> InfluencerRecapCheckpointRecord:
+        return self.update_influencer_recap_checkpoint(checkpoint_id, is_active=True)
+
+    def create_influencer_recap_requirement(self, influencer_campaign_id: str, requirement_type: str, requirement_title: str, **kwargs: object) -> InfluencerRecapRequirementRecord:
+        req = InfluencerRecapRequirementRecord(id=f"11121212-1212-4212-8212-{len(self.influencer_recap_requirements) + 1:012d}", influencer_campaign_id=influencer_campaign_id, requirement_type=requirement_type, requirement_title=requirement_title, **kwargs)
+        self.influencer_recap_requirements.append(req)
+        return req
+
+    def list_influencer_recap_requirements(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapRequirementRecord]:
+        return [item for item in self.influencer_recap_requirements if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)]
+
+    def update_influencer_recap_requirement(self, requirement_id: str, **kwargs: object) -> InfluencerRecapRequirementRecord:
+        req = next((item for item in self.influencer_recap_requirements if item.id == requirement_id), None)
+        if req is None:
+            raise CampaignOpsNotFoundError("Recap requirement was not found.")
+        for key, value in kwargs.items():
+            setattr(req, key, value)
+        return req
+
+    def deactivate_influencer_recap_requirement(self, requirement_id: str) -> None:
+        self.update_influencer_recap_requirement(requirement_id, is_active=False)
+
+    def reactivate_influencer_recap_requirement(self, requirement_id: str) -> InfluencerRecapRequirementRecord:
+        return self.update_influencer_recap_requirement(requirement_id, is_active=True)
+
+    def create_influencer_recap_launch_item(self, influencer_campaign_id: str, product_name: str, **kwargs: object) -> InfluencerRecapLaunchItemRecord:
+        item = InfluencerRecapLaunchItemRecord(id=f"10121212-1212-4212-8212-{len(self.influencer_recap_launch_items) + 1:012d}", influencer_campaign_id=influencer_campaign_id, product_name=product_name, **kwargs)
+        self.influencer_recap_launch_items.append(item)
+        return item
+
+    def list_influencer_recap_launch_items(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapLaunchItemRecord]:
+        return sorted([item for item in self.influencer_recap_launch_items if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.sort_order, item.group_name or "", item.product_name))
+
+    def update_influencer_recap_launch_item(self, launch_item_id: str, **kwargs: object) -> InfluencerRecapLaunchItemRecord:
+        item = next((item for item in self.influencer_recap_launch_items if item.id == launch_item_id), None)
+        if item is None:
+            raise CampaignOpsNotFoundError("Recap launch item was not found.")
+        for key, value in kwargs.items():
+            setattr(item, key, value)
+        return item
+
+    def deactivate_influencer_recap_launch_item(self, launch_item_id: str) -> None:
+        self.update_influencer_recap_launch_item(launch_item_id, is_active=False)
+
+    def reactivate_influencer_recap_launch_item(self, launch_item_id: str) -> InfluencerRecapLaunchItemRecord:
+        return self.update_influencer_recap_launch_item(launch_item_id, is_active=True)
+
     def _task_list_row(self, task: Task) -> TaskListRow:
         program = self.get_program(task.program_id)
         workstream = self.get_workstream(task.workstream_id) if task.workstream_id else None
@@ -1608,13 +1769,128 @@ class FakePrompt4ARepository:
         ]
         return sorted(rows, key=lambda task: (task.due_date or date.max, task.title))
 
+    def list_dashboard_task_rows(self, include_inactive: bool = False, permitted_user_id: str | None = None) -> list[TaskListRow]:
+        rows = [
+            self._task_list_row(task)
+            for task in self.tasks
+            if include_inactive or task.is_active
+        ]
+        if permitted_user_id:
+            permitted_programs = {assignment.program_id for assignment in self.assignments if assignment.user_id == permitted_user_id and assignment.is_active}
+            rows = [row for row in rows if row.program_id in permitted_programs]
+        return sorted(rows, key=lambda task: (task.due_date or date.max, task.title))
+
+    def list_dashboard_milestone_rows(self, include_inactive: bool = False, permitted_user_id: str | None = None) -> list[dict[str, object]]:
+        permitted_programs = None
+        if permitted_user_id:
+            permitted_programs = {assignment.program_id for assignment in self.assignments if assignment.user_id == permitted_user_id and assignment.is_active}
+        rows = []
+        for milestone in self.milestones:
+            if not include_inactive and not milestone.is_active:
+                continue
+            if permitted_programs is not None and milestone.program_id not in permitted_programs:
+                continue
+            program = self.get_program(milestone.program_id)
+            client = self.get_program_client(milestone.program_id)
+            workstream = self.get_workstream(milestone.workstream_id) if milestone.workstream_id else None
+            owner = self.get_user_by_id(milestone.owner_user_id) if milestone.owner_user_id else None
+            rows.append({
+                **asdict(milestone),
+                "program_name": program.program_name if program else "-",
+                "client_name": client.name if client else None,
+                "workstream_type": workstream.workstream_type if workstream else None,
+                "owner_user_name": owner.display_name if owner else None,
+            })
+        return rows
+
+    def list_dashboard_resource_rows(self, include_inactive: bool = False, permitted_user_id: str | None = None) -> list[ResourceListRow]:
+        permitted_programs = None
+        if permitted_user_id:
+            permitted_programs = {assignment.program_id for assignment in self.assignments if assignment.user_id == permitted_user_id and assignment.is_active}
+        rows = []
+        for resource in self.resources:
+            if not include_inactive and not resource.is_active:
+                continue
+            if permitted_programs is not None and resource.program_id not in permitted_programs:
+                continue
+            workstream = self.get_workstream(resource.workstream_id) if resource.workstream_id else None
+            rows.append(ResourceListRow(
+                id=resource.id,
+                program_id=resource.program_id,
+                title=resource.title,
+                resource_type=resource.resource_type,
+                workstream_id=resource.workstream_id,
+                workstream_type=workstream.workstream_type if workstream else None,
+                url=resource.url,
+                notes=resource.notes,
+                is_required=resource.is_required,
+                is_active=resource.is_active,
+                created_at=resource.created_at,
+                updated_at=resource.updated_at,
+            ))
+        return rows
+
     def append_event(self, **kwargs: str | None) -> object:
         self.events.append(kwargs)
         return SimpleNamespace(id=f"event-{len(self.events)}")
 
     def list_program_portfolio(self, **kwargs: object) -> list[object]:
         self.last_portfolio_filters = kwargs
-        return []
+        rows = []
+        for program in self.programs:
+            active_state = kwargs.get("active_state", "active")
+            if active_state == "active" and not program.is_active:
+                continue
+            if active_state == "archived" and program.is_active:
+                continue
+            if kwargs.get("client_id") and program.client_id != kwargs["client_id"]:
+                continue
+            if kwargs.get("primary_workstream_type") and program.primary_workstream_type != kwargs["primary_workstream_type"]:
+                continue
+            if kwargs.get("cross_stage") and program.cross_stage != kwargs["cross_stage"]:
+                continue
+            if kwargs.get("status") and program.status != kwargs["status"]:
+                continue
+            if kwargs.get("risk_level") and program.risk_level != kwargs["risk_level"]:
+                continue
+            assignments = [assignment for assignment in self.assignments if assignment.program_id == program.id and assignment.is_active]
+            if kwargs.get("assigned_user_id") and kwargs["assigned_user_id"] not in {assignment.user_id for assignment in assignments}:
+                continue
+            if kwargs.get("permitted_user_id") and kwargs["permitted_user_id"] not in {assignment.user_id for assignment in assignments}:
+                continue
+            if kwargs.get("primary_owner_user_id") and not any(assignment.user_id == kwargs["primary_owner_user_id"] and assignment.is_primary for assignment in assignments):
+                continue
+            client = self.get_program_client(program.id)
+            workstreams = [workstream for workstream in self.workstreams if workstream.program_id == program.id and workstream.is_active]
+            primary = next((assignment for assignment in assignments if assignment.is_primary and assignment.assignment_role == AssignmentRole.PROGRAM_OWNER.value), None)
+            owner = self.get_user_by_id(primary.user_id) if primary else None
+            tasks = [task for task in self.tasks if task.program_id == program.id and task.is_active]
+            open_tasks = [task for task in tasks if task.status not in {TaskStatus.COMPLETED.value, TaskStatus.NOT_APPLICABLE.value}]
+            overdue_tasks = [task for task in open_tasks if task.due_date and task.due_date < date.today()]
+            rows.append(ProgramPortfolioRow(
+                id=program.id,
+                program_name=program.program_name,
+                client_name=client.name if client else None,
+                primary_workstream_type=program.primary_workstream_type,
+                workstream_types=[workstream.workstream_type for workstream in workstreams],
+                status=program.status,
+                cross_stage=program.cross_stage,
+                risk_level=program.risk_level,
+                priority=program.priority,
+                primary_owner_user_id=primary.user_id if primary else None,
+                primary_owner_name=owner.display_name if owner else None,
+                assigned_user_ids=[assignment.user_id for assignment in assignments],
+                assigned_user_names=[self.get_user_by_id(assignment.user_id).display_name for assignment in assignments if self.get_user_by_id(assignment.user_id)],
+                latest_update=program.latest_update,
+                start_date=program.start_date,
+                target_end_date=program.target_end_date,
+                updated_at=program.updated_at,
+                is_active=program.is_active,
+                open_task_count=len(open_tasks),
+                overdue_task_count=len(overdue_tasks),
+                nearest_task_due_date=min((task.due_date for task in open_tasks if task.due_date), default=None),
+            ))
+        return rows
 
     def list_programs_assigned_to_user(self, user_id: str, **kwargs: object) -> list[object]:
         self.last_portfolio_filters = {"user_id": user_id, **kwargs}
@@ -3834,6 +4110,360 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("influencer_live_creator_created", event_types)
         self.assertIn("influencer_live_creator_impressions_updated", event_types)
         self.assertIn("influencer_live_exception_created", event_types)
+
+    def _live_campaign_ready_for_recap(self) -> tuple[FakePrompt4ARepository, CampaignOpsService, CampaignOpsUser, CampaignOpsUser, CampaignOpsUser, str, Workstream, InfluencerCampaignRecord]:
+        repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        campaign = service.create_influencer_campaign(
+            bailey,
+            program_id=program_id,
+            workstream_id=influencer.id,
+            campaign_title="TEST - Influencer Recapping Campaign",
+            manager_user_id=t_user.id,
+            planning_status=PLANNING_STATUS_BRIEF_DEVELOPMENT,
+            target_creator_count=3,
+            initial_resources={
+                "Track Sheet": "https://example.com/track",
+                "Influencer Brief": "https://example.com/brief",
+                "Click2Cart Link": "https://example.com/click2cart",
+                "Invoice": "https://example.com/invoice",
+                "EOP Survey": "https://example.com/eop",
+            },
+            use_standard_template=True,
+        )
+        service.create_influencer_approval_round(bailey, campaign.id, "Influencer List", status="approved")
+        service.create_influencer_content_round(bailey, campaign.id, 1, content_type="First Round Content", status="approved")
+        service.transition_influencer_campaign_to_live(bailey, campaign.id)
+        service.create_standard_influencer_live_template(bailey, campaign.id)
+        for cp in service.list_influencer_live_checkpoints(bailey, campaign.id):
+            service.complete_influencer_live_checkpoint(bailey, campaign.id, cp.id, date(2026, 8, 21))
+        wave = service.create_influencer_creator_wave(bailey, campaign.id, 1, planned_creator_count=3, live_creator_count=3, completed_creator_count=3, status="complete")
+        for name in ("Jordan", "Casey", "Morgan"):
+            creator = service.create_influencer_live_creator(bailey, campaign.id, name, wave_id=wave.id, live_status="paid_live_complete", content_url=f"https://example.com/{name.lower()}", impressions_reporting_required=True, latest_impressions=1000)
+            service.mark_influencer_live_creator_paid_live_complete(bailey, campaign.id, creator.id, date(2026, 9, 1))
+        return repository, service, bailey, t_user, l_user, program_id, influencer, campaign
+
+    def test_prompt10_influencer_recapping_transition_manager_views_and_activity(self) -> None:
+        repository, service, bailey, t_user, l_user, _program_id, _influencer, campaign = self._live_campaign_ready_for_recap()
+        planning_before = service.list_influencer_planning_steps(bailey, campaign.id, include_inactive=True)
+        live_before = service.list_influencer_live_checkpoints(bailey, campaign.id, include_inactive=True)
+        moved = service.transition_influencer_campaign_to_recapping(bailey, campaign.id)
+        self.assertEqual(campaign.id, moved.id)
+        self.assertEqual(INFLUENCER_STAGE_RECAPPING, moved.influencer_stage)
+        self.assertEqual(RECAP_STATUS_READY_TO_RECAP, moved.planning_status)
+        self.assertEqual(planning_before, service.list_influencer_planning_steps(bailey, campaign.id, include_inactive=True))
+        self.assertEqual(live_before, service.list_influencer_live_checkpoints(bailey, campaign.id, include_inactive=True))
+        self.assertNotIn(campaign.id, [row.id for row in service.list_influencer_live_campaigns(bailey)])
+        self.assertIn(campaign.id, [row.id for row in service.list_influencer_recap_campaigns(bailey)])
+        self.assertIn(campaign.id, [row.id for row in service.list_influencer_recap_campaigns(bailey, manager_user_id=t_user.id)])
+        service.update_influencer_campaign(bailey, campaign.id, manager_user_id=l_user.id, influencer_stage=INFLUENCER_STAGE_RECAPPING, planning_status=RECAP_STATUS_COLLECTING_DATA)
+        self.assertNotIn(campaign.id, [row.id for row in service.list_influencer_recap_campaigns(bailey, manager_user_id=t_user.id)])
+        self.assertIn(campaign.id, [row.id for row in service.list_influencer_recap_campaigns(bailey, manager_user_id=l_user.id)])
+        self.assertEqual(1, len([row for row in service.list_influencer_recap_campaigns(bailey, include_inactive=True) if row.id == campaign.id]))
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("influencer_stage_moved_to_recapping", event_types)
+        self.assertIn("influencer_campaign_manager_user_id_changed", event_types)
+
+    def test_prompt10_influencer_recapping_children_closeout_complete_and_state(self) -> None:
+        repository, service, bailey, _t_user, _l_user, program_id, influencer, campaign = self._live_campaign_ready_for_recap()
+        service.transition_influencer_campaign_to_recapping(bailey, campaign.id)
+        record = service.create_or_update_influencer_recap_record(
+            bailey,
+            campaign.id,
+            recap_status=RECAP_STATUS_COLLECTING_DATA,
+            reporting_due_date=date(2026, 9, 5),
+            client_recap_date=date(2026, 9, 12),
+            sales_lift_analysis_required=True,
+            sales_lift_analysis_status="required",
+            final_performance_data_status="waiting",
+            creator_closeout_status="in_progress",
+            eop_survey_status="sent",
+            invoice_status="not_sent",
+            financial_close_status="open",
+        )
+        event_count = len(repository.events)
+        service.create_or_update_influencer_recap_record(
+            bailey,
+            campaign.id,
+            recap_status=record.recap_status,
+            reporting_due_date=record.reporting_due_date,
+            client_recap_date=record.client_recap_date,
+            sales_lift_analysis_required=record.sales_lift_analysis_required,
+            sales_lift_analysis_status=record.sales_lift_analysis_status,
+            final_performance_data_status=record.final_performance_data_status,
+            creator_closeout_status=record.creator_closeout_status,
+            eop_survey_status=record.eop_survey_status,
+            invoice_status=record.invoice_status,
+            financial_close_status=record.financial_close_status,
+        )
+        self.assertEqual(event_count, len(repository.events))
+
+        created = service.create_standard_influencer_recap_template(bailey, campaign.id)
+        self.assertEqual(len(STANDARD_RECAP_CHECKLIST_TEMPLATE), len(created))
+        self.assertEqual([], service.create_standard_influencer_recap_template(bailey, campaign.id))
+        custom = service.create_influencer_recap_checkpoint(bailey, campaign.id, "TEST - Final recap QA", due_date=date(2026, 9, 8), sequence_order=0, responsible_party="Client")
+        service.complete_influencer_recap_checkpoint(bailey, campaign.id, custom.id, date(2026, 9, 8))
+        service.reopen_influencer_recap_checkpoint(bailey, campaign.id, custom.id)
+        service.reorder_influencer_recap_checkpoints(bailey, campaign.id, [custom.id, created[0].id])
+        service.deactivate_influencer_recap_checkpoint(bailey, campaign.id, custom.id)
+        service.reactivate_influencer_recap_checkpoint(bailey, campaign.id, custom.id)
+
+        resource = service.create_resource(bailey, program_id, title="Recap Deck", resource_type="Recap Deck", workstream_id=influencer.id, url="https://example.com/recap")
+        survey = service.create_reporting_request(bailey, request_category=REQUEST_CATEGORY_SURVEY, request_type="EOP Survey", program_id=program_id, am_name="Taylor")
+        report = service.create_reporting_request(bailey, request_category=REQUEST_CATEGORY_REPORT, request_type="Program Recap", program_id=program_id, am_name="Lauren")
+        final_links = service.create_influencer_recap_requirement(bailey, campaign.id, "Final Creator Links", "Final links", resource_id=resource.id)
+        impressions = service.create_influencer_recap_requirement(bailey, campaign.id, "Final Impressions", "Final impressions")
+        performance = service.create_influencer_recap_requirement(bailey, campaign.id, "Performance Data", "Final performance data")
+        sales = service.create_influencer_recap_requirement(bailey, campaign.id, "Sales Lift Analysis", "Sales lift analysis")
+        eop = service.create_influencer_recap_requirement(bailey, campaign.id, "EOP Survey", "EOP survey", reporting_request_id=survey.id)
+        deck = service.create_influencer_recap_requirement(bailey, campaign.id, "Recap Deck", "Recap deck", reporting_request_id=report.id)
+        client = service.create_influencer_recap_requirement(bailey, campaign.id, "Client Recap", "Client recap meeting")
+        service.mark_influencer_recap_requirement_received(bailey, campaign.id, performance.id, date(2026, 9, 3))
+        for req in (final_links, impressions, performance, sales, eop, deck, client):
+            service.complete_influencer_recap_requirement(bailey, campaign.id, req.id, date(2026, 9, 10))
+        service.reopen_influencer_recap_requirement(bailey, campaign.id, eop.id)
+        service.complete_influencer_recap_requirement(bailey, campaign.id, eop.id, date(2026, 9, 10))
+        service.deactivate_influencer_recap_requirement(bailey, campaign.id, client.id)
+        service.reactivate_influencer_recap_requirement(bailey, campaign.id, client.id)
+        service.complete_influencer_recap_requirement(bailey, campaign.id, client.id, date(2026, 9, 12))
+
+        moms = service.create_influencer_recap_launch_item(bailey, campaign.id, "Levoit Vital Pet Pro Air Purifier", group_name="MOMS", retailer_name="Walmart", product_url="https://example.com/product", retailer_url="https://example.com/retailer")
+        dads = service.create_influencer_recap_launch_item(bailey, campaign.id, "Cosori Smart Toaster Oven", group_name="DADS", retailer_name="Target")
+        other = service.create_influencer_recap_launch_item(bailey, campaign.id, "Levoit VortexIQ Pro Cordless Stick Vacuum", retailer_name="Walmart")
+        with self.assertRaises(CampaignOpsValidationError):
+            service.create_influencer_recap_launch_item(bailey, campaign.id, "Bad URL", product_url="javascript:bad")
+        service.mark_influencer_recap_launch_online(bailey, campaign.id, moms.id, date(2026, 8, 30))
+        service.mark_influencer_recap_launch_in_store(bailey, campaign.id, moms.id, date(2026, 9, 2))
+        service.reorder_influencer_recap_launch_items(bailey, campaign.id, [dads.id, moms.id, other.id])
+        service.deactivate_influencer_recap_launch_item(bailey, campaign.id, other.id)
+        service.reactivate_influencer_recap_launch_item(bailey, campaign.id, other.id)
+
+        for cp in service.list_influencer_recap_checkpoints(bailey, campaign.id):
+            service.complete_influencer_recap_checkpoint(bailey, campaign.id, cp.id, date(2026, 9, 15))
+        service.create_or_update_influencer_recap_record(
+            bailey,
+            campaign.id,
+            recap_status=RECAP_STATUS_READY_TO_CLOSE,
+            sales_lift_analysis_required=True,
+            sales_lift_analysis_status="complete",
+            final_performance_data_status="complete",
+            creator_closeout_status="complete",
+            eop_survey_status="complete",
+            invoice_status="sent",
+            financial_close_status="complete",
+            recap_delivered_date=date(2026, 9, 12),
+            final_close_date=date(2026, 9, 15),
+            lessons_learned="TEST - lessons learned",
+        )
+        summary = service.get_influencer_recap_workspace_summary(bailey, campaign.id)
+        self.assertEqual(3, summary.creator_closeout.total_creators)
+        self.assertEqual(0, summary.creator_closeout.missing_final_links)
+        self.assertEqual(0, summary.creator_closeout.missing_final_impressions)
+        self.assertEqual("Ready to Close", summary.ready_to_close_state)
+        completed = service.complete_influencer_campaign_from_recapping(bailey, campaign.id)
+        self.assertEqual("complete", completed.influencer_stage)
+        self.assertEqual(campaign.id, completed.id)
+        self.assertNotIn(campaign.id, [row.id for row in service.list_influencer_recap_campaigns(bailey)])
+        self.assertIn(campaign.id, [row.id for row in service.list_influencer_recap_campaigns(bailey, include_inactive=True)])
+        self.assertEqual(3, len(service.list_influencer_live_creators(bailey, campaign.id, include_inactive=True)))
+        self.assertIn("campaign_ops_selected_influencer_recap_campaign_id", SESSION_KEYS)
+        event_types = [event["event_type"] for event in repository.events]
+        self.assertIn("influencer_recap_checkpoint_created", event_types)
+        self.assertIn("influencer_recap_requirement_created", event_types)
+        self.assertIn("influencer_recap_launch_item_created", event_types)
+        self.assertIn("influencer_stage_completed", event_types)
+
+    def test_prompt11_cross_team_dashboard_filters_metrics_and_sections(self) -> None:
+        repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        program = repository.get_program(program_id)
+        program.latest_update = "Cross-team validation update"
+        program.risk_level = RiskLevel.AT_RISK.value
+        program.status = ProgramStatus.ACTIVE.value
+        program.target_end_date = date.today() + timedelta(days=7)
+        service.create_task_record(
+            bailey,
+            program_id,
+            "Dashboard overdue task",
+            workstream_id=influencer.id,
+            assigned_user_id=t_user.id,
+            due_date=date.today() - timedelta(days=2),
+            status=TaskStatus.IN_PROGRESS.value,
+            risk_level=RiskLevel.AT_RISK.value,
+            waiting_on=WaitingOn.CLIENT.value,
+            hard_deadline=True,
+        )
+        service.create_milestone(
+            bailey,
+            program_id,
+            "Dashboard upcoming milestone",
+            workstream_id=influencer.id,
+            owner_user_id=l_user.id,
+            target_date=date.today() + timedelta(days=4),
+            status=TaskStatus.IN_PROGRESS.value,
+        )
+        service.create_resource(bailey, program_id, "Dashboard missing resource", "Track Sheet", workstream_id=influencer.id, is_required=True)
+        service.create_influencer_campaign(
+            bailey,
+            program_id=program_id,
+            workstream_id=influencer.id,
+            campaign_title="Dashboard Influencer Planning",
+            manager_user_id=t_user.id,
+            influencer_stage=INFLUENCER_STAGE_PLANNING,
+            planning_status=PLANNING_STATUS_ON_HOLD,
+            is_on_hold=True,
+            hold_reason="Client feedback",
+            waiting_on=WaitingOn.CLIENT.value,
+        )
+        service.create_retail_media_campaign(
+            bailey,
+            program_id=program_id,
+            campaign_title="Dashboard Retail",
+            owner_user_id=l_user.id,
+            retail_media_status=RETAIL_MEDIA_STATUS_LIVE,
+            overall_budget=100,
+            total_spend=125,
+            is_paused=True,
+            pause_reason="Budget review",
+            waiting_on=WaitingOn.INTERNAL_TEAM.value,
+        )
+        content = service.create_content_program(
+            bailey,
+            program_id=program_id,
+            content_program_title="Dashboard Content",
+            owner_user_id=t_user.id,
+            content_status=CONTENT_STATUS_LIVE,
+            waiting_on=WaitingOn.ASSETS.value,
+        )
+        service.create_content_sku(bailey, content.id, product_name="Dashboard SKU", publication_status="issue_found", issue_status="Publication issue")
+        service.create_insights_project(
+            bailey,
+            program_id=program_id,
+            project_title="Dashboard Insights",
+            owner_user_id=l_user.id,
+            insights_status=INSIGHTS_STATUS_DRAFTING_SURVEY,
+        )
+        service.create_reporting_request(
+            bailey,
+            request_category=REQUEST_CATEGORY_REPORT,
+            request_type="Dashboard Report",
+            program_id=program_id,
+            am_name="Taylor",
+            due_date=date.today() - timedelta(days=1),
+            waiting_on=WaitingOn.CLIENT.value,
+        )
+        summary = service.get_cross_team_dashboard_summary(bailey, {"include_test_records": True})
+        self.assertEqual(summary.metrics.active_programs, 1)
+        self.assertGreaterEqual(summary.metrics.needs_attention, 1)
+        self.assertEqual(summary.metrics.high_risk, 1)
+        self.assertEqual(summary.metrics.overdue_tasks, 1)
+        self.assertEqual(summary.metrics.upcoming_milestones, 1)
+        self.assertGreaterEqual(summary.metrics.waiting_on_client, 2)
+        self.assertGreaterEqual(summary.metrics.paused_on_hold, 2)
+        reasons = {row.attention_reason for row in summary.needs_attention}
+        self.assertIn("Overdue Task", reasons)
+        self.assertIn("Missing Required Resource", reasons)
+        self.assertIn("Influencer On Hold", reasons)
+        self.assertIn("Retail Media Over Budget", reasons)
+        self.assertIn("Content Publication Issue", reasons)
+        self.assertIn("Reporting Request Overdue", reasons)
+        self.assertTrue(any(row.attention_reason == "Overdue Task" and row.severity == "Critical" for row in summary.needs_attention))
+        self.assertTrue(any(row.waiting_category == "Client" and row.waiting_on == WaitingOn.CLIENT.value for row in summary.waiting_on))
+        self.assertLessEqual(len(summary.influencer_cards), 2)
+        self.assertLessEqual(len(summary.retail_media_cards), 2)
+        self.assertLessEqual(len(summary.content_cards), 2)
+        self.assertLessEqual(len(summary.insights_cards), 2)
+        self.assertLessEqual(len(summary.request_cards), 2)
+        self.assertIn("Influencer:", summary.programs[0].specialized_stage)
+
+    def test_prompt11_cross_team_dashboard_excludes_tests_and_enforces_personal_access(self) -> None:
+        repository, service, bailey, t_user, _l_user, program_id, _influencer, _retail = self._prompt4c_fixture()
+        repository.get_program(program_id).program_name = "TEST - Dashboard Hidden"
+        hidden = service.get_cross_team_dashboard_summary(bailey, {})
+        self.assertEqual(hidden.metrics.active_programs, 0)
+        shown = service.get_cross_team_dashboard_summary(bailey, {"include_test_records": True})
+        self.assertEqual(shown.metrics.active_programs, 1)
+        t_summary = service.get_cross_team_dashboard_summary(t_user, {"include_test_records": True, "person_view": "Bailey"})
+        self.assertEqual(t_summary.metrics.active_programs, 1)
+        self.assertEqual(repository.last_portfolio_filters["permitted_user_id"], t_user.id)
+        self.assertEqual(service.validate_cross_team_person_view(t_user, "L"), "T")
+        self.assertEqual(service.normalize_waiting_on_category("client feedback"), "Client")
+        self.assertEqual(service.normalize_waiting_on_category("retailer approval"), "Retailer")
+        self.assertEqual(service.normalize_waiting_on_category("asset missing"), "Assets")
+        self.assertEqual(service.normalize_waiting_on_category("unknown"), "Other")
+
+    def test_prompt11_cross_team_state_and_imports(self) -> None:
+        import app.campaign_ops.cross_team.views as cross_team_views
+        import app.pages.campaigns as campaigns_page
+
+        self.assertTrue(hasattr(cross_team_views, "render_cross_team_dashboard"))
+        self.assertTrue(hasattr(campaigns_page, "render_cross_team_dashboard"))
+        for key in (
+            "campaign_ops_cross_team_filters",
+            "campaign_ops_cross_team_person_view",
+            "campaign_ops_cross_team_include_test_records",
+            "campaign_ops_cross_team_upcoming_days",
+            "campaign_ops_cross_team_selected_program_id",
+        ):
+            self.assertIn(key, SESSION_KEYS)
+
+    def test_prompt12_shared_ui_formatting_and_navigation_helpers(self) -> None:
+        from app.campaign_ops.ui.badges import status_label
+        from app.campaign_ops.ui.formatting import (
+            display_record_title,
+            format_boolean,
+            format_currency,
+            format_display_date,
+            readable_label,
+            safe_link_label,
+        )
+        from app.campaign_ops.ui.navigation import (
+            clear_incompatible_specialized_state,
+            route_to_program_workspace,
+            route_to_specialized_workspace,
+        )
+
+        self.assertEqual(readable_label("waiting_on_client"), "Waiting On Client")
+        self.assertEqual(format_display_date(date(2026, 8, 27)), "Aug 27, 2026")
+        self.assertEqual(format_currency(12500), "$12,500.00")
+        self.assertEqual(format_boolean(True), "Yes")
+        self.assertEqual(display_record_title("TEST - Example"), "TEST - Example [Test]")
+        self.assertEqual(safe_link_label(None), "No Link")
+        self.assertEqual(safe_link_label("javascript:bad"), "Invalid Link")
+        self.assertEqual(status_label("ready_to_close"), "Ready to Close")
+
+        state = {
+            "campaign_ops_selected_retail_media_campaign_id": "retail-1",
+            "campaign_ops_selected_content_program_id": "content-1",
+            "campaign_ops_content_sku_edit_id": "sku-1",
+        }
+        route_to_specialized_workspace(state, "Influencer", "program-1", "campaign-1")
+        self.assertEqual(state["campaign_ops_section"], "Influencer")
+        self.assertEqual(state["campaign_ops_selected_influencer_campaign_id"], "campaign-1")
+        self.assertNotIn("campaign_ops_selected_retail_media_campaign_id", state)
+        self.assertNotIn("campaign_ops_selected_content_program_id", state)
+        self.assertNotIn("campaign_ops_content_sku_edit_id", state)
+        clear_incompatible_specialized_state(state, "Retail Media")
+        self.assertNotIn("campaign_ops_selected_influencer_campaign_id", state)
+        route_to_program_workspace(state, "program-1")
+        self.assertEqual(state["campaign_ops_selected_program_id"], "program-1")
+        self.assertEqual(state["campaign_ops_section"], "All Programs")
+
+    def test_prompt12_viewer_change_clears_stale_specialized_state(self) -> None:
+        state = {
+            "campaign_ops_previous_viewer": "Bailey",
+            "campaign_ops_section": "Cross-Team",
+            "campaign_ops_selected_program_id": "program-1",
+            "campaign_ops_selected_influencer_campaign_id": "campaign-1",
+            "campaign_ops_selected_retail_media_campaign_id": "retail-1",
+            "campaign_ops_request_edit_id": "request-1",
+            "campaign_ops_cross_team_selected_program_id": "program-2",
+        }
+        update_viewer_state(state, "T", CampaignOpsUser(id="22222222-2222-4222-8222-222222222222", display_name="T", role=UserRole.TEAM_MEMBER.value))
+        self.assertNotIn("campaign_ops_selected_program_id", state)
+        self.assertNotIn("campaign_ops_selected_influencer_campaign_id", state)
+        self.assertNotIn("campaign_ops_selected_retail_media_campaign_id", state)
+        self.assertNotIn("campaign_ops_request_edit_id", state)
+        self.assertNotIn("campaign_ops_cross_team_selected_program_id", state)
+        self.assertEqual(state["campaign_ops_section"], "My Programs")
 
 
 if __name__ == "__main__":
