@@ -8,6 +8,9 @@ from core.db import dict_row, load_local_env, psycopg
 
 CAMPAIGN_OPS_DATABASE_ENV_VAR = "CAMPAIGN_OPS_DATABASE_URL"
 REQUIRED_SCHEMA_TABLES = ("schema_migrations", "campaign_ops_users")
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 5
+DEFAULT_STATEMENT_TIMEOUT_MS = 15000
+DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS = 15000
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +67,16 @@ def connect_to_campaign_ops_database() -> Any:
 
         raise CampaignOpsDatabaseError("PostgreSQL driver is not installed.")
     try:
-        return psycopg.connect(database_url, row_factory=dict_row)
+        return psycopg.connect(
+            database_url,
+            row_factory=dict_row,
+            connect_timeout=DEFAULT_CONNECT_TIMEOUT_SECONDS,
+            application_name="kkg_influencerhub_campaign_ops",
+            options=(
+                f"-c statement_timeout={DEFAULT_STATEMENT_TIMEOUT_MS} "
+                f"-c idle_in_transaction_session_timeout={DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS}"
+            ),
+        )
     except Exception as exc:
         from core.campaign_ops.exceptions import CampaignOpsDatabaseError
 

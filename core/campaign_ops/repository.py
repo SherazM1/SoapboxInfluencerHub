@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from time import perf_counter
 from typing import Any, Iterator
 
 try:
@@ -78,6 +79,11 @@ from core.campaign_ops.models import (
     enum_value,
     require_text,
 )
+from core.campaign_ops.performance import record_query
+
+
+DEFAULT_ACTIVITY_LIMIT = 100
+DEFAULT_NOTE_LIMIT = 100
 
 
 def jsonb_value(value: dict[str, Any] | None) -> Any:
@@ -117,6 +123,11 @@ class CampaignOpsRepository:
     def __init__(self, connection: Any | None = None) -> None:
         self.connection = connection
 
+    def _execute_cursor(self, cursor: Any, query: str, params: tuple[Any, ...]) -> None:
+        started = perf_counter()
+        cursor.execute(query, params)
+        record_query(perf_counter() - started, 0)
+
     @contextmanager
     def connection_scope(self) -> Iterator[tuple[Any, bool]]:
         """Yield a database connection and whether this repository owns it."""
@@ -138,8 +149,9 @@ class CampaignOpsRepository:
         try:
             with self.connection_scope() as (connection, _owns_connection):
                 with connection.cursor() as cursor:
-                    cursor.execute(query, params)
+                    self._execute_cursor(cursor, query, params)
                     row = cursor.fetchone()
+                    record_query(0.0, 1 if row else 0, query_increment=0)
         except Exception as exc:
             if is_undefined_table_error(exc):
                 raise CampaignOpsSetupRequiredError(
@@ -157,8 +169,9 @@ class CampaignOpsRepository:
         try:
             with self.connection_scope() as (connection, _owns_connection):
                 with connection.cursor() as cursor:
-                    cursor.execute(query, params)
+                    self._execute_cursor(cursor, query, params)
                     rows = cursor.fetchall()
+                    record_query(0.0, len(rows), query_increment=0)
         except Exception as exc:
             if is_undefined_table_error(exc):
                 raise CampaignOpsSetupRequiredError(
@@ -175,8 +188,9 @@ class CampaignOpsRepository:
         try:
             with self.connection_scope() as (connection, _owns_connection):
                 with connection.cursor() as cursor:
-                    cursor.execute(query, params)
+                    self._execute_cursor(cursor, query, params)
                     rows = cursor.fetchall()
+                    record_query(0.0, len(rows), query_increment=0)
         except Exception as exc:
             if is_undefined_table_error(exc):
                 raise CampaignOpsSetupRequiredError(
@@ -222,8 +236,9 @@ class CampaignOpsRepository:
         with self.connection_scope() as (connection, owns_connection):
             try:
                 with connection.cursor() as cursor:
-                    cursor.execute(query, params)
+                    self._execute_cursor(cursor, query, params)
                     row = cursor.fetchone()
+                    record_query(0.0, 1 if row else 0, query_increment=0)
                 if owns_connection:
                     connection.commit()
             except Exception as exc:
@@ -242,7 +257,7 @@ class CampaignOpsRepository:
         with self.connection_scope() as (connection, owns_connection):
             try:
                 with connection.cursor() as cursor:
-                    cursor.execute(query, params)
+                    self._execute_cursor(cursor, query, params)
                     if cursor.rowcount == 0:
                         raise CampaignOpsNotFoundError("Campaign Operations record was not found.")
                 if owns_connection:
@@ -1909,6 +1924,7 @@ class CampaignOpsRepository:
         program_id: str,
         include_internal: bool = True,
         newest_first: bool = True,
+        limit: int = DEFAULT_NOTE_LIMIT,
     ) -> list[NoteListRow]:
         clauses = ["n.program_id = %s"]
         params: list[Any] = [program_id]
@@ -1927,7 +1943,9 @@ class CampaignOpsRepository:
             left join campaign_ops_users u on u.id = n.author_user_id
             where {' and '.join(clauses)}
             order by n.created_at {order}
+            limit %s
         """
+        params.append(max(1, min(int(limit), 500)))
         return [
             self._note_list_row_from_db(row)
             for row in self._fetch_raw_all(query, tuple(params))
@@ -3788,18 +3806,19 @@ class CampaignOpsRepository:
             ActivityEvent,
         )
 
-    def list_program_activity(self, program_id: str) -> list[ActivityEvent]:
+    def list_program_activity(self, program_id: str, limit: int = DEFAULT_ACTIVITY_LIMIT) -> list[ActivityEvent]:
         return self._fetch_all(
             """
             select * from campaign_ops_activity
             where program_id = %s
-            order by created_at asc
+            order by created_at desc
+            limit %s
             """,
-            (program_id,),
+            (program_id, max(1, min(int(limit), 500))),
             ActivityEvent,
         )
 
-    def list_program_activity_with_actor(self, program_id: str) -> list[dict[str, Any]]:
+    def list_program_activity_with_actor(self, program_id: str, limit: int = DEFAULT_ACTIVITY_LIMIT) -> list[dict[str, Any]]:
         return self._fetch_raw_all(
             """
             select
@@ -3811,6 +3830,7 @@ class CampaignOpsRepository:
             left join campaign_ops_workstreams w on w.id = a.workstream_id
             where a.program_id = %s
             order by a.created_at desc
+            limit %s
             """,
-            (program_id,),
+            (program_id, max(1, min(int(limit), 500))),
         )

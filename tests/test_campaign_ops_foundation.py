@@ -600,7 +600,7 @@ class FakePrompt4ARepository:
         self.notes.append(note)
         return note
 
-    def list_note_rows_by_program(self, program_id: str, include_internal: bool = True, newest_first: bool = True) -> list[NoteListRow]:
+    def list_note_rows_by_program(self, program_id: str, include_internal: bool = True, newest_first: bool = True, limit: int = 100) -> list[NoteListRow]:
         rows: list[NoteListRow] = []
         for note in self.notes:
             if note.program_id != program_id or (note.is_internal and not include_internal):
@@ -622,7 +622,8 @@ class FakePrompt4ARepository:
                 is_internal=note.is_internal,
                 created_at=note.created_at,
             ))
-        return list(reversed(rows)) if newest_first else rows
+        ordered = list(reversed(rows)) if newest_first else rows
+        return ordered[:limit]
 
     def create_reporting_request(self, actor_user_id: str | None = None, **kwargs: object) -> ReportingRequestRecord:
         request = ReportingRequestRecord(

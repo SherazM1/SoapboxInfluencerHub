@@ -5228,6 +5228,7 @@ class CampaignOpsService:
         actor: CampaignOpsUser | None,
         program_id: str,
         newest_first: bool = True,
+        limit: int = 100,
     ) -> list[NoteListRow]:
         repository = self.repository or CampaignOpsRepository()
         program = self._require_program(repository, program_id)
@@ -5238,6 +5239,7 @@ class CampaignOpsService:
             program_id,
             include_internal=can_view_internal_notes(actor, program, assignments),
             newest_first=newest_first,
+            limit=limit,
         )
 
     def create_task_record(
