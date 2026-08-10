@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from core.db import dict_row, load_local_env, psycopg
 
 CAMPAIGN_OPS_DATABASE_ENV_VAR = "CAMPAIGN_OPS_DATABASE_URL"
 REQUIRED_SCHEMA_TABLES = ("schema_migrations", "campaign_ops_users")
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5
-DEFAULT_STATEMENT_TIMEOUT_MS = 15000
-DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS = 15000
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,10 +31,57 @@ class CampaignOpsSetupStatus:
         return self.state == "initialized"
 
 
+def _url_diagnostics(database_url: str | None) -> dict[str, Any]:
+    if not database_url:
+        return {
+            "url_detected": False,
+            "url_non_empty": False,
+        }
+    parsed = urlparse(database_url)
+    query = parse_qs(parsed.query)
+    return {
+        "url_detected": True,
+        "url_non_empty": bool(database_url.strip()),
+        "scheme": parsed.scheme or None,
+        "host": parsed.hostname,
+        "port": parsed.port,
+        "database_present": bool((parsed.path or "").strip("/")),
+        "username_present": bool(parsed.username),
+        "password_present": bool(parsed.password),
+        "sslmode": (query.get("sslmode") or [None])[0],
+        "connect_timeout": DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    }
+
+
+def _safe_exception_message(exc: BaseException) -> str:
+    message = str(exc)
+    database_url = get_campaign_ops_database_url()
+    if database_url:
+        message = message.replace(database_url, "<redacted-url>")
+    return message[:1000]
+
+
+def log_safe_connection_error(stage: str, exc: BaseException, database_url: str | None = None) -> None:
+    """Log connection diagnostics without credentials or full connection URLs."""
+    LOGGER.exception(
+        "Campaign Operations database connection diagnostic",
+        extra={
+            "stage": stage,
+            "exception_type": type(exc).__name__,
+            "safe_message": _safe_exception_message(exc),
+            "url": _url_diagnostics(database_url),
+            "driver": getattr(psycopg, "__version__", None),
+        },
+    )
+
+
 def get_campaign_ops_database_url() -> str | None:
     """Read the Campaign Operations Postgres URL from the environment."""
     load_local_env()
-    return os.environ.get(CAMPAIGN_OPS_DATABASE_ENV_VAR) or None
+    raw_value = os.environ.get(CAMPAIGN_OPS_DATABASE_ENV_VAR)
+    if raw_value is None:
+        return None
+    return raw_value.strip() or None
 
 
 def is_campaign_ops_database_available() -> bool:
@@ -72,14 +120,11 @@ def connect_to_campaign_ops_database() -> Any:
             row_factory=dict_row,
             connect_timeout=DEFAULT_CONNECT_TIMEOUT_SECONDS,
             application_name="kkg_influencerhub_campaign_ops",
-            options=(
-                f"-c statement_timeout={DEFAULT_STATEMENT_TIMEOUT_MS} "
-                f"-c idle_in_transaction_session_timeout={DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS}"
-            ),
         )
     except Exception as exc:
         from core.campaign_ops.exceptions import CampaignOpsDatabaseError
 
+        log_safe_connection_error("connect", exc, database_url)
         raise CampaignOpsDatabaseError("Campaign Operations database connection failed.") from exc
 
 
@@ -129,7 +174,6 @@ def get_campaign_ops_setup_status() -> CampaignOpsSetupStatus:
     connection = None
     try:
         connection = connect_to_campaign_ops_database()
-        initialized = campaign_ops_schema_is_initialized(connection)
     except Exception:
         return CampaignOpsSetupStatus(
             state="unreachable",
@@ -138,6 +182,18 @@ def get_campaign_ops_setup_status() -> CampaignOpsSetupStatus:
             connection_succeeded=False,
             schema_initialized=False,
             message="Campaign Operations database connection failed.",
+        )
+    try:
+        initialized = campaign_ops_schema_is_initialized(connection)
+    except Exception as exc:
+        log_safe_connection_error("setup_status_schema_check", exc, get_campaign_ops_database_url())
+        return CampaignOpsSetupStatus(
+            state="uninitialized",
+            database_url_detected=True,
+            driver_available=True,
+            connection_succeeded=True,
+            schema_initialized=False,
+            message="Campaign Operations database is reachable but schema status could not be verified.",
         )
     finally:
         if connection is not None:

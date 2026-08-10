@@ -5,9 +5,8 @@ from unittest.mock import Mock, patch
 
 from core.campaign_ops.db import (
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
-    DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS,
-    DEFAULT_STATEMENT_TIMEOUT_MS,
     connect_to_campaign_ops_database,
+    get_campaign_ops_database_url,
 )
 from core.campaign_ops.performance import campaign_ops_query_counter
 from core.campaign_ops.repository import DEFAULT_ACTIVITY_LIMIT, DEFAULT_NOTE_LIMIT, CampaignOpsRepository
@@ -69,11 +68,18 @@ class CampaignOpsPerformanceTests(unittest.TestCase):
         _args, kwargs = fake_psycopg.connect.call_args
         self.assertEqual(DEFAULT_CONNECT_TIMEOUT_SECONDS, kwargs["connect_timeout"])
         self.assertEqual("kkg_influencerhub_campaign_ops", kwargs["application_name"])
-        self.assertIn(f"statement_timeout={DEFAULT_STATEMENT_TIMEOUT_MS}", kwargs["options"])
-        self.assertIn(
-            f"idle_in_transaction_session_timeout={DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS}",
-            kwargs["options"],
-        )
+        self.assertNotIn("options", kwargs)
+
+    def test_campaign_ops_database_url_trims_whitespace(self) -> None:
+        with patch("core.campaign_ops.db.load_local_env", return_value=True):
+            with patch.dict(
+                "os.environ",
+                {"CAMPAIGN_OPS_DATABASE_URL": "  postgresql://campaign-ops  "},
+                clear=True,
+            ):
+                self.assertEqual("postgresql://campaign-ops", get_campaign_ops_database_url())
+            with patch.dict("os.environ", {"CAMPAIGN_OPS_DATABASE_URL": "   "}, clear=True):
+                self.assertIsNone(get_campaign_ops_database_url())
 
     def test_repository_closes_owned_connection_after_successful_read(self) -> None:
         connection = FakeConnection(FakeCursor([{"id": "u1", "display_name": "Bailey", "role": "administrator", "is_active": True}]))
