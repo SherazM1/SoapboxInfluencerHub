@@ -41,6 +41,11 @@ SORT_OPTIONS = {
 }
 
 
+def option_index(options: list[str], value: str | None, default: str | None = None) -> int:
+    fallback = default if default in options else options[0]
+    return options.index(value if value in options else fallback)
+
+
 def render_influencer(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
     render_css()
     st.subheader("Influencer")
@@ -190,6 +195,9 @@ def render_new_campaign(actor: CampaignOpsUser, service: CampaignOpsService, use
         st.rerun()
     programs = service.list_program_portfolio(actor, {"active_state": "active"})
     program_options = {f"{p.program_name} | {safe_text(p.client_name)}": p.id for p in programs}
+    if not program_options:
+        st.info("No active Campaign Operations programs are available for Influencer Planning.")
+        return
     user_options = {"": None, **{u.display_name: u.id for u in users if u.is_active}}
     with st.form("campaign_ops_influencer_create_form"):
         cols = st.columns(3)
@@ -293,7 +301,7 @@ def render_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users:
     with tabs[6]:
         render_resources(actor, service, campaign)
     with tabs[7]:
-        render_notes(actor, service, campaign.program_id, campaign.workstream_id)
+        render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
     with tabs[8]:
         render_activity(actor, service, campaign)
 
@@ -305,9 +313,9 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         cols = st.columns(3)
         title = cols[0].text_input("Campaign Title", value=campaign.campaign_title)
         manager = cols[1].selectbox("Manager", list(user_options), index=list(user_options).index(reverse_users.get(campaign.manager_user_id, "")))
-        status = cols[2].selectbox("Planning Status", PLANNING_STATUSES, index=PLANNING_STATUSES.index(campaign.planning_status), format_func=status_label)
+        status = cols[2].selectbox("Planning Status", PLANNING_STATUSES, index=option_index(PLANNING_STATUSES, campaign.planning_status, "not_started"), format_func=status_label)
         cols = st.columns(4)
-        stage = cols[0].selectbox("Stage", INFLUENCER_STAGES, index=INFLUENCER_STAGES.index(campaign.influencer_stage), format_func=status_label)
+        stage = cols[0].selectbox("Stage", INFLUENCER_STAGES, index=option_index(INFLUENCER_STAGES, campaign.influencer_stage, "planning"), format_func=status_label)
         waiting = cols[1].text_input("Waiting On", value=safe_text(campaign.waiting_on))
         on_hold = cols[2].checkbox("On Hold", value=campaign.is_on_hold)
         hold_reason = cols[3].text_input("Hold Reason", value=safe_text(campaign.hold_reason))
@@ -477,7 +485,7 @@ def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campai
     for index, (label, url) in enumerate(quick):
         target = cols[index % 4]
         if url:
-            target.link_button(label, sanitize_link(url), key=f"campaign_ops_influencer_quick_{label}_{campaign.id}")
+            target.link_button(label, sanitize_link(url))
         else:
             target.metric(label, "Missing")
     summary = service.get_program_workspace_summary(actor, campaign.program_id)

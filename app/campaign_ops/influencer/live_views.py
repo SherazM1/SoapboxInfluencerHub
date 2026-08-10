@@ -251,7 +251,7 @@ def render_live_workspace(actor: CampaignOpsUser, service: CampaignOpsService, u
     with tabs[6]:
         render_resources(actor, service, campaign)
     with tabs[7]:
-        render_notes(actor, service, campaign.program_id, campaign.workstream_id)
+        render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
     with tabs[8]:
         render_activity(actor, service, campaign)
 
@@ -261,16 +261,16 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
     with st.form(f"campaign_ops_influencer_live_overview_{campaign.id}"):
         cols = st.columns(4)
         manager = cols[0].selectbox("Manager", list(user_options), index=list(user_options.values()).index(campaign.manager_user_id) if campaign.manager_user_id in user_options.values() else 0)
-        live_status = cols[1].selectbox("Live Status", LIVE_STATUSES, index=LIVE_STATUSES.index(campaign.live_status), format_func=title_label)
-        waiting = cols[2].text_input("Waiting On", value=safe_text(campaign.waiting_on, ""))
+        live_status = cols[1].selectbox("Live Status", LIVE_STATUSES, index=LIVE_STATUSES.index(campaign.live_status) if campaign.live_status in LIVE_STATUSES else 0, format_func=title_label)
+        waiting = cols[2].text_input("Waiting On", value=safe_text(campaign.waiting_on))
         on_hold = cols[3].checkbox("On Hold", value=campaign.is_on_hold)
-        hold_reason = st.text_input("Hold Reason", value=safe_text(campaign.hold_reason, ""))
-        latest = st.text_area("Latest Update", value=safe_text(campaign.latest_update, ""))
+        hold_reason = st.text_input("Hold Reason", value=safe_text(campaign.hold_reason))
+        latest = st.text_area("Latest Update", value=safe_text(campaign.latest_update))
         cols = st.columns(4)
         launch = cols[0].date_input("Launch Date", value=campaign.launch_date)
         wrap = cols[1].date_input("Wrap Date", value=campaign.wrap_date)
         invoice_date = cols[2].date_input("Invoice Date", value=campaign.invoice_date)
-        invoice_status = cols[3].text_input("Invoice Status", value=safe_text(campaign.invoice_status, ""))
+        invoice_status = cols[3].text_input("Invoice Status", value=safe_text(campaign.invoice_status))
         invoice_amount = st.number_input("Invoice Amount", min_value=0.0, value=float(campaign.invoice_amount or 0))
         submitted = st.form_submit_button("Save Live Overview", type="primary")
     if submitted:
@@ -443,7 +443,7 @@ def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campai
     cols = st.columns(4)
     for index, (label, url) in enumerate(quick):
         if url:
-            cols[index % 4].link_button(label, sanitize_link(url), key=f"campaign_ops_influencer_live_quick_{label}_{campaign.id}")
+            cols[index % 4].link_button(label, sanitize_link(url))
         else:
             cols[index % 4].metric(label, "Missing")
     summary = service.get_program_workspace_summary(actor, campaign.program_id)

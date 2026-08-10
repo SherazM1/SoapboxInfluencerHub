@@ -212,7 +212,7 @@ def render_recap_workspace(actor: CampaignOpsUser, service: CampaignOpsService, 
     with tabs[7]:
         render_resources(actor, service, campaign)
     with tabs[8]:
-        render_notes(actor, service, campaign.program_id, campaign.workstream_id)
+        render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
     with tabs[9]:
         render_activity(actor, service, campaign)
 
@@ -225,9 +225,9 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         cols = st.columns(4)
         manager = cols[0].selectbox("Manager", list(user_options), index=list(user_options.values()).index(campaign.manager_user_id) if campaign.manager_user_id in user_options.values() else 0)
         recap_status = cols[1].selectbox("Recap Status", RECAP_STATUSES, index=RECAP_STATUSES.index(campaign.recap_status) if campaign.recap_status in RECAP_STATUSES else 0, format_func=title_label)
-        waiting = cols[2].text_input("Waiting On", value=safe_text(record.waiting_on if record else campaign.waiting_on, ""))
+        waiting = cols[2].text_input("Waiting On", value=safe_text(record.waiting_on if record else campaign.waiting_on))
         sales_required = cols[3].checkbox("Sales Lift Analysis Required", value=bool(record.sales_lift_analysis_required if record else campaign.sales_lift_analysis_required))
-        latest = st.text_area("Latest Update", value=safe_text(record.latest_update if record else campaign.latest_update, ""))
+        latest = st.text_area("Latest Update", value=safe_text(record.latest_update if record else campaign.latest_update))
         cols = st.columns(5)
         reporting_due = cols[0].date_input("Reporting Due Date", value=record.reporting_due_date if record else None)
         draft_due = cols[1].date_input("Draft Recap Due Date", value=record.draft_recap_due_date if record else None)
@@ -237,14 +237,14 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         cols = st.columns(5)
         delivered = cols[0].date_input("Recap Delivered Date", value=record.recap_delivered_date if record else None)
         final_close = cols[1].date_input("Final Close Date", value=record.final_close_date if record else None)
-        sales_status = cols[2].text_input("Sales Lift Analysis Status", value=safe_text(record.sales_lift_analysis_status if record else "", ""))
-        performance_status = cols[3].text_input("Final Performance Data Status", value=safe_text(record.final_performance_data_status if record else "", ""))
-        closeout_status = cols[4].text_input("Creator Closeout Status", value=safe_text(record.creator_closeout_status if record else "", ""))
+        sales_status = cols[2].text_input("Sales Lift Analysis Status", value=safe_text(record.sales_lift_analysis_status if record else ""))
+        performance_status = cols[3].text_input("Final Performance Data Status", value=safe_text(record.final_performance_data_status if record else ""))
+        closeout_status = cols[4].text_input("Creator Closeout Status", value=safe_text(record.creator_closeout_status if record else ""))
         cols = st.columns(3)
-        eop_status = cols[0].text_input("EOP Survey Status", value=safe_text(record.eop_survey_status if record else "", ""))
-        invoice_status = cols[1].text_input("Invoice Status", value=safe_text(record.invoice_status if record else campaign.invoice_status, ""))
-        financial_status = cols[2].text_input("Financial Close Status", value=safe_text(record.financial_close_status if record else "", ""))
-        lessons = st.text_area("Lessons Learned", value=safe_text(record.lessons_learned if record else "", ""))
+        eop_status = cols[0].text_input("EOP Survey Status", value=safe_text(record.eop_survey_status if record else ""))
+        invoice_status = cols[1].text_input("Invoice Status", value=safe_text(record.invoice_status if record else campaign.invoice_status))
+        financial_status = cols[2].text_input("Financial Close Status", value=safe_text(record.financial_close_status if record else ""))
+        lessons = st.text_area("Lessons Learned", value=safe_text(record.lessons_learned if record else ""))
         submitted = st.form_submit_button("Save Recap Overview", type="primary")
     if submitted:
         service.update_influencer_campaign(actor, campaign.id, manager_user_id=user_options[manager], influencer_stage="recapping", planning_status=recap_status)
@@ -371,11 +371,11 @@ def render_financial(actor: CampaignOpsUser, service: CampaignOpsService, summar
     with st.form(f"campaign_ops_influencer_recap_financial_{campaign.id}"):
         cols = st.columns(4)
         invoice_date = cols[0].date_input("Invoice Date", value=campaign.invoice_date)
-        invoice_status = cols[1].text_input("Invoice Status", value=safe_text(campaign.invoice_status, ""))
+        invoice_status = cols[1].text_input("Invoice Status", value=safe_text(campaign.invoice_status))
         invoice_amount = cols[2].number_input("Invoice Amount", min_value=0.0, value=float(campaign.invoice_amount or 0))
         final_invoice = cols[3].date_input("Final Invoice Sent Date", value=record.final_invoice_sent_date if record else None)
-        financial_close = st.text_input("Payment / Financial Close Status", value=safe_text(record.financial_close_status if record else "", ""))
-        notes = st.text_area("Invoice Notes", value=safe_text(record.lessons_learned if record else "", ""))
+        financial_close = st.text_input("Payment / Financial Close Status", value=safe_text(record.financial_close_status if record else ""))
+        notes = st.text_area("Invoice Notes", value=safe_text(record.lessons_learned if record else ""))
         submitted = st.form_submit_button("Save Financial Closeout", type="primary")
     if submitted:
         service.update_influencer_campaign(actor, campaign.id, influencer_stage="recapping", planning_status=campaign.recap_status, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status), invoice_amount=invoice_amount)
@@ -410,7 +410,7 @@ def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campai
     cols = st.columns(4)
     for index, (label, url) in enumerate(quick):
         if url:
-            cols[index % 4].link_button(label, sanitize_link(url), key=f"campaign_ops_influencer_recap_quick_{label}_{campaign.id}")
+            cols[index % 4].link_button(label, sanitize_link(url))
         else:
             cols[index % 4].metric(label, "No Link")
     summary = service.get_program_workspace_summary(actor, campaign.program_id)
