@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from html import escape
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -9,6 +10,13 @@ import streamlit as st
 from app.campaign_ops.formatting import RISK_LABELS, format_date, format_datetime, safe_text, title_label
 from app.campaign_ops.influencer.formatting import PORTFOLIO_COLUMNS, planning_portfolio_rows, status_label
 from app.campaign_ops.influencer.live_views import render_live
+from app.campaign_ops.influencer.planning_baseline import (
+    campaign_quick_links,
+    compact_date,
+    next_sequence_step,
+    planning_sequence_preview,
+    select_campaign_for_open,
+)
 from app.campaign_ops.influencer.recap_views import render_recapping
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
@@ -68,10 +76,25 @@ def render_css() -> None:
         """
         <style>
         .campaign-ops-influencer-title { background:#2fa6a3; color:#082525; text-align:center; font-weight:700; padding:.35rem; border:1px solid #64bfbd; }
-        .campaign-ops-influencer-block { border:1px solid #c9d4d4; margin:.55rem 0 .9rem 0; background:#fff; }
-        .campaign-ops-influencer-bar { background:#06314a; color:white; padding:.35rem .55rem; font-weight:700; }
-        .campaign-ops-influencer-row { border-top:1px solid #dbe4e4; padding:.32rem .55rem; font-size:.9rem; }
-        .campaign-ops-influencer-hold { color:#a00000; font-weight:700; }
+        .campaign-ops-influencer-controls [data-testid="stButton"] button[kind="secondary"] { border-color:#c8d0d2; color:#32444c; }
+        .campaign-ops-influencer-block { border:1px solid #b7c7c7; margin:.55rem 0 .9rem 0; background:#fff; }
+        .campaign-ops-influencer-header { background:#2fa6a3; color:#082525; padding:.42rem .55rem; border-bottom:1px solid #268f8c; }
+        .campaign-ops-influencer-header-main { display:flex; justify-content:space-between; gap:.75rem; align-items:flex-start; font-weight:800; line-height:1.2; }
+        .campaign-ops-influencer-header-meta { margin-top:.16rem; font-size:.82rem; font-weight:700; color:#123b42; }
+        .campaign-ops-influencer-hold { background:#b00020; color:#fff; font-weight:800; padding:.12rem .42rem; border-radius:2px; white-space:nowrap; }
+        .campaign-ops-influencer-hold-reason { margin-top:.2rem; color:#601015; font-weight:700; font-size:.82rem; }
+        .campaign-ops-influencer-links { border-bottom:1px solid #d7e0e0; padding:.32rem .5rem; font-size:.82rem; }
+        .campaign-ops-influencer-sequence { width:100%; border-collapse:collapse; font-size:.84rem; }
+        .campaign-ops-influencer-sequence th { background:#06314a; color:white; text-align:left; padding:.28rem .45rem; font-size:.78rem; }
+        .campaign-ops-influencer-sequence td { border-top:1px solid #dbe4e4; padding:.26rem .45rem; vertical-align:top; }
+        .campaign-ops-influencer-sequence-date { width:4.2rem; white-space:nowrap; color:#223b44; font-weight:700; }
+        .campaign-ops-influencer-sequence-status { width:7.2rem; color:#38545c; }
+        .campaign-ops-influencer-status-grid { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); border-top:1px solid #ccdada; }
+        .campaign-ops-influencer-status-item { padding:.35rem .5rem; border-right:1px solid #e0e8e8; min-width:0; }
+        .campaign-ops-influencer-status-label { color:#526970; font-size:.72rem; font-weight:800; text-transform:uppercase; }
+        .campaign-ops-influencer-status-value { color:#102a32; font-size:.84rem; line-height:1.25; overflow-wrap:anywhere; }
+        .campaign-ops-influencer-empty { border-top:1px solid #dbe4e4; padding:.4rem .55rem; color:#62747a; font-size:.86rem; }
+        @media (max-width: 900px) { .campaign-ops-influencer-status-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
         </style>
         """,
         unsafe_allow_html=True,
@@ -79,6 +102,7 @@ def render_css() -> None:
 
 
 def render_planning(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
+    st.markdown("### Influencer Planning")
     tabs = st.radio("Planning view", ["All Planning", "T - In Planning", "L - In Planning", "New Influencer Campaign"], horizontal=True, key="campaign_ops_influencer_planning_view")
     if tabs == "New Influencer Campaign" or st.session_state.get("campaign_ops_influencer_create_open"):
         render_new_campaign(actor, service, users)
@@ -88,10 +112,11 @@ def render_planning(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         manager_id = next((u.id for u in users if u.display_name == "T"), None)
     if tabs.startswith("L"):
         manager_id = next((u.id for u in users if u.display_name == "L"), None)
-    render_portfolio(actor, service, manager_id)
+    render_portfolio(actor, service, manager_id, current_view=tabs)
 
 
-def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manager_user_id: str | None) -> None:
+def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manager_user_id: str | None, *, current_view: str = "All Planning") -> None:
+    st.caption(f"Current view: {current_view}")
     cols = st.columns(4)
     if cols[0].button("New Influencer Campaign", type="primary", key="campaign_ops_influencer_new"):
         st.session_state["campaign_ops_influencer_create_open"] = True
@@ -107,12 +132,20 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manage
     except CampaignOpsError as exc:
         st.error(f"Unable to load Influencer Planning: {exc}")
         return
-    filters = render_filters(campaigns)
+    show_manager_filter = manager_user_id is None
+    filters = render_filters(campaigns, show_manager_filter=show_manager_filter)
     campaigns = sort_campaigns(filter_campaigns(campaigns, filters), str(filters.get("sort_by") or "updated_at"))
-    st.markdown("<div class='campaign-ops-influencer-title'>Influencer Planning Portfolio</div>", unsafe_allow_html=True)
-    st.dataframe(planning_portfolio_rows(campaigns), column_order=PORTFOLIO_COLUMNS, hide_index=True, use_container_width=True)
+    if not campaigns:
+        st.info("No influencer campaigns match these filters.")
+        return
     for campaign in campaigns:
-        render_campaign_block(campaign)
+        try:
+            steps = service.list_influencer_planning_steps(actor, campaign.id)
+        except CampaignOpsError:
+            steps = []
+        render_campaign_block(campaign, steps, compact=current_view == "All Planning")
+    with st.expander("Portfolio Summary", expanded=False):
+        st.dataframe(planning_portfolio_rows(campaigns), column_order=PORTFOLIO_COLUMNS, hide_index=True, use_container_width=True)
     if campaigns:
         labels = {f"{item.campaign_title} | {safe_text(item.client_name)}": item.id for item in campaigns}
         cols = st.columns(2)
@@ -122,7 +155,7 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manage
             st.rerun()
 
 
-def render_filters(campaigns: list[Any]) -> dict[str, object]:
+def render_filters(campaigns: list[Any], *, show_manager_filter: bool = True) -> dict[str, object]:
     current = st.session_state.get("campaign_ops_influencer_filters")
     if not isinstance(current, dict):
         current = {}
@@ -133,8 +166,11 @@ def render_filters(campaigns: list[Any]) -> dict[str, object]:
         current["client_name"] = clients[cols[1].selectbox("Client", list(clients), key="campaign_ops_influencer_filter_client")]
         programs = {"Any": "", **{c.program_name: c.program_id for c in campaigns}}
         current["program_id"] = programs[cols[2].selectbox("Program", list(programs), key="campaign_ops_influencer_filter_program")]
-        managers = {"Any": "", **{safe_text(c.manager_display_name): c.manager_user_id for c in campaigns if c.manager_user_id}}
-        current["manager_user_id"] = managers[cols[3].selectbox("Manager", list(managers), key="campaign_ops_influencer_filter_manager")]
+        if show_manager_filter:
+            managers = {"Any": "", **{safe_text(c.manager_display_name): c.manager_user_id for c in campaigns if c.manager_user_id}}
+            current["manager_user_id"] = managers[cols[3].selectbox("Manager", list(managers), key="campaign_ops_influencer_filter_manager")]
+        else:
+            current.pop("manager_user_id", None)
         current["sort_by"] = SORT_OPTIONS[cols[4].selectbox("Sort", list(SORT_OPTIONS), key="campaign_ops_influencer_filter_sort")]
         cols = st.columns(5)
         current["planning_status"] = cols[0].selectbox("Planning status", ["Any", *PLANNING_STATUSES], key="campaign_ops_influencer_filter_status", format_func=status_label)
@@ -175,18 +211,62 @@ def sort_campaigns(campaigns: list[Any], sort_by: str) -> list[Any]:
     return sorted(campaigns, key=lambda c: (getattr(c, sort_by, None) is None, getattr(c, sort_by, None) or "", c.campaign_title))
 
 
-def render_campaign_block(campaign: Any) -> None:
-    hold = f" <span class='campaign-ops-influencer-hold'>ON HOLD: {escape(safe_text(campaign.hold_reason))}</span>" if campaign.is_on_hold else ""
-    html = f"<div class='campaign-ops-influencer-block'><div class='campaign-ops-influencer-bar'>{escape(campaign.campaign_title)}{hold}</div>"
-    rows = [
-        f"Manager: {escape(safe_text(campaign.manager_display_name))} | Status: {escape(status_label(campaign.planning_status))} | Waiting on: {escape(safe_text(campaign.waiting_on))}",
-        f"Next: {escape(safe_text(campaign.next_planning_step))} | Due: {format_date(campaign.next_planning_step_due_date)} | Launch: {format_date(campaign.launch_date)} | Wrap: {format_date(campaign.wrap_date)}",
-        f"Creators: target {safe_text(campaign.target_creator_count)} | approved {safe_text(campaign.approved_creator_count)} | contracted {safe_text(campaign.contracted_creator_count)}",
-        f"Invoice: {format_date(campaign.invoice_date)} | {escape(safe_text(campaign.invoice_status))} | {safe_text(campaign.invoice_amount)}",
+def render_campaign_block(campaign: Any, steps: list[Any], *, compact: bool = False) -> None:
+    expanded_key = f"campaign_ops_influencer_sequence_full_{campaign.id}"
+    expanded = bool(st.session_state.get(expanded_key))
+    visible_steps = steps if expanded else planning_sequence_preview(steps, today=date.today(), upcoming_limit=3 if compact else 4, compact=compact)
+    next_step = next_sequence_step(steps)
+    next_title = safe_text(getattr(next_step, "step_title", None)) if next_step else "Planning sequence complete"
+    next_due = compact_date(getattr(next_step, "due_date", None), reference_year=date.today().year) if next_step else ""
+    hold_badge = "<span class='campaign-ops-influencer-hold'>ON HOLD</span>" if campaign.is_on_hold else "<span>ACTIVE</span>"
+    hold_reason = f"<div class='campaign-ops-influencer-hold-reason'>Hold reason: {escape(safe_text(campaign.hold_reason))}</div>" if campaign.is_on_hold and campaign.hold_reason else ""
+    html = f"""
+    <div class='campaign-ops-influencer-block'>
+      <div class='campaign-ops-influencer-header'>
+        <div class='campaign-ops-influencer-header-main'>
+          <div>{escape(campaign.campaign_title)}</div>
+          <div>{hold_badge}</div>
+        </div>
+        <div class='campaign-ops-influencer-header-meta'>{escape(safe_text(campaign.manager_display_name))} &middot; {escape(status_label(campaign.planning_status))}</div>
+        {hold_reason}
+      </div>
+    """
+    links = campaign_quick_links(campaign)
+    if links:
+        html += "<div class='campaign-ops-influencer-links'>" + " &nbsp; ".join(f"<a href='{escape(sanitize_link(link.url), quote=True)}' target='_blank'>{escape(link.label)}</a>" for link in links) + "</div>"
+    if visible_steps:
+        html += "<table class='campaign-ops-influencer-sequence'><thead><tr><th>Date</th><th>Planning Action</th><th>Status</th></tr></thead><tbody>"
+        for step in visible_steps:
+            html += (
+                "<tr>"
+                f"<td class='campaign-ops-influencer-sequence-date'>{escape(compact_date(getattr(step, 'due_date', None), reference_year=date.today().year))}</td>"
+                f"<td>{escape(safe_text(getattr(step, 'step_title', None)))}</td>"
+                f"<td class='campaign-ops-influencer-sequence-status'>{escape(status_label(getattr(step, 'status', None)))}</td>"
+                "</tr>"
+            )
+        html += "</tbody></table>"
+    else:
+        html += "<div class='campaign-ops-influencer-empty'>No planning steps yet.</div>"
+    status_items = [
+        ("Latest Update", safe_text(campaign.latest_update)),
+        ("Waiting On", safe_text(campaign.waiting_on)),
+        ("Next", next_title),
+        ("Due", next_due),
+        ("Launch", compact_date(campaign.launch_date, reference_year=date.today().year)),
+        ("Wrap", compact_date(campaign.wrap_date, reference_year=date.today().year)),
     ]
-    html += "".join(f"<div class='campaign-ops-influencer-row'>{row}</div>" for row in rows)
-    html += "</div>"
+    html += "<div class='campaign-ops-influencer-status-grid'>"
+    html += "".join(f"<div class='campaign-ops-influencer-status-item'><div class='campaign-ops-influencer-status-label'>{escape(label)}</div><div class='campaign-ops-influencer-status-value'>{escape(value)}</div></div>" for label, value in status_items if value or label in {"Next", "Due", "Launch", "Wrap"})
+    html += "</div></div>"
     st.markdown(html, unsafe_allow_html=True)
+    cols = st.columns([1, 1, 5])
+    label = "Collapse sequence" if expanded else "Show full sequence"
+    if steps and cols[0].button(label, key=f"campaign_ops_influencer_sequence_toggle_{campaign.id}"):
+        st.session_state[expanded_key] = not expanded
+        st.rerun()
+    if cols[1].button("Open Campaign", key=f"campaign_ops_influencer_open_{campaign.id}"):
+        select_campaign_for_open(st.session_state, campaign.id)
+        st.rerun()
 
 
 def render_new_campaign(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
@@ -480,14 +560,11 @@ def render_timeline(actor: CampaignOpsUser, service: CampaignOpsService, campaig
 
 
 def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    quick = [("Track Sheet", campaign.track_sheet_url), ("Influencer Brief", campaign.influencer_brief_url), ("Bitly Link", campaign.bitly_link_url), ("Invoice", campaign.invoice_url), ("EOP Survey", campaign.eop_survey_url), ("Campaign Brief", campaign.campaign_brief_url), ("Click2Cart Link", campaign.click2cart_link_url)]
+    quick = campaign_quick_links(campaign)
     cols = st.columns(4)
-    for index, (label, url) in enumerate(quick):
+    for index, link in enumerate(quick):
         target = cols[index % 4]
-        if url:
-            target.link_button(label, sanitize_link(url))
-        else:
-            target.metric(label, "Missing")
+        target.link_button(link.label, sanitize_link(link.url))
     summary = service.get_program_workspace_summary(actor, campaign.program_id)
     resources = [r for r in service.list_program_resources(actor, campaign.program_id, include_inactive=True) if r.resource_type in INFLUENCER_RESOURCE_TYPES or r.workstream_id == campaign.workstream_id]
     st.dataframe(resource_table_rows(resources), hide_index=True, use_container_width=True)

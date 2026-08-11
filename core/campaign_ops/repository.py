@@ -3265,7 +3265,7 @@ class CampaignOpsRepository:
                 select distinct on (influencer_campaign_id) influencer_campaign_id, step_title, due_date
                 from campaign_ops_influencer_planning_steps
                 where is_active = true and coalesce(status, '') <> 'complete' and completed_date is null
-                order by influencer_campaign_id, due_date asc nulls last, sequence_order asc, created_at asc
+                order by influencer_campaign_id, sequence_order asc, due_date asc nulls last, created_at asc
             ), resource_agg as (
                 select program_id,
                     max(url) filter (where resource_type = 'Track Sheet' and is_active = true) as track_sheet_url,

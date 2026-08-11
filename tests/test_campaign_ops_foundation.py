@@ -1278,7 +1278,7 @@ class FakePrompt4ARepository:
         manager = self.get_user_by_id(campaign.manager_user_id) if campaign.manager_user_id else None
         summary = self.get_influencer_creator_summary(campaign.id)
         steps = [step for step in self.influencer_planning_steps if step.influencer_campaign_id == campaign.id and step.is_active and step.status != "complete" and step.completed_date is None]
-        steps.sort(key=lambda item: (item.due_date or date.max, item.sequence_order, item.created_at or datetime.min))
+        steps.sort(key=lambda item: (item.sequence_order, item.due_date or date.max, item.created_at or datetime.min))
         resources = [resource for resource in self.resources if resource.program_id == campaign.program_id and resource.is_active]
 
         def resource_url(resource_type: str) -> str | None:
@@ -3962,6 +3962,51 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("influencer_approval_round_created", event_types)
         self.assertIn("influencer_content_round_created", event_types)
         self.assertIn("influencer_creator_summary_updated", event_types)
+
+    def test_prompt26_influencer_planning_manager_filters_and_sequence_first_next_step(self) -> None:
+        repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        t_campaign = service.create_influencer_campaign(
+            bailey,
+            program_id=program_id,
+            workstream_id=influencer.id,
+            campaign_title="TEST - T Planning Campaign",
+            manager_user_id=t_user.id,
+            latest_update="Latest T update",
+            waiting_on="Client approvals",
+            is_on_hold=True,
+            hold_reason="Waiting on client approvals",
+        )
+        l_campaign = service.create_influencer_campaign(
+            bailey,
+            program_id=program_id,
+            workstream_id=influencer.id,
+            campaign_title="TEST - L Planning Campaign",
+            manager_user_id=l_user.id,
+        )
+        completed = service.create_influencer_planning_step(bailey, t_campaign.id, "TEST - Completed sequence 1", sequence_order=1, due_date=date(2026, 8, 1), status="not_started")
+        service.complete_influencer_planning_step(bailey, t_campaign.id, completed.id, date(2026, 8, 1))
+        inactive = service.create_influencer_planning_step(bailey, t_campaign.id, "TEST - Inactive sequence 2", sequence_order=2, due_date=date(2026, 8, 2), status="not_started")
+        service.deactivate_influencer_planning_step(bailey, t_campaign.id, inactive.id)
+        expected_next = service.create_influencer_planning_step(bailey, t_campaign.id, "TEST - Sequence-first next", sequence_order=3, due_date=date(2026, 9, 15), status="not_started")
+        service.create_influencer_planning_step(bailey, t_campaign.id, "TEST - Earlier date later sequence", sequence_order=4, due_date=date(2026, 8, 15), status="not_started")
+        service.create_resource(bailey, program_id, title="Education", resource_type="Influencer Education", workstream_id=influencer.id, url="https://example.com/education")
+
+        t_rows = service.list_influencer_campaigns(bailey, manager_user_id=t_user.id)
+        l_rows = service.list_influencer_campaigns(bailey, manager_user_id=l_user.id)
+        all_rows = service.list_influencer_campaigns(bailey)
+        detail = service.get_influencer_campaign_detail(bailey, t_campaign.id)
+
+        self.assertIn(t_campaign.id, [row.id for row in t_rows])
+        self.assertNotIn(l_campaign.id, [row.id for row in t_rows])
+        self.assertIn(l_campaign.id, [row.id for row in l_rows])
+        self.assertNotIn(t_campaign.id, [row.id for row in l_rows])
+        self.assertIn(t_campaign.id, [row.id for row in all_rows])
+        self.assertIn(l_campaign.id, [row.id for row in all_rows])
+        self.assertEqual(expected_next.step_title, detail.next_planning_step)
+        self.assertEqual(expected_next.due_date, detail.next_planning_step_due_date)
+        self.assertEqual("https://example.com/education", detail.influencer_education_url)
+        self.assertTrue(detail.is_on_hold)
+        self.assertEqual("Waiting on client approvals", detail.hold_reason)
 
     def test_prompt9_influencer_live_transition_manager_views_and_activity(self) -> None:
         repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()

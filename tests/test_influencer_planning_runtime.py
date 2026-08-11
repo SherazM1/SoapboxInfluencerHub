@@ -1,14 +1,24 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import unittest
 from pathlib import Path
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app.campaign_ops.influencer import views
+from app.campaign_ops.influencer.planning_baseline import (
+    campaign_quick_links,
+    compact_date,
+    next_sequence_step,
+    planning_sequence_preview,
+    select_campaign_for_open,
+)
 from core.campaign_ops.enums import UserRole
 from core.campaign_ops.models import CampaignOpsUser
+from core.campaign_ops.repository import CampaignOpsRepository
 
 
 INFLUENCER_VIEW_FILES = [
@@ -36,6 +46,9 @@ class FakeColumn:
 
     def metric(self, label: str, value: str) -> None:
         self.metrics.append((label, value))
+
+    def button(self, label: str, **kwargs) -> bool:
+        return False
 
     def text_input(self, label: str, value: str = "") -> str:
         return value
@@ -131,6 +144,94 @@ class InfluencerPlanningRuntimeTests(unittest.TestCase):
             patch.object(views.st, "form_submit_button", return_value=False),
         ):
             views.render_resources(actor, service, campaign)
+
+    def test_quick_link_normalization_uses_workbook_order_and_omits_missing_urls(self) -> None:
+        campaign = SimpleNamespace(
+            track_sheet_url="https://example.com/track",
+            influencer_brief_url=None,
+            bitly_link_url="https://example.com/bitly",
+            click2cart_link_url="https://example.com/c2c",
+            invoice_url=None,
+            eop_survey_url="https://example.com/eop",
+            influencer_education_url="https://example.com/edu",
+            campaign_brief_url=None,
+        )
+
+        links = campaign_quick_links(campaign)
+
+        self.assertEqual(["Track Sheet", "Bitly Link", "Click2Cart Link", "EOP Survey", "Influencer Education"], [link.label for link in links])
+        self.assertNotIn("Invoice", [link.label for link in links])
+
+    def test_sequence_preview_preserves_sequence_order_undated_rows_and_avoids_duplicates(self) -> None:
+        steps = [
+            SimpleNamespace(id="1", step_title="Send brief", sequence_order=1, due_date=date(2026, 5, 28), completed_date=date(2026, 5, 28), status="complete", is_active=True),
+            SimpleNamespace(id="2", step_title="2 weeks required: client review", sequence_order=2, due_date=None, completed_date=None, status="not_started", is_active=True),
+            SimpleNamespace(id="3", step_title="Client approvals due", sequence_order=3, due_date=date(2026, 6, 11), completed_date=None, status="waiting", is_active=True),
+            SimpleNamespace(id="4", step_title="Hire and secure scripts", sequence_order=4, due_date=date(2026, 6, 12), completed_date=None, status="not_started", is_active=True),
+            SimpleNamespace(id="5", step_title="Content due", sequence_order=5, due_date=date(2026, 7, 1), completed_date=None, status="not_started", is_active=True),
+            SimpleNamespace(id="6", step_title="Launch", sequence_order=6, due_date=date(2026, 9, 1), completed_date=None, status="not_started", is_active=True),
+            SimpleNamespace(id="7", step_title="Campaign wraps", sequence_order=7, due_date=date(2026, 10, 31), completed_date=None, status="not_started", is_active=True),
+            SimpleNamespace(id="8", step_title="Inactive", sequence_order=8, due_date=date(2026, 11, 1), completed_date=None, status="not_started", is_active=False),
+        ]
+
+        preview = planning_sequence_preview(steps, today=date(2026, 6, 12), upcoming_limit=2)
+
+        self.assertEqual(["1", "2", "3", "4", "5", "6", "7"], [step.id for step in preview])
+        self.assertEqual(len({step.id for step in preview}), len(preview))
+        self.assertEqual(["1", "2", "3", "4", "5", "6", "7"], [step.id for step in [step for step in steps if step.is_active]])
+
+    def test_next_sequence_step_excludes_completed_and_inactive_steps(self) -> None:
+        steps = [
+            SimpleNamespace(id="1", step_title="Complete", due_date=date(2026, 8, 1), completed_date=date(2026, 8, 1), status="complete", is_active=True),
+            SimpleNamespace(id="2", step_title="Inactive", due_date=date(2026, 8, 2), completed_date=None, status="not_started", is_active=False),
+            SimpleNamespace(id="3", step_title="Next by sequence", due_date=None, completed_date=None, status="not_started", is_active=True),
+        ]
+
+        self.assertEqual("3", next_sequence_step(steps).id)
+        self.assertEqual("", compact_date(None))
+        self.assertEqual("8/12", compact_date(date(2026, 8, 12), reference_year=2026))
+        self.assertEqual("1/5/2027", compact_date(date(2027, 1, 5), reference_year=2026))
+
+    def test_repository_next_planning_step_sql_uses_sequence_first_ordering(self) -> None:
+        source = inspect.getsource(CampaignOpsRepository.list_influencer_campaigns)
+        self.assertIn("order by influencer_campaign_id, sequence_order asc, due_date asc nulls last, created_at asc", source)
+
+    def test_campaign_block_renders_hold_reason_empty_steps_and_open_action_helper(self) -> None:
+        campaign = SimpleNamespace(
+            id="campaign-1",
+            campaign_title="DOLORES TUNA BTS",
+            manager_display_name="T",
+            planning_status="influencer_approval",
+            is_on_hold=True,
+            hold_reason="Waiting on client approvals",
+            latest_update=None,
+            waiting_on=None,
+            launch_date=None,
+            wrap_date=None,
+            track_sheet_url=None,
+            influencer_brief_url=None,
+            bitly_link_url=None,
+            click2cart_link_url=None,
+            invoice_url=None,
+            eop_survey_url=None,
+            influencer_education_url=None,
+            campaign_brief_url=None,
+        )
+        rendered: list[str] = []
+        with (
+            patch.object(views.st, "markdown", side_effect=lambda body, **kwargs: rendered.append(body)),
+            patch.object(views.st, "columns", return_value=[FakeColumn(), FakeColumn(), FakeColumn()]),
+        ):
+            views.render_campaign_block(campaign, [])
+
+        html = "".join(rendered)
+        self.assertIn("ON HOLD", html)
+        self.assertIn("Hold reason: Waiting on client approvals", html)
+        self.assertIn("No planning steps yet.", html)
+
+        state: dict[str, object] = {}
+        select_campaign_for_open(state, "campaign-1")
+        self.assertEqual("campaign-1", state["campaign_ops_selected_influencer_campaign_id"])
 
     def test_unknown_planning_statuses_fall_back_to_valid_options(self) -> None:
         self.assertEqual(0, views.option_index(["not_started", "in_progress"], "legacy", "not_started"))
