@@ -1643,13 +1643,15 @@ class FakePrompt4ARepository:
             manager_display_name=manager.display_name if manager else None, influencer_stage=campaign.influencer_stage,
             recap_record_id=record.id if record else None, recap_status=(record.recap_status if record else campaign.planning_status),
             latest_update=(record.latest_update if record else campaign.latest_update), waiting_on=(record.waiting_on if record else campaign.waiting_on),
+            is_on_hold=campaign.is_on_hold, hold_reason=campaign.hold_reason,
             all_creators_live=bool(creators) and all(c.live_status in ("live", "paid_live_complete", "complete") for c in creators),
             creator_closeout_status=record.creator_closeout_status if record else None, eop_survey_status=record.eop_survey_status if record else None,
             final_performance_data_status=record.final_performance_data_status if record else None,
             sales_lift_analysis_required=bool(record.sales_lift_analysis_required if record else False),
             sales_lift_analysis_status=record.sales_lift_analysis_status if record else None, recap_deck_status=recap_deck,
             client_recap_date=record.client_recap_date if record else None, invoice_status=(record.invoice_status if record and record.invoice_status else campaign.invoice_status),
-            financial_close_status=record.financial_close_status if record else None, open_requirement_count=open_req_count, launch_item_count=len(launches),
+            financial_close_status=record.financial_close_status if record else None, invoice_date=campaign.invoice_date,
+            open_requirement_count=open_req_count, open_checkpoint_count=len(checkpoints), launch_item_count=len(launches),
             open_exception_count=len(exceptions), total_creator_count=len(creators),
             live_creator_count=len([c for c in creators if c.live_status in ("live", "paid_live_complete", "complete")]),
             completed_creator_count=len([c for c in creators if c.live_status in ("paid_live_complete", "complete")]),
@@ -1723,6 +1725,12 @@ class FakePrompt4ARepository:
 
     def list_influencer_recap_launch_items(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapLaunchItemRecord]:
         return sorted([item for item in self.influencer_recap_launch_items if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.sort_order, item.group_name or "", item.product_name))
+
+    def list_influencer_recap_launch_items_for_campaigns(self, influencer_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[InfluencerRecapLaunchItemRecord]]:
+        return {
+            campaign_id: self.list_influencer_recap_launch_items(campaign_id, include_inactive=include_inactive)
+            for campaign_id in influencer_campaign_ids
+        }
 
     def update_influencer_recap_launch_item(self, launch_item_id: str, **kwargs: object) -> InfluencerRecapLaunchItemRecord:
         item = next((item for item in self.influencer_recap_launch_items if item.id == launch_item_id), None)

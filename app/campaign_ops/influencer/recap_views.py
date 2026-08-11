@@ -7,6 +7,14 @@ from urllib.parse import urlsplit, urlunsplit
 import streamlit as st
 
 from app.campaign_ops.formatting import format_date, format_datetime, safe_text, title_label
+from app.campaign_ops.influencer.recap_baseline import (
+    closeout_status_items,
+    compact_date,
+    group_recap_launch_items,
+    ready_to_close_blockers,
+    recap_quick_links,
+    select_recap_campaign_for_open,
+)
 from app.campaign_ops.influencer.recap_formatting import RECAP_COLUMNS, recap_rows
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
@@ -40,6 +48,7 @@ SORT_OPTIONS = {
 
 
 def render_recapping(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
+    render_recap_css()
     selected = st.session_state.get("campaign_ops_selected_influencer_recap_campaign_id")
     if selected:
         render_recap_workspace(actor, service, users, str(selected))
@@ -50,10 +59,44 @@ def render_recapping(actor: CampaignOpsUser, service: CampaignOpsService, users:
         manager_id = next((u.id for u in users if u.display_name == "T"), None)
     if view.startswith("L"):
         manager_id = next((u.id for u in users if u.display_name == "L"), None)
-    render_recap_portfolio(actor, service, manager_id)
+    render_recap_portfolio(actor, service, manager_id, current_view=view)
 
 
-def render_recap_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manager_user_id: str | None) -> None:
+def render_recap_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .campaign-ops-recap-block { border:1px solid #b7c7c7; margin:.55rem 0 .9rem 0; background:#fff; }
+        .campaign-ops-recap-header { background:#2fa6a3; color:#082525; padding:.42rem .55rem; border-bottom:1px solid #268f8c; }
+        .campaign-ops-recap-header-main { display:flex; justify-content:space-between; gap:.75rem; align-items:flex-start; font-weight:800; line-height:1.2; }
+        .campaign-ops-recap-meta { margin-top:.16rem; font-size:.82rem; font-weight:700; color:#123b42; }
+        .campaign-ops-recap-hold { background:#b00020; color:#fff; font-weight:800; padding:.12rem .42rem; border-radius:2px; white-space:nowrap; }
+        .campaign-ops-recap-hold-reason { margin-top:.2rem; color:#601015; font-weight:700; font-size:.82rem; }
+        .campaign-ops-recap-links { border-bottom:1px solid #d7e0e0; padding:.32rem .5rem; font-size:.82rem; }
+        .campaign-ops-recap-section-title { background:#06314a; color:white; padding:.28rem .45rem; font-size:.78rem; font-weight:800; text-transform:uppercase; }
+        .campaign-ops-recap-status-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); border-bottom:1px solid #ccdada; }
+        .campaign-ops-recap-status-item { padding:.35rem .5rem; border-right:1px solid #e0e8e8; min-width:0; }
+        .campaign-ops-recap-status-label { color:#526970; font-size:.72rem; font-weight:800; text-transform:uppercase; }
+        .campaign-ops-recap-status-value { color:#102a32; font-size:.84rem; line-height:1.25; overflow-wrap:anywhere; }
+        .campaign-ops-recap-subtext { color:#526970; font-size:.76rem; margin-top:.08rem; }
+        .campaign-ops-recap-launch-row { padding:.32rem .5rem; border-bottom:1px solid #dbe4e4; font-size:.84rem; }
+        .campaign-ops-recap-launch-group { color:#06314a; font-size:.76rem; font-weight:800; text-transform:uppercase; margin:.1rem 0; }
+        .campaign-ops-recap-update-grid { display:grid; grid-template-columns:2fr 1fr; border-bottom:1px solid #ccdada; }
+        .campaign-ops-recap-ready { padding:.42rem .5rem; border-bottom:1px solid #ccdada; }
+        .campaign-ops-recap-ready-state { font-size:.92rem; font-weight:900; color:#102a32; text-transform:uppercase; }
+        .campaign-ops-recap-empty { padding:.38rem .5rem; color:#62747a; font-size:.84rem; }
+        @media (max-width: 900px) {
+          .campaign-ops-recap-status-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+          .campaign-ops-recap-update-grid { grid-template-columns:1fr; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_recap_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manager_user_id: str | None, *, current_view: str = "All Recapping") -> None:
+    st.caption(f"Current view: {current_view}")
     cols = st.columns(4)
     include_inactive = cols[0].checkbox("Show inactive", key="campaign_ops_influencer_recap_show_inactive")
     if cols[1].button("Refresh", key="campaign_ops_influencer_recap_refresh"):
@@ -66,12 +109,23 @@ def render_recap_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, 
     except CampaignOpsError as exc:
         st.error(f"Unable to load Influencer Recapping: {exc}")
         return
-    filters = render_filters(campaigns)
+    filters = render_filters(campaigns, show_manager_filter=manager_user_id is None)
     filtered = sort_rows(filter_rows(campaigns, filters), str(filters.get("sort_by") or "updated_at"))
-    st.markdown("<div class='campaign-ops-influencer-title'>Influencer Recapping Portfolio</div>", unsafe_allow_html=True)
-    st.dataframe(recap_rows(filtered), column_order=RECAP_COLUMNS, hide_index=True, use_container_width=True)
+    if not filtered:
+        st.info("No recapping influencer campaigns match these filters.")
+        return
+    board_data = service.get_influencer_recap_manager_board_data(actor, filtered)
+    resources_by_program = board_data.get("resources", {})
+    launches_by_campaign = board_data.get("launch_items", {})
     for campaign in filtered:
-        render_recap_block(campaign)
+        render_recap_block(
+            campaign,
+            resources_by_program.get(campaign.program_id, []),
+            launches_by_campaign.get(campaign.id, []),
+            compact=current_view == "All Recapping",
+        )
+    with st.expander("Recapping Portfolio Summary", expanded=False):
+        st.dataframe(recap_rows(filtered), column_order=RECAP_COLUMNS, hide_index=True, use_container_width=True)
     if filtered:
         labels = {f"{c.campaign_title} | {safe_text(c.client_name)}": c.id for c in filtered}
         cols = st.columns(2)
@@ -81,7 +135,7 @@ def render_recap_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, 
             st.rerun()
 
 
-def render_filters(campaigns: list[Any]) -> dict[str, object]:
+def render_filters(campaigns: list[Any], *, show_manager_filter: bool = True) -> dict[str, object]:
     current = st.session_state.get("campaign_ops_influencer_recap_filters")
     if not isinstance(current, dict):
         current = {}
@@ -92,8 +146,11 @@ def render_filters(campaigns: list[Any]) -> dict[str, object]:
         current["client_name"] = clients[cols[1].selectbox("Client", list(clients), key="campaign_ops_influencer_recap_client")]
         programs = {"Any": "", **{c.program_name: c.program_id for c in campaigns}}
         current["program_id"] = programs[cols[2].selectbox("Program", list(programs), key="campaign_ops_influencer_recap_program")]
-        managers = {"Any": "", **{safe_text(c.manager_display_name): c.manager_user_id for c in campaigns if c.manager_user_id}}
-        current["manager_user_id"] = managers[cols[3].selectbox("Manager", list(managers), key="campaign_ops_influencer_recap_manager")]
+        if show_manager_filter:
+            managers = {"Any": "", **{safe_text(c.manager_display_name): c.manager_user_id for c in campaigns if c.manager_user_id}}
+            current["manager_user_id"] = managers[cols[3].selectbox("Manager", list(managers), key="campaign_ops_influencer_recap_manager")]
+        else:
+            current.pop("manager_user_id", None)
         current["sort_by"] = SORT_OPTIONS[cols[4].selectbox("Sort", list(SORT_OPTIONS), key="campaign_ops_influencer_recap_sort")]
         cols = st.columns(5)
         current["recap_status"] = cols[0].selectbox("Recap status", ["Any", *RECAP_STATUSES], key="campaign_ops_influencer_recap_status", format_func=title_label)
@@ -151,20 +208,74 @@ def sort_rows(campaigns: list[Any], sort_by: str) -> list[Any]:
     return sorted(campaigns, key=lambda c: (getattr(c, sort_by, None) is None, getattr(c, sort_by, None) or "", c.campaign_title))
 
 
-def render_recap_block(campaign: Any) -> None:
-    status = title_label(campaign.recap_status)
-    html = f"<div class='campaign-ops-influencer-block'><div class='campaign-ops-influencer-title'>{escape(campaign.campaign_title)}</div>"
-    html += "<div class='campaign-ops-influencer-bar'>Track Sheet | Influencer Brief | Click2Cart / Bitly | Invoice | EOP Survey | Live Content Tracker</div>"
-    rows = [
-        f"Status: {escape(status)} | Waiting on: {escape(safe_text(campaign.waiting_on))} | Ready to close: {campaign.ready_to_close_state}",
-        f"All creators live: {'TRUE' if campaign.all_creators_live else 'FALSE'} | Creator closeout: {escape(safe_text(campaign.creator_closeout_status))} | Open requirements: {campaign.open_requirement_count}",
-        f"EOP Survey: {escape(safe_text(campaign.eop_survey_status))} | Performance data: {escape(safe_text(campaign.final_performance_data_status))} | Sales lift: {escape(safe_text(campaign.sales_lift_analysis_status))}",
-        f"Recap deck: {escape(safe_text(campaign.recap_deck_status))} | Client recap: {format_date(campaign.client_recap_date)} | Invoice: {escape(safe_text(campaign.invoice_status))}",
-        f"Program Notes: {escape(safe_text(campaign.latest_update))}",
-    ]
-    html += "".join(f"<div class='campaign-ops-influencer-row'>{row}</div>" for row in rows)
+def render_recap_block(campaign: Any, resources: list[Any] | None = None, launch_items: list[Any] | None = None, *, compact: bool = False) -> None:
+    hold_badge = "<span class='campaign-ops-recap-hold'>ON HOLD</span>" if getattr(campaign, "is_on_hold", False) else "<span>ACTIVE</span>"
+    hold_reason = f"<div class='campaign-ops-recap-hold-reason'>Hold reason: {escape(safe_text(getattr(campaign, 'hold_reason', None)))}</div>" if getattr(campaign, "is_on_hold", False) and getattr(campaign, "hold_reason", None) else ""
+    links = recap_quick_links(campaign, resources, launch_items)
+    html = f"""
+    <div class='campaign-ops-recap-block'>
+      <div class='campaign-ops-recap-header'>
+        <div class='campaign-ops-recap-header-main'>
+          <div>{escape(campaign.campaign_title)}</div>
+          <div>{hold_badge}</div>
+        </div>
+        <div class='campaign-ops-recap-meta'>{escape(safe_text(campaign.manager_display_name))} &middot; {escape(title_label(campaign.recap_status))}</div>
+        {hold_reason}
+      </div>
+    """
+    if links:
+        html += "<div class='campaign-ops-recap-links'><strong>LINKED SHEETS</strong> &nbsp; " + " &nbsp; ".join(f"<a href='{escape(sanitize_link(link.url), quote=True)}' target='_blank'>{escape(link.label)}</a>" for link in links) + "</div>"
+    html += "<div class='campaign-ops-recap-section-title'>Closeout Status</div><div class='campaign-ops-recap-status-grid'>"
+    for label, value, group in closeout_status_items(campaign):
+        html += (
+            "<div class='campaign-ops-recap-status-item'>"
+            f"<div class='campaign-ops-recap-status-label'>{escape(label)}</div>"
+            f"<div class='campaign-ops-recap-status-value'>{escape(value or '-')}</div>"
+            f"<div class='campaign-ops-recap-subtext'>{escape(group)}</div>"
+            "</div>"
+        )
     html += "</div>"
+    launch_groups = group_recap_launch_items(launch_items or [])
+    if launch_groups:
+        html += "<div class='campaign-ops-recap-section-title'>Product / Retailer Launches</div>"
+        for group in launch_groups:
+            html += "<div class='campaign-ops-recap-launch-row'>"
+            if group.group_name:
+                html += f"<div class='campaign-ops-recap-launch-group'>{escape(group.group_name)}</div>"
+            for item in group.items:
+                online = compact_date(getattr(item, "online_launch_date", None))
+                store = compact_date(getattr(item, "in_store_launch_date", None))
+                retailer = getattr(item, "retailer_name", None)
+                parts = [str(retailer).strip()] if retailer else []
+                if online:
+                    parts.append(f"Online {online}")
+                if store:
+                    parts.append(f"Stores {store}")
+                parts.append(title_label(getattr(item, "launch_status", None)))
+                links_html = []
+                if getattr(item, "product_url", None):
+                    links_html.append(f"<a href='{escape(sanitize_link(item.product_url), quote=True)}' target='_blank'>Product</a>")
+                if getattr(item, "retailer_url", None):
+                    links_html.append(f"<a href='{escape(sanitize_link(item.retailer_url), quote=True)}' target='_blank'>Retailer</a>")
+                html += f"<div>{escape(item.product_name)} &middot; {escape(' - '.join(part for part in parts if part))}"
+                if links_html:
+                    html += " &nbsp; " + " &nbsp; ".join(links_html)
+                html += "</div>"
+            html += "</div>"
+    html += "<div class='campaign-ops-recap-section-title'>Latest Update / Waiting On</div><div class='campaign-ops-recap-update-grid'>"
+    html += f"<div class='campaign-ops-recap-status-item'><div class='campaign-ops-recap-status-label'>Latest Update</div><div class='campaign-ops-recap-status-value'>{escape(safe_text(campaign.latest_update) or '-')}</div></div>"
+    html += f"<div class='campaign-ops-recap-status-item'><div class='campaign-ops-recap-status-label'>Waiting On</div><div class='campaign-ops-recap-status-value'>{escape(safe_text(campaign.waiting_on) or '-')}</div></div></div>"
+    blockers = ready_to_close_blockers(campaign)
+    html += "<div class='campaign-ops-recap-section-title'>Ready to Close</div>"
+    html += f"<div class='campaign-ops-recap-ready'><div class='campaign-ops-recap-ready-state'>{escape(campaign.ready_to_close_state)}</div>"
+    if blockers:
+        html += f"<div class='campaign-ops-recap-subtext'>{escape(' - '.join(blockers))}</div>"
+    html += "</div></div>"
     st.markdown(html, unsafe_allow_html=True)
+    cols = st.columns([1, 5])
+    if cols[0].button("Open Recap Campaign", key=f"campaign_ops_influencer_recap_open_{campaign.id}"):
+        select_recap_campaign_for_open(st.session_state, campaign.id)
+        st.rerun()
 
 
 def render_recap_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], campaign_id: str) -> None:

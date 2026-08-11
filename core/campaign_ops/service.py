@@ -4212,6 +4212,17 @@ class CampaignOpsService:
         self._validate_influencer_access(repository, actor, detail.program_id)
         return detail
 
+    def get_influencer_recap_manager_board_data(self, actor: CampaignOpsUser | None, campaigns: list[InfluencerRecapPortfolioRow]) -> dict[str, dict[str, list[Any]]]:
+        repository = self.repository or CampaignOpsRepository()
+        campaign_ids = [campaign.id for campaign in campaigns]
+        program_ids = list(dict.fromkeys(campaign.program_id for campaign in campaigns))
+        if not campaign_ids:
+            return {"launch_items": {}, "resources": {}}
+        return {
+            "launch_items": repository.list_influencer_recap_launch_items_for_campaigns(campaign_ids),
+            "resources": repository.list_resources_for_programs(program_ids),
+        }
+
     def creator_closeout_summary(self, recap_record: InfluencerRecapRecord | None, creators: list[InfluencerLiveCreatorRecord], exceptions: list[InfluencerLiveExceptionRecord]) -> InfluencerCreatorCloseoutSummary:
         active = [c for c in creators if c.is_active]
         return InfluencerCreatorCloseoutSummary(

@@ -3664,12 +3664,14 @@ class CampaignOpsRepository:
             manager_display_name=normalized.get("manager_display_name"), influencer_stage=str(normalized["influencer_stage"]),
             recap_record_id=normalize_id(normalized.get("recap_record_id")), recap_status=normalized.get("recap_status"),
             latest_update=normalized.get("recap_latest_update") or normalized.get("latest_update"), waiting_on=normalized.get("recap_waiting_on") or normalized.get("waiting_on"),
+            is_on_hold=bool(normalized.get("is_on_hold", False)), hold_reason=normalized.get("hold_reason"),
             all_creators_live=bool(normalized.get("all_creators_live", False)), creator_closeout_status=normalized.get("creator_closeout_status"),
             eop_survey_status=normalized.get("eop_survey_status"), final_performance_data_status=normalized.get("final_performance_data_status"),
             sales_lift_analysis_required=bool(normalized.get("sales_lift_analysis_required", False)),
             sales_lift_analysis_status=normalized.get("sales_lift_analysis_status"), recap_deck_status=normalized.get("recap_deck_status"),
             client_recap_date=normalized.get("client_recap_date"), invoice_status=normalized.get("recap_invoice_status") or normalized.get("invoice_status"),
-            financial_close_status=normalized.get("financial_close_status"), open_requirement_count=int(normalized.get("open_requirement_count") or 0),
+            financial_close_status=normalized.get("financial_close_status"), invoice_date=normalized.get("invoice_date"),
+            open_requirement_count=int(normalized.get("open_requirement_count") or 0), open_checkpoint_count=int(normalized.get("open_checkpoint_count") or 0),
             launch_item_count=int(normalized.get("launch_item_count") or 0), open_exception_count=int(normalized.get("open_exception_count") or 0),
             total_creator_count=int(normalized.get("total_creator_count") or 0), live_creator_count=int(normalized.get("live_creator_count") or 0),
             completed_creator_count=int(normalized.get("completed_creator_count") or 0), missing_final_links_count=int(normalized.get("missing_final_links_count") or 0),
@@ -3699,6 +3701,10 @@ class CampaignOpsRepository:
                 from campaign_ops_influencer_recap_checkpoints
                 where is_active = true and coalesce(status, '') <> 'complete' and completed_date is null
                 order by influencer_campaign_id, due_date asc nulls last, sequence_order asc, created_at asc
+            ), checkpoint_agg as (
+                select influencer_campaign_id,
+                       count(*) filter (where is_active = true and coalesce(status, '') <> 'complete' and completed_date is null) as open_checkpoint_count
+                from campaign_ops_influencer_recap_checkpoints group by influencer_campaign_id
             ), req_agg as (
                 select influencer_campaign_id,
                        count(*) filter (where is_active = true and required = true and coalesce(status, 'not_started') not in ('complete','not_required','cancelled')) as open_requirement_count,
@@ -3749,6 +3755,7 @@ class CampaignOpsRepository:
                    coalesce(ca.paid_live_incomplete_count, 0) as paid_live_incomplete_count,
                    coalesce(ea.open_exception_count, 0) as open_exception_count,
                    coalesce(req.open_requirement_count, 0) as open_requirement_count,
+                   coalesce(cha.open_checkpoint_count, 0) as open_checkpoint_count,
                    req.recap_deck_status, coalesce(la.launch_item_count, 0) as launch_item_count,
                    nc.checkpoint_title as next_checkpoint, nc.due_date as next_checkpoint_due_date,
                    ra.track_sheet_url, ra.influencer_brief_url, ra.click2cart_link_url, ra.bitly_link_url,
@@ -3756,7 +3763,11 @@ class CampaignOpsRepository:
                    ra.final_performance_data_url, ra.sales_lift_analysis_url,
                    case
                      when coalesce(ea.open_exception_count, 0) > 0 then 'Needs Attention'
-                     when coalesce(req.open_requirement_count, 0) > 0 or coalesce(ca.paid_live_incomplete_count, 0) > 0 then 'Not Ready'
+                     when coalesce(cha.open_checkpoint_count, 0) > 0
+                       or coalesce(req.open_requirement_count, 0) > 0
+                       or coalesce(ca.paid_live_incomplete_count, 0) > 0
+                       or coalesce(ca.missing_final_links_count, 0) > 0
+                       or coalesce(ca.missing_final_impressions_count, 0) > 0 then 'Not Ready'
                      when ic.influencer_stage = 'complete' or rr.recap_status = 'complete' then 'Complete'
                      else 'Ready to Close'
                    end as ready_to_close_state
@@ -3766,6 +3777,7 @@ class CampaignOpsRepository:
             left join campaign_ops_users u on u.id = ic.manager_user_id
             left join campaign_ops_influencer_recap_records rr on rr.influencer_campaign_id = ic.id
             left join req_agg req on req.influencer_campaign_id = ic.id
+            left join checkpoint_agg cha on cha.influencer_campaign_id = ic.id
             left join launch_agg la on la.influencer_campaign_id = ic.id
             left join creator_agg ca on ca.influencer_campaign_id = ic.id
             left join exception_agg ea on ea.influencer_campaign_id = ic.id
@@ -3822,6 +3834,25 @@ class CampaignOpsRepository:
     def list_influencer_recap_launch_items(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerRecapLaunchItemRecord]:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_influencer_recap_launch_items where influencer_campaign_id = %s {clause} order by sort_order asc, group_name asc nulls last, product_name asc", (influencer_campaign_id,), InfluencerRecapLaunchItemRecord)
+
+    def list_influencer_recap_launch_items_for_campaigns(self, influencer_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[InfluencerRecapLaunchItemRecord]]:
+        if not influencer_campaign_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(influencer_campaign_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_influencer_recap_launch_items
+            where influencer_campaign_id in ({placeholders}) {clause}
+            order by influencer_campaign_id asc, sort_order asc, group_name asc nulls last, product_name asc
+            """,
+            tuple(influencer_campaign_ids),
+            InfluencerRecapLaunchItemRecord,
+        )
+        grouped = {campaign_id: [] for campaign_id in influencer_campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.influencer_campaign_id, []).append(row)
+        return grouped
 
     def update_influencer_recap_launch_item(self, launch_item_id: str, **kwargs: Any) -> InfluencerRecapLaunchItemRecord:
         fields = ["group_name", "product_name", "retailer_name", "online_launch_date", "in_store_launch_date", "launch_status", "product_url", "retailer_url", "notes", "sort_order"]

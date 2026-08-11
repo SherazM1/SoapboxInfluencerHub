@@ -1452,6 +1452,8 @@ class InfluencerRecapPortfolioRow:
     recap_status: str | None
     latest_update: str | None
     waiting_on: str | None
+    is_on_hold: bool
+    hold_reason: str | None
     all_creators_live: bool
     creator_closeout_status: str | None
     eop_survey_status: str | None
@@ -1462,7 +1464,9 @@ class InfluencerRecapPortfolioRow:
     client_recap_date: date | None
     invoice_status: str | None
     financial_close_status: str | None
+    invoice_date: date | None
     open_requirement_count: int
+    open_checkpoint_count: int
     launch_item_count: int
     open_exception_count: int
     total_creator_count: int
