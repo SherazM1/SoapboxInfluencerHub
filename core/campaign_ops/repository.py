@@ -1714,6 +1714,25 @@ class CampaignOpsRepository:
             Resource,
         )
 
+    def list_resources_for_programs(self, program_ids: list[str], include_inactive: bool = False) -> dict[str, list[Resource]]:
+        if not program_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(program_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_resources
+            where program_id in ({placeholders}) {clause}
+            order by program_id asc, created_at asc
+            """,
+            tuple(program_ids),
+            Resource,
+        )
+        grouped = {program_id: [] for program_id in program_ids}
+        for row in rows:
+            grouped.setdefault(row.program_id, []).append(row)
+        return grouped
+
     def list_dashboard_resource_rows(
         self,
         include_inactive: bool = False,
@@ -3314,6 +3333,21 @@ class CampaignOpsRepository:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_influencer_planning_steps where influencer_campaign_id = %s {clause} order by sequence_order asc, due_date asc nulls last, created_at asc", (influencer_campaign_id,), InfluencerPlanningStepRecord)
 
+    def list_influencer_planning_steps_for_campaigns(self, influencer_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[InfluencerPlanningStepRecord]]:
+        if not influencer_campaign_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(influencer_campaign_ids))
+        rows = self._fetch_all(
+            f"select * from campaign_ops_influencer_planning_steps where influencer_campaign_id in ({placeholders}) {clause} order by influencer_campaign_id asc, sequence_order asc, due_date asc nulls last, created_at asc",
+            tuple(influencer_campaign_ids),
+            InfluencerPlanningStepRecord,
+        )
+        grouped = {campaign_id: [] for campaign_id in influencer_campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.influencer_campaign_id, []).append(row)
+        return grouped
+
     def update_influencer_planning_step(self, step_id: str, **kwargs: Any) -> InfluencerPlanningStepRecord:
         fields = ["step_type", "step_title", "step_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes"]
         return self._update_content_child("campaign_ops_influencer_planning_steps", InfluencerPlanningStepRecord, step_id, fields, tuple(kwargs.get(field) for field in fields))
@@ -3483,6 +3517,21 @@ class CampaignOpsRepository:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_influencer_live_checkpoints where influencer_campaign_id = %s {clause} order by sequence_order asc, due_date asc nulls last, created_at asc", (influencer_campaign_id,), InfluencerLiveCheckpointRecord)
 
+    def list_influencer_live_checkpoints_for_campaigns(self, influencer_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[InfluencerLiveCheckpointRecord]]:
+        if not influencer_campaign_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(influencer_campaign_ids))
+        rows = self._fetch_all(
+            f"select * from campaign_ops_influencer_live_checkpoints where influencer_campaign_id in ({placeholders}) {clause} order by influencer_campaign_id asc, sequence_order asc, due_date asc nulls last, created_at asc",
+            tuple(influencer_campaign_ids),
+            InfluencerLiveCheckpointRecord,
+        )
+        grouped = {campaign_id: [] for campaign_id in influencer_campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.influencer_campaign_id, []).append(row)
+        return grouped
+
     def update_influencer_live_checkpoint(self, checkpoint_id: str, **kwargs: Any) -> InfluencerLiveCheckpointRecord:
         fields = ["checkpoint_type", "checkpoint_title", "checkpoint_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes"]
         return self._update_content_child("campaign_ops_influencer_live_checkpoints", InfluencerLiveCheckpointRecord, checkpoint_id, fields, tuple(kwargs.get(field) for field in fields))
@@ -3500,6 +3549,21 @@ class CampaignOpsRepository:
     def list_influencer_creator_waves(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerCreatorWaveRecord]:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_influencer_creator_waves where influencer_campaign_id = %s {clause} order by wave_number asc, created_at asc", (influencer_campaign_id,), InfluencerCreatorWaveRecord)
+
+    def list_influencer_creator_waves_for_campaigns(self, influencer_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[InfluencerCreatorWaveRecord]]:
+        if not influencer_campaign_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(influencer_campaign_ids))
+        rows = self._fetch_all(
+            f"select * from campaign_ops_influencer_creator_waves where influencer_campaign_id in ({placeholders}) {clause} order by influencer_campaign_id asc, wave_number asc, created_at asc",
+            tuple(influencer_campaign_ids),
+            InfluencerCreatorWaveRecord,
+        )
+        grouped = {campaign_id: [] for campaign_id in influencer_campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.influencer_campaign_id, []).append(row)
+        return grouped
 
     def update_influencer_creator_wave(self, wave_id: str, **kwargs: Any) -> InfluencerCreatorWaveRecord:
         fields = ["wave_number", "wave_name", "planned_start_date", "planned_end_date", "actual_start_date", "actual_end_date", "planned_creator_count", "live_creator_count", "completed_creator_count", "status", "waiting_on", "notes"]

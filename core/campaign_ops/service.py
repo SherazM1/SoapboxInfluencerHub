@@ -3713,6 +3713,19 @@ class CampaignOpsService:
             wrap_readiness=self.influencer_live_wrap_readiness(campaign, self.list_influencer_live_checkpoints(actor, campaign_id), self.list_influencer_creator_waves(actor, campaign_id), self.list_influencer_live_creators(actor, campaign_id), self.list_influencer_live_exceptions(actor, campaign_id)),
         )
 
+    def get_influencer_live_manager_board_data(self, actor: CampaignOpsUser | None, campaigns: list[InfluencerLivePortfolioRow]) -> dict[str, dict[str, list[Any]]]:
+        repository = self.repository or CampaignOpsRepository()
+        campaign_ids = [campaign.id for campaign in campaigns]
+        program_ids = list(dict.fromkeys(campaign.program_id for campaign in campaigns))
+        if not campaign_ids:
+            return {"planning_steps": {}, "checkpoints": {}, "waves": {}, "resources": {}}
+        return {
+            "planning_steps": repository.list_influencer_planning_steps_for_campaigns(campaign_ids),
+            "checkpoints": repository.list_influencer_live_checkpoints_for_campaigns(campaign_ids),
+            "waves": repository.list_influencer_creator_waves_for_campaigns(campaign_ids),
+            "resources": repository.list_resources_for_programs(program_ids),
+        }
+
     def _live_campaign_context(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCampaignRecord:
         campaign = self._influencer_child_context(repository, actor, campaign_id)
         if campaign.influencer_stage != INFLUENCER_STAGE_LIVE:

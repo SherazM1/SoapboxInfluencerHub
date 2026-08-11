@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from html import escape
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -7,6 +8,14 @@ from urllib.parse import urlsplit, urlunsplit
 import streamlit as st
 
 from app.campaign_ops.formatting import format_date, format_datetime, safe_text, title_label
+from app.campaign_ops.influencer.live_baseline import (
+    compose_live_operational_sequence,
+    live_quick_links,
+    next_go_live_text,
+    select_live_campaign_for_open,
+    smart_live_sequence_preview,
+)
+from app.campaign_ops.influencer.planning_baseline import compact_date
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
 from app.campaign_ops.state import set_selected_program
@@ -67,20 +76,52 @@ SORT_OPTIONS = {
 
 
 def render_live(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
+    render_live_css()
     selected = st.session_state.get("campaign_ops_selected_influencer_live_campaign_id")
     if selected:
         render_live_workspace(actor, service, users, str(selected))
         return
+    st.markdown("### Influencer Live")
     view = st.radio("Live view", ["All Live", "T - Live", "L - Live"], horizontal=True, key="campaign_ops_influencer_live_view")
     manager_id = None
     if view.startswith("T"):
         manager_id = next((u.id for u in users if u.display_name == "T"), None)
     if view.startswith("L"):
         manager_id = next((u.id for u in users if u.display_name == "L"), None)
-    render_live_portfolio(actor, service, manager_id)
+    render_live_portfolio(actor, service, manager_id, current_view=view)
 
 
-def render_live_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manager_user_id: str | None) -> None:
+def render_live_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .campaign-ops-live-block { border:1px solid #b7c7c7; margin:.55rem 0 .9rem 0; background:#fff; }
+        .campaign-ops-live-header { background:#2fa6a3; color:#082525; padding:.42rem .55rem; border-bottom:1px solid #268f8c; }
+        .campaign-ops-live-header-main { display:flex; justify-content:space-between; gap:.75rem; align-items:flex-start; font-weight:800; line-height:1.2; }
+        .campaign-ops-live-meta { margin-top:.16rem; font-size:.82rem; font-weight:700; color:#123b42; }
+        .campaign-ops-live-hold { background:#b00020; color:#fff; font-weight:800; padding:.12rem .42rem; border-radius:2px; white-space:nowrap; }
+        .campaign-ops-live-hold-reason { margin-top:.2rem; color:#601015; font-weight:700; font-size:.82rem; }
+        .campaign-ops-live-links { border-bottom:1px solid #d7e0e0; padding:.32rem .5rem; font-size:.82rem; }
+        .campaign-ops-live-sequence { width:100%; border-collapse:collapse; font-size:.84rem; }
+        .campaign-ops-live-sequence th { background:#06314a; color:white; text-align:left; padding:.28rem .45rem; font-size:.78rem; }
+        .campaign-ops-live-sequence td { border-top:1px solid #dbe4e4; padding:.26rem .45rem; vertical-align:top; }
+        .campaign-ops-live-date { width:4.2rem; white-space:nowrap; color:#223b44; font-weight:700; }
+        .campaign-ops-live-status { width:7rem; color:#38545c; }
+        .campaign-ops-live-source { width:6rem; color:#526970; font-size:.76rem; }
+        .campaign-ops-live-status-grid { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); border-top:1px solid #ccdada; }
+        .campaign-ops-live-status-item { padding:.35rem .5rem; border-right:1px solid #e0e8e8; min-width:0; }
+        .campaign-ops-live-status-label { color:#526970; font-size:.72rem; font-weight:800; text-transform:uppercase; }
+        .campaign-ops-live-status-value { color:#102a32; font-size:.84rem; line-height:1.25; overflow-wrap:anywhere; }
+        .campaign-ops-live-empty { border-top:1px solid #dbe4e4; padding:.4rem .55rem; color:#62747a; font-size:.86rem; }
+        @media (max-width: 900px) { .campaign-ops-live-status-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_live_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manager_user_id: str | None, *, current_view: str = "All Live") -> None:
+    st.caption(f"Current view: {current_view}")
     cols = st.columns(4)
     include_inactive = cols[0].checkbox("Show inactive", key="campaign_ops_influencer_live_show_inactive")
     if cols[1].button("Refresh", key="campaign_ops_influencer_live_refresh"):
@@ -93,12 +134,27 @@ def render_live_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, m
     except CampaignOpsError as exc:
         st.error(f"Unable to load Influencer Live: {exc}")
         return
-    filters = render_filters(campaigns)
+    filters = render_filters(campaigns, show_manager_filter=manager_user_id is None)
     filtered = sort_rows(filter_rows(campaigns, filters), str(filters.get("sort_by") or "updated_at"))
-    st.markdown("<div class='campaign-ops-influencer-title'>Influencer Live Portfolio</div>", unsafe_allow_html=True)
-    st.dataframe(live_rows(filtered), column_order=LIVE_COLUMNS, hide_index=True, use_container_width=True)
+    if not filtered:
+        st.info("No live influencer campaigns match these filters.")
+        return
+    board_data = service.get_influencer_live_manager_board_data(actor, filtered)
+    planning_steps = board_data.get("planning_steps", {})
+    checkpoints = board_data.get("checkpoints", {})
+    waves = board_data.get("waves", {})
+    resources_by_program = board_data.get("resources", {})
     for campaign in filtered:
-        render_live_block(campaign)
+        render_live_block(
+            campaign,
+            planning_steps.get(campaign.id, []),
+            checkpoints.get(campaign.id, []),
+            waves.get(campaign.id, []),
+            resources_by_program.get(campaign.program_id, []),
+            compact=current_view == "All Live",
+        )
+    with st.expander("Live Portfolio Summary", expanded=False):
+        st.dataframe(live_rows(filtered), column_order=LIVE_COLUMNS, hide_index=True, use_container_width=True)
     if filtered:
         labels = {f"{c.campaign_title} | {safe_text(c.client_name)}": c.id for c in filtered}
         cols = st.columns(2)
@@ -108,7 +164,7 @@ def render_live_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, m
             st.rerun()
 
 
-def render_filters(campaigns: list[Any]) -> dict[str, object]:
+def render_filters(campaigns: list[Any], *, show_manager_filter: bool = True) -> dict[str, object]:
     current = st.session_state.get("campaign_ops_influencer_live_filters")
     if not isinstance(current, dict):
         current = {}
@@ -119,8 +175,11 @@ def render_filters(campaigns: list[Any]) -> dict[str, object]:
         current["client_name"] = clients[cols[1].selectbox("Client", list(clients), key="campaign_ops_influencer_live_client")]
         programs = {"Any": "", **{c.program_name: c.program_id for c in campaigns}}
         current["program_id"] = programs[cols[2].selectbox("Program", list(programs), key="campaign_ops_influencer_live_program")]
-        managers = {"Any": "", **{safe_text(c.manager_display_name): c.manager_user_id for c in campaigns if c.manager_user_id}}
-        current["manager_user_id"] = managers[cols[3].selectbox("Manager", list(managers), key="campaign_ops_influencer_live_manager")]
+        if show_manager_filter:
+            managers = {"Any": "", **{safe_text(c.manager_display_name): c.manager_user_id for c in campaigns if c.manager_user_id}}
+            current["manager_user_id"] = managers[cols[3].selectbox("Manager", list(managers), key="campaign_ops_influencer_live_manager")]
+        else:
+            current.pop("manager_user_id", None)
         current["sort_by"] = SORT_OPTIONS[cols[4].selectbox("Sort", list(SORT_OPTIONS), key="campaign_ops_influencer_live_sort")]
         cols = st.columns(5)
         current["live_status"] = cols[0].selectbox("Live status", ["Any", *LIVE_STATUSES], key="campaign_ops_influencer_live_status", format_func=title_label)
@@ -136,7 +195,7 @@ def filter_rows(campaigns: list[Any], filters: dict[str, object]) -> list[Any]:
     rows = campaigns
     search = str(filters.get("search") or "").lower()
     if search:
-        rows = [c for c in rows if search in " ".join([c.campaign_title, c.program_name, safe_text(c.client_name), safe_text(c.latest_update)]).lower()]
+        rows = [c for c in rows if search in " ".join([c.campaign_title, c.program_name, safe_text(c.client_name), safe_text(c.latest_update), safe_text(c.waiting_on)]).lower()]
     for field in ("client_name", "program_id", "manager_user_id", "live_status"):
         value = filters.get(field)
         if value and value != "Any":
@@ -198,19 +257,68 @@ def live_rows(campaigns: list[Any]) -> list[dict[str, str]]:
     ]
 
 
-def render_live_block(campaign: Any) -> None:
-    urgent = " background:#fff4b8;" if campaign.highlighted_exception_count else ""
-    hold = f" <span class='campaign-ops-influencer-hold'>ON HOLD: {escape(safe_text(campaign.hold_reason))}</span>" if campaign.is_on_hold else ""
-    html = f"<div class='campaign-ops-influencer-block' style='{urgent}'><div class='campaign-ops-influencer-bar'>{escape(campaign.campaign_title)}{hold}</div>"
-    rows = [
-        f"Status: {escape(title_label(campaign.live_status))} | Waiting on: {escape(safe_text(campaign.waiting_on))} | Exceptions: {campaign.open_exception_count}",
-        f"Creators live: {campaign.live_creator_count} / planned {safe_text(campaign.planned_creator_count)} | Waves: {campaign.active_wave_count} | Next go-live: {format_date(campaign.next_go_live_date)}",
-        f"Paid live end: {format_date(campaign.paid_live_end_date)} | Wrap: {format_date(campaign.wrap_date)} | Invoice: {escape(safe_text(campaign.invoice_status))}",
-        f"Links: Track Sheet {'Available' if campaign.track_sheet_url else 'Missing'} | Live Doc {'Available' if campaign.client_facing_live_doc_url else 'Missing'} | Daily Impressions {'Available' if campaign.daily_impressions_url else 'Missing'}",
+def render_live_block(campaign: Any, planning_steps: list[Any], checkpoints: list[Any], waves: list[Any], resources: list[Any], *, compact: bool = False) -> None:
+    expanded_key = f"campaign_ops_influencer_live_sequence_full_{campaign.id}"
+    expanded = bool(st.session_state.get(expanded_key))
+    sequence = compose_live_operational_sequence(planning_steps, checkpoints, waves)
+    visible_sequence = sequence if expanded else smart_live_sequence_preview(sequence, today=date.today(), upcoming_limit=3 if compact else 4, compact=compact)
+    urgent = " background:#fff9d8;" if campaign.highlighted_exception_count else ""
+    hold_badge = "<span class='campaign-ops-live-hold'>ON HOLD</span>" if campaign.is_on_hold else "<span>ACTIVE</span>"
+    hold_reason = f"<div class='campaign-ops-live-hold-reason'>Hold reason: {escape(safe_text(campaign.hold_reason))}</div>" if campaign.is_on_hold and campaign.hold_reason else ""
+    links = live_quick_links(campaign, resources)
+    all_live = bool(campaign.planned_creator_count) and campaign.live_creator_count >= int(campaign.planned_creator_count or 0)
+    html = f"""
+    <div class='campaign-ops-live-block' style='{urgent}'>
+      <div class='campaign-ops-live-header'>
+        <div class='campaign-ops-live-header-main'>
+          <div>{escape(campaign.campaign_title)}</div>
+          <div>{hold_badge}</div>
+        </div>
+        <div class='campaign-ops-live-meta'>{escape(safe_text(campaign.manager_display_name))} &middot; {escape(title_label(campaign.live_status))}</div>
+        {hold_reason}
+      </div>
+    """
+    if links:
+        html += "<div class='campaign-ops-live-links'>" + " &nbsp; ".join(f"<a href='{escape(sanitize_link(link.url), quote=True)}' target='_blank'>{escape(link.label)}</a>" for link in links) + "</div>"
+    if visible_sequence:
+        html += "<table class='campaign-ops-live-sequence'><thead><tr><th>Date</th><th>Operational Action</th><th>Status</th><th>Source</th></tr></thead><tbody>"
+        for row in visible_sequence:
+            waiting = f"<div class='campaign-ops-live-source'>Waiting: {escape(safe_text(row.waiting_on))}</div>" if row.waiting_on else ""
+            html += (
+                "<tr>"
+                f"<td class='campaign-ops-live-date'>{escape(compact_date(row.display_date, reference_year=date.today().year))}</td>"
+                f"<td>{escape(row.action)}{waiting}</td>"
+                f"<td class='campaign-ops-live-status'>{escape(row.status)}</td>"
+                f"<td class='campaign-ops-live-source'>{escape(row.source)}</td>"
+                "</tr>"
+            )
+        html += "</tbody></table>"
+    else:
+        html += "<div class='campaign-ops-live-empty'>No operational sequence items yet.</div>"
+    status_items = [
+        ("Latest Update", safe_text(campaign.latest_update)),
+        ("Waiting On", safe_text(campaign.waiting_on)),
+        ("Creators Live", f"{campaign.live_creator_count} / {safe_text(campaign.planned_creator_count)}"),
+        ("Waves", str(campaign.active_wave_count)),
+        ("Next Go-Live", next_go_live_text(campaign.next_go_live_date, all_live=all_live)),
+        ("Exceptions", str(campaign.open_exception_count)),
+        ("Paid Live End", compact_date(campaign.paid_live_end_date, reference_year=date.today().year)),
+        ("Launch", compact_date(campaign.launch_date, reference_year=date.today().year)),
+        ("Wrap", compact_date(campaign.wrap_date, reference_year=date.today().year)),
+        ("Invoice", f"{compact_date(campaign.invoice_date, reference_year=date.today().year)} {safe_text(campaign.invoice_status)}".strip()),
     ]
-    html += "".join(f"<div class='campaign-ops-influencer-row'>{row}</div>" for row in rows)
-    html += "</div>"
+    html += "<div class='campaign-ops-live-status-grid'>"
+    html += "".join(f"<div class='campaign-ops-live-status-item'><div class='campaign-ops-live-status-label'>{escape(label)}</div><div class='campaign-ops-live-status-value'>{escape(value)}</div></div>" for label, value in status_items if value or label in {"Creators Live", "Waves", "Next Go-Live", "Exceptions", "Paid Live End", "Launch", "Wrap"})
+    html += "</div></div>"
     st.markdown(html, unsafe_allow_html=True)
+    cols = st.columns([1, 1, 5])
+    label = "Collapse sequence" if expanded else "Show full sequence"
+    if sequence and cols[0].button(label, key=f"campaign_ops_influencer_live_sequence_toggle_{campaign.id}"):
+        st.session_state[expanded_key] = not expanded
+        st.rerun()
+    if cols[1].button("Open Live Campaign", key=f"campaign_ops_influencer_live_open_{campaign.id}"):
+        select_live_campaign_for_open(st.session_state, campaign.id)
+        st.rerun()
 
 
 def render_live_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], campaign_id: str) -> None:
@@ -439,13 +547,10 @@ def render_timeline(actor: CampaignOpsUser, service: CampaignOpsService, campaig
 
 
 def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    quick = [("Track Sheet", campaign.track_sheet_url), ("Influencer Brief", campaign.influencer_brief_url), ("EOP Survey", campaign.eop_survey_url), ("Invoice", campaign.invoice_url), ("Click2Cart Link", campaign.click2cart_link_url), ("Client-Facing Live Doc", campaign.client_facing_live_doc_url), ("Daily Impressions", campaign.daily_impressions_url)]
+    quick = live_quick_links(campaign)
     cols = st.columns(4)
-    for index, (label, url) in enumerate(quick):
-        if url:
-            cols[index % 4].link_button(label, sanitize_link(url))
-        else:
-            cols[index % 4].metric(label, "Missing")
+    for index, link in enumerate(quick):
+        cols[index % 4].link_button(link.label, sanitize_link(link.url))
     summary = service.get_program_workspace_summary(actor, campaign.program_id)
     resources = [r for r in service.list_program_resources(actor, campaign.program_id, include_inactive=True) if r.resource_type in set(INFLUENCER_RESOURCE_TYPES) | set(LIVE_RESOURCE_TYPES) or r.workstream_id == campaign.workstream_id]
     st.dataframe(resource_table_rows(resources), hide_index=True, use_container_width=True)

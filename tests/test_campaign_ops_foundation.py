@@ -589,6 +589,12 @@ class FakePrompt4ARepository:
             ))
         return rows
 
+    def list_resources_for_programs(self, program_ids: list[str], include_inactive: bool = False) -> dict[str, list[Resource]]:
+        return {
+            program_id: [resource for resource in self.resources if resource.program_id == program_id and (include_inactive or resource.is_active)]
+            for program_id in program_ids
+        }
+
     def append_note(self, program_id: str, note_text: str, author_user_id: str | None = None, **kwargs: object) -> ProgramNote:
         note = ProgramNote(
             id=f"88888888-8888-4888-8888-{len(self.notes) + 1:012d}",
@@ -1353,6 +1359,9 @@ class FakePrompt4ARepository:
     def list_influencer_planning_steps(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerPlanningStepRecord]:
         return sorted([item for item in self.influencer_planning_steps if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.sequence_order, item.due_date or date.max))
 
+    def list_influencer_planning_steps_for_campaigns(self, influencer_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[InfluencerPlanningStepRecord]]:
+        return {campaign_id: self.list_influencer_planning_steps(campaign_id, include_inactive=include_inactive) for campaign_id in influencer_campaign_ids}
+
     def update_influencer_planning_step(self, step_id: str, **kwargs: object) -> InfluencerPlanningStepRecord:
         step = next((item for item in self.influencer_planning_steps if item.id == step_id), None)
         if step is None:
@@ -1498,6 +1507,9 @@ class FakePrompt4ARepository:
     def list_influencer_live_checkpoints(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerLiveCheckpointRecord]:
         return sorted([item for item in self.influencer_live_checkpoints if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.sequence_order, item.due_date or date.max))
 
+    def list_influencer_live_checkpoints_for_campaigns(self, influencer_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[InfluencerLiveCheckpointRecord]]:
+        return {campaign_id: self.list_influencer_live_checkpoints(campaign_id, include_inactive=include_inactive) for campaign_id in influencer_campaign_ids}
+
     def update_influencer_live_checkpoint(self, checkpoint_id: str, **kwargs: object) -> InfluencerLiveCheckpointRecord:
         checkpoint = next((item for item in self.influencer_live_checkpoints if item.id == checkpoint_id), None)
         if checkpoint is None:
@@ -1518,7 +1530,10 @@ class FakePrompt4ARepository:
         return wave
 
     def list_influencer_creator_waves(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerCreatorWaveRecord]:
-        return [item for item in self.influencer_creator_waves if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)]
+        return sorted([item for item in self.influencer_creator_waves if item.influencer_campaign_id == influencer_campaign_id and (include_inactive or item.is_active)], key=lambda item: (item.wave_number, item.created_at or datetime.min))
+
+    def list_influencer_creator_waves_for_campaigns(self, influencer_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[InfluencerCreatorWaveRecord]]:
+        return {campaign_id: self.list_influencer_creator_waves(campaign_id, include_inactive=include_inactive) for campaign_id in influencer_campaign_ids}
 
     def update_influencer_creator_wave(self, wave_id: str, **kwargs: object) -> InfluencerCreatorWaveRecord:
         wave = next((item for item in self.influencer_creator_waves if item.id == wave_id), None)
@@ -4156,6 +4171,39 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("influencer_live_creator_created", event_types)
         self.assertIn("influencer_live_creator_impressions_updated", event_types)
         self.assertIn("influencer_live_exception_created", event_types)
+
+    def test_prompt29_influencer_live_manager_board_batch_data(self) -> None:
+        repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()
+        t_campaign = service.create_influencer_campaign(bailey, program_id=program_id, workstream_id=influencer.id, campaign_title="TEST - T Live Board", manager_user_id=t_user.id, target_creator_count=2)
+        l_campaign = service.create_influencer_campaign(bailey, program_id=program_id, workstream_id=influencer.id, campaign_title="TEST - L Live Board", manager_user_id=l_user.id, target_creator_count=1)
+        service.create_influencer_planning_step(bailey, t_campaign.id, "Planning board row", sequence_order=2, due_date=None)
+        service.create_influencer_planning_step(bailey, t_campaign.id, "Planning first row", sequence_order=1, due_date=date(2026, 7, 1))
+        service.transition_influencer_campaign_to_live(bailey, t_campaign.id)
+        service.transition_influencer_campaign_to_live(bailey, l_campaign.id)
+        service.create_influencer_live_checkpoint(bailey, t_campaign.id, "Checkpoint second", sequence_order=2, due_date=None)
+        service.create_influencer_live_checkpoint(bailey, t_campaign.id, "Checkpoint first", sequence_order=1, due_date=date(2026, 7, 2))
+        service.create_influencer_creator_wave(bailey, t_campaign.id, 2, wave_name="Second wave", planned_start_date=date(2026, 8, 2), planned_creator_count=1)
+        service.create_influencer_creator_wave(bailey, t_campaign.id, 1, wave_name="First wave", planned_start_date=date(2026, 8, 1), planned_creator_count=1)
+        creator = service.create_influencer_live_creator(bailey, t_campaign.id, "Creator", scheduled_live_date=date(2026, 8, 3), live_status="scheduled")
+        service.create_resource(bailey, program_id, title="Walmart", resource_type="Walmart Link", workstream_id=influencer.id, url="https://example.com/walmart")
+
+        t_rows = service.list_influencer_live_campaigns(bailey, manager_user_id=t_user.id)
+        l_rows = service.list_influencer_live_campaigns(bailey, manager_user_id=l_user.id)
+        all_rows = service.list_influencer_live_campaigns(bailey)
+        board = service.get_influencer_live_manager_board_data(bailey, t_rows)
+        detail = service.get_influencer_live_campaign_detail(bailey, t_campaign.id)
+
+        self.assertIn(t_campaign.id, [row.id for row in t_rows])
+        self.assertNotIn(l_campaign.id, [row.id for row in t_rows])
+        self.assertIn(l_campaign.id, [row.id for row in l_rows])
+        self.assertIn(t_campaign.id, [row.id for row in all_rows])
+        self.assertIn(l_campaign.id, [row.id for row in all_rows])
+        self.assertEqual(["Planning first row", "Planning board row"], [row.step_title for row in board["planning_steps"][t_campaign.id]])
+        self.assertEqual(["Checkpoint first", "Checkpoint second"], [row.checkpoint_title for row in board["checkpoints"][t_campaign.id]])
+        self.assertEqual(["First wave", "Second wave"], [row.wave_name for row in board["waves"][t_campaign.id]])
+        self.assertEqual("Walmart Link", board["resources"][program_id][-1].resource_type)
+        self.assertEqual(creator.scheduled_live_date, detail.next_go_live_date)
+        self.assertEqual(0, detail.open_exception_count)
 
     def _live_campaign_ready_for_recap(self) -> tuple[FakePrompt4ARepository, CampaignOpsService, CampaignOpsUser, CampaignOpsUser, CampaignOpsUser, str, Workstream, InfluencerCampaignRecord]:
         repository, service, bailey, t_user, l_user, program_id, influencer, _retail = self._prompt4c_fixture()
