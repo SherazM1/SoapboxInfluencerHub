@@ -2520,6 +2520,13 @@ class CampaignOpsService:
                 visible.append(row)
         return visible
 
+    def get_insights_baseline_board_data(self, actor: CampaignOpsUser | None, projects: list[InsightsPortfolioRow]) -> dict[str, Any]:
+        repository = self.repository or CampaignOpsRepository()
+        visible_ids = [project.id for project in projects]
+        return {
+            "milestones": repository.list_insights_milestone_rows_for_projects(visible_ids),
+        }
+
     def get_insights_project_detail(
         self,
         actor: CampaignOpsUser | None,

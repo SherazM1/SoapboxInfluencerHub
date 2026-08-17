@@ -7,6 +7,13 @@ from urllib.parse import urlsplit, urlunsplit
 import streamlit as st
 
 from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, WORKFLOW_LABELS, format_date, format_datetime, safe_text
+from app.campaign_ops.insights.baseline import (
+    current_status_text,
+    deliverable_display_text,
+    insights_quick_links,
+    next_insights_deliverable,
+    normalize_insights_deliverables,
+)
 from app.campaign_ops.insights.formatting import (
     PORTFOLIO_COLUMNS,
     format_currency,
@@ -73,6 +80,17 @@ def render_insights_css() -> None:
             border: 1px solid #e0c85a;
             padding: 0.3rem;
         }
+        .campaign-ops-insights-card { border:1px solid #c9d4d4; margin:.55rem 0 .9rem 0; background:#fff; }
+        .campaign-ops-insights-card-head { background:#32a6a6; color:#082525; padding:.42rem .6rem; font-weight:700; border-bottom:1px solid #62bcbc; }
+        .campaign-ops-insights-card-meta { color:#244348; font-size:.84rem; font-weight:600; margin-top:.1rem; }
+        .campaign-ops-insights-card-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.4rem; padding:.55rem; }
+        .campaign-ops-insights-card-cell { border:1px solid #dbe4e4; padding:.38rem .45rem; min-height:3.2rem; }
+        .campaign-ops-insights-card-label { color:#587174; font-size:.72rem; text-transform:uppercase; font-weight:700; }
+        .campaign-ops-insights-card-value { color:#102f35; font-size:.9rem; margin-top:.12rem; overflow-wrap:anywhere; }
+        .campaign-ops-insights-baseline { border:1px solid #c9d4d4; margin:.65rem 0 1rem 0; background:#fff; }
+        .campaign-ops-insights-baseline-section { border-top:1px solid #dbe4e4; padding:.55rem .65rem; }
+        .campaign-ops-insights-baseline-label { color:#587174; font-size:.72rem; text-transform:uppercase; font-weight:700; margin-bottom:.2rem; }
+        @media (max-width: 900px) { .campaign-ops-insights-card-grid { grid-template-columns:1fr; } }
         </style>
         """,
         unsafe_allow_html=True,
@@ -97,15 +115,54 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService) -> Non
         return
     filters = render_portfolio_filters(projects)
     filtered = sort_projects(filter_projects(projects, filters), str(filters.get("sort_by") or "updated_at"))
-    render_workbook_table("Insights Portfolio", portfolio_rows(filtered), PORTFOLIO_COLUMNS)
+    board_data = service.get_insights_baseline_board_data(actor, filtered) if filtered else {"milestones": {}}
+    st.markdown("<div class='campaign-ops-insights-title'>All Insights Projects</div>", unsafe_allow_html=True)
     if not filtered:
+        st.info("No insights projects match these filters.")
         return
+    for project in filtered:
+        render_project_scan_card(project, board_data)
+    with st.expander("Insights Portfolio Summary", expanded=False):
+        render_workbook_table("Insights Portfolio", portfolio_rows(filtered), PORTFOLIO_COLUMNS)
     labels = {f"{project.project_title} | {safe_text(project.client_name)}": project.id for project in filtered}
     cols = st.columns(2)
     selected = cols[0].selectbox("Open Insights project", list(labels), key="campaign_ops_insights_project_select")
     if cols[1].button("Open Project", key="campaign_ops_insights_project_open"):
         st.session_state["campaign_ops_selected_insights_project_id"] = labels[selected]
         st.rerun()
+
+
+def render_project_scan_card(project: InsightsPortfolioRow, board_data: dict[str, object]) -> None:
+    milestones = board_data.get("milestones", {}).get(project.id, []) if isinstance(board_data.get("milestones"), dict) else []
+    next_deliverable = next_insights_deliverable(milestones, project)
+    status = insights_status_label(project.insights_status)
+    active_state = "Active" if project.is_active else "Inactive"
+    risk = RISK_LABELS.get(project.program_risk, project.program_risk) if project.program_risk else "None"
+    meta = " | ".join(part for part in [safe_text(project.owner_display_name), status, active_state, safe_text(project.client_name)] if part and part != "-")
+    html = [
+        "<div class='campaign-ops-insights-card'>",
+        f"<div class='campaign-ops-insights-card-head'>{escape(project.project_title)}<div class='campaign-ops-insights-card-meta'>{escape(meta)}</div></div>",
+        "<div class='campaign-ops-insights-card-grid'>",
+        _card_cell("Current Status", escape(current_status_text(project))),
+        _card_cell("Next Deliverable", escape(deliverable_display_text(next_deliverable))),
+        _card_cell("Linked Sheets", escape(" | ".join(link.label for link in insights_quick_links(project))) if insights_quick_links(project) else "-"),
+        _card_cell("Risk", escape(risk)),
+        "</div>",
+        "</div>",
+    ]
+    st.markdown("".join(html), unsafe_allow_html=True)
+    links = insights_quick_links(project)
+    if links:
+        cols = st.columns(min(len(links), 3))
+        for index, link in enumerate(links):
+            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_insights_scan_link_{project.id}_{index}")
+    if st.button("Open Insights Project", key=f"campaign_ops_insights_scan_open_{project.id}"):
+        st.session_state["campaign_ops_selected_insights_project_id"] = project.id
+        st.rerun()
+
+
+def _card_cell(label: str, value: str) -> str:
+    return f"<div class='campaign-ops-insights-card-cell'><div class='campaign-ops-insights-card-label'>{escape(label)}</div><div class='campaign-ops-insights-card-value'>{value}</div></div>"
 
 
 def render_portfolio_filters(projects: list[InsightsPortfolioRow]) -> dict[str, object]:
@@ -231,6 +288,7 @@ def render_insights_workspace(actor: CampaignOpsUser, service: CampaignOpsServic
         f"Risk: {RISK_LABELS.get(project.program_risk, project.program_risk)} | Updated: {format_datetime(project.updated_at)} | "
         f"{'Active' if project.is_active else 'Inactive'}"
     )
+    render_insights_baseline_tracker(actor, service, project)
     tabs = st.tabs(["Overview", "Timeline", "Research Objectives", "Resources", "Activity"])
     with tabs[0]:
         render_overview(actor, service, users, project)
@@ -242,6 +300,54 @@ def render_insights_workspace(actor: CampaignOpsUser, service: CampaignOpsServic
         render_resources(actor, service, project)
     with tabs[4]:
         render_activity(actor, service, project)
+
+
+def render_insights_baseline_tracker(actor: CampaignOpsUser, service: CampaignOpsService, project: InsightsPortfolioRow) -> None:
+    milestones = [
+        milestone
+        for milestone in service.list_program_milestones(actor, project.program_id, include_inactive=False)
+        if milestone.milestone_type == "Insights" or milestone.workstream_id == project.workstream_id
+    ]
+    deliverables = normalize_insights_deliverables(milestones, project)
+    next_deliverable = deliverables[0] if deliverables else None
+    links = insights_quick_links(project)
+    header = " | ".join(part for part in [
+        safe_text(project.client_name),
+        f"Job {project.job_number}" if project.job_number else "",
+        f"Owner {safe_text(project.owner_display_name)}",
+        insights_status_label(project.insights_status),
+        "Active" if project.is_active else "Inactive",
+        f"Risk {RISK_LABELS.get(project.program_risk, project.program_risk)}" if project.program_risk else "",
+    ] if part and part != "-")
+    status_text = current_status_text(project)
+
+    st.markdown("<div class='campaign-ops-insights-baseline'><div class='campaign-ops-insights-card-head'>Insights Baseline</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Project Header</div>{escape(project.project_title)}<br><span class='campaign-ops-insights-card-meta'>{escape(header)}</span></div>", unsafe_allow_html=True)
+    if links:
+        st.markdown("<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Linked Sheets</div></div>", unsafe_allow_html=True)
+        cols = st.columns(min(len(links), 3))
+        for index, link in enumerate(links):
+            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_insights_baseline_link_{project.id}_{index}")
+    st.markdown(f"<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Current Status</div>{escape(status_text)}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Next / Current Deliverable</div>{escape(deliverable_display_text(next_deliverable))}</div>", unsafe_allow_html=True)
+    if project.latest_update and project.latest_update.strip() != status_text:
+        st.markdown(f"<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Latest Update</div>{escape(project.latest_update)}</div>", unsafe_allow_html=True)
+    if deliverables:
+        st.markdown("<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Open Insights Milestones</div></div>", unsafe_allow_html=True)
+        st.dataframe(
+            [
+                {
+                    "Date": format_date(row.display_date),
+                    "Milestone": row.title,
+                    "Status": row.status,
+                }
+                for row in deliverables[:5]
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+    st.caption("Existing Overview, Timeline, Research Objectives, Resources, and Activity tabs remain below.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], project: InsightsPortfolioRow) -> None:

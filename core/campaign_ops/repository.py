@@ -1636,6 +1636,35 @@ class CampaignOpsRepository:
             grouped.setdefault(str(normalized["content_program_id"]), []).append(self._milestone_list_row_from_db(row))
         return grouped
 
+    def list_insights_milestone_rows_for_projects(self, insights_project_ids: list[str], include_inactive: bool = False) -> dict[str, list[MilestoneListRow]]:
+        if not insights_project_ids:
+            return {}
+        clauses = [f"ip.id in ({', '.join(['%s'] * len(insights_project_ids))})"]
+        params: list[Any] = list(insights_project_ids)
+        if not include_inactive:
+            clauses.append("m.is_active = true")
+        query = f"""
+            select
+                ip.id as insights_project_id,
+                m.*,
+                w.workstream_type,
+                u.display_name as owner_user_name
+            from campaign_ops_insights_projects ip
+            join campaign_ops_milestones m on m.program_id = ip.program_id
+            left join campaign_ops_workstreams w on w.id = m.workstream_id
+            left join campaign_ops_users u on u.id = m.owner_user_id
+            where {' and '.join(clauses)}
+              and (m.milestone_type = 'Insights' or m.workstream_id = ip.workstream_id)
+            order by ip.id asc,
+                     coalesce(m.target_date, m.start_date, m.end_date) asc nulls last,
+                     m.created_at asc
+        """
+        grouped = {project_id: [] for project_id in insights_project_ids}
+        for row in self._fetch_raw_all(query, tuple(params)):
+            normalized = normalize_row(row)
+            grouped.setdefault(str(normalized["insights_project_id"]), []).append(self._milestone_list_row_from_db(row))
+        return grouped
+
     def list_retail_media_milestone_rows_for_campaigns(self, retail_media_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[MilestoneListRow]]:
         if not retail_media_campaign_ids:
             return {}
