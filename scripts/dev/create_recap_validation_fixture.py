@@ -52,7 +52,7 @@ CREATOR_NAMES = [
 ]
 
 REQUIREMENT_FIXTURES = [
-    ("Recap Deck", "Recap Deck Finalization", "in_progress"),
+    ("Recap Deck", "Recap Deck Finalization", "requested"),
     ("Invoice", "Financial Close", "waiting"),
 ]
 

@@ -1607,6 +1607,35 @@ class CampaignOpsRepository:
             for row in self._fetch_raw_all(query, tuple(params))
         ]
 
+    def list_content_milestone_rows_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[MilestoneListRow]]:
+        if not content_program_ids:
+            return {}
+        clauses = [f"cp.id in ({', '.join(['%s'] * len(content_program_ids))})"]
+        params: list[Any] = list(content_program_ids)
+        if not include_inactive:
+            clauses.append("m.is_active = true")
+        query = f"""
+            select
+                cp.id as content_program_id,
+                m.*,
+                w.workstream_type,
+                u.display_name as owner_user_name
+            from campaign_ops_content_programs cp
+            join campaign_ops_milestones m on m.program_id = cp.program_id
+            left join campaign_ops_workstreams w on w.id = m.workstream_id
+            left join campaign_ops_users u on u.id = m.owner_user_id
+            where {' and '.join(clauses)}
+              and (m.workstream_id = cp.workstream_id or m.milestone_type = 'Content Management')
+            order by cp.id asc,
+                     coalesce(m.target_date, m.start_date, m.end_date) asc nulls last,
+                     m.created_at asc
+        """
+        grouped = {content_program_id: [] for content_program_id in content_program_ids}
+        for row in self._fetch_raw_all(query, tuple(params)):
+            normalized = normalize_row(row)
+            grouped.setdefault(str(normalized["content_program_id"]), []).append(self._milestone_list_row_from_db(row))
+        return grouped
+
     def list_dashboard_milestone_rows(
         self,
         include_inactive: bool = False,
@@ -3078,6 +3107,25 @@ class CampaignOpsRepository:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_content_sku_groups where content_program_id = %s {clause} order by sort_order asc, group_name asc", (content_program_id,), ContentSkuGroupRecord)
 
+    def list_content_sku_groups_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentSkuGroupRecord]]:
+        if not content_program_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(content_program_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_content_sku_groups
+            where content_program_id in ({placeholders}) {clause}
+            order by content_program_id asc, sort_order asc, group_name asc
+            """,
+            tuple(content_program_ids),
+            ContentSkuGroupRecord,
+        )
+        grouped = {content_program_id: [] for content_program_id in content_program_ids}
+        for row in rows:
+            grouped.setdefault(row.content_program_id, []).append(row)
+        return grouped
+
     def update_content_sku_group(self, group_id: str, **kwargs: Any) -> ContentSkuGroupRecord:
         fields = ["group_name", "brand_name", "expected_sku_count", "graphics_per_sku", "status", "latest_update", "waiting_on", "sort_order"]
         return self._update_content_child("campaign_ops_content_sku_groups", ContentSkuGroupRecord, group_id, fields, tuple(kwargs.get(f) for f in fields))
@@ -3117,6 +3165,25 @@ class CampaignOpsRepository:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_content_deliverables where content_program_id = %s {clause} order by due_date asc nulls last, created_at asc", (content_program_id,), ContentDeliverableRecord)
 
+    def list_content_deliverables_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentDeliverableRecord]]:
+        if not content_program_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(content_program_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_content_deliverables
+            where content_program_id in ({placeholders}) {clause}
+            order by content_program_id asc, due_date asc nulls last, created_at asc
+            """,
+            tuple(content_program_ids),
+            ContentDeliverableRecord,
+        )
+        grouped = {content_program_id: [] for content_program_id in content_program_ids}
+        for row in rows:
+            grouped.setdefault(row.content_program_id, []).append(row)
+        return grouped
+
     def update_content_deliverable(self, deliverable_id: str, **kwargs: Any) -> ContentDeliverableRecord:
         fields = ["sku_group_id", "sku_id", "deliverable_name", "deliverable_type", "status", "approval_status", "due_date", "delivered_date", "approved_date", "required_quantity", "completed_quantity", "waiting_on", "notes"]
         return self._update_content_child("campaign_ops_content_deliverables", ContentDeliverableRecord, deliverable_id, fields, tuple(kwargs.get(f) for f in fields))
@@ -3134,6 +3201,25 @@ class CampaignOpsRepository:
     def list_content_submissions(self, content_program_id: str, include_inactive: bool = False) -> list[ContentSubmissionRecord]:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_content_submissions where content_program_id = %s {clause} order by expected_live_date asc nulls last, created_at asc", (content_program_id,), ContentSubmissionRecord)
+
+    def list_content_submissions_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentSubmissionRecord]]:
+        if not content_program_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(content_program_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_content_submissions
+            where content_program_id in ({placeholders}) {clause}
+            order by content_program_id asc, expected_live_date asc nulls last, created_at asc
+            """,
+            tuple(content_program_ids),
+            ContentSubmissionRecord,
+        )
+        grouped = {content_program_id: [] for content_program_id in content_program_ids}
+        for row in rows:
+            grouped.setdefault(row.content_program_id, []).append(row)
+        return grouped
 
     def update_content_submission(self, submission_id: str, **kwargs: Any) -> ContentSubmissionRecord:
         fields = ["sku_group_id", "sku_id", "retailer_or_platform", "submission_type", "status", "submitted_date", "approved_date", "published_date", "expected_live_date", "live_url", "issue_text", "waiting_on"]
@@ -3153,6 +3239,25 @@ class CampaignOpsRepository:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_content_monitoring_updates where content_program_id = %s {clause} order by update_date desc, created_at desc", (content_program_id,), ContentMonitoringUpdateRecord)
 
+    def list_content_monitoring_updates_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentMonitoringUpdateRecord]]:
+        if not content_program_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(content_program_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_content_monitoring_updates
+            where content_program_id in ({placeholders}) {clause}
+            order by content_program_id asc, update_date desc, created_at desc
+            """,
+            tuple(content_program_ids),
+            ContentMonitoringUpdateRecord,
+        )
+        grouped = {content_program_id: [] for content_program_id in content_program_ids}
+        for row in rows:
+            grouped.setdefault(row.content_program_id, []).append(row)
+        return grouped
+
     def update_content_monitoring_update(self, update_id: str, **kwargs: Any) -> ContentMonitoringUpdateRecord:
         fields = ["sku_group_id", "sku_id", "update_date", "update_type", "update_text", "live_review_count", "publication_state"]
         return self._update_content_child("campaign_ops_content_monitoring_updates", ContentMonitoringUpdateRecord, update_id, fields, tuple(kwargs.get(f) for f in fields))
@@ -3170,6 +3275,25 @@ class CampaignOpsRepository:
     def list_content_invoice_checkpoints(self, content_program_id: str, include_inactive: bool = False) -> list[ContentInvoiceCheckpointRecord]:
         clause = "" if include_inactive else "and is_active = true"
         return self._fetch_all(f"select * from campaign_ops_content_invoice_checkpoints where content_program_id = %s {clause} order by coalesce(invoice_date, due_date) asc nulls last, created_at asc", (content_program_id,), ContentInvoiceCheckpointRecord)
+
+    def list_content_invoice_checkpoints_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentInvoiceCheckpointRecord]]:
+        if not content_program_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(content_program_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_content_invoice_checkpoints
+            where content_program_id in ({placeholders}) {clause}
+            order by content_program_id asc, coalesce(invoice_date, due_date) asc nulls last, created_at asc
+            """,
+            tuple(content_program_ids),
+            ContentInvoiceCheckpointRecord,
+        )
+        grouped = {content_program_id: [] for content_program_id in content_program_ids}
+        for row in rows:
+            grouped.setdefault(row.content_program_id, []).append(row)
+        return grouped
 
     def update_content_invoice_checkpoint(self, checkpoint_id: str, **kwargs: Any) -> ContentInvoiceCheckpointRecord:
         fields = ["checkpoint_name", "invoice_date", "due_date", "status", "amount", "notes"]

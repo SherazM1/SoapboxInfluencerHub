@@ -595,6 +595,49 @@ class FakePrompt4ARepository:
             for program_id in program_ids
         }
 
+    def list_content_sku_groups_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentSkuGroupRecord]]:
+        return {
+            content_program_id: self.list_content_sku_groups(content_program_id, include_inactive=include_inactive)
+            for content_program_id in content_program_ids
+        }
+
+    def list_content_deliverables_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentDeliverableRecord]]:
+        return {
+            content_program_id: self.list_content_deliverables(content_program_id, include_inactive=include_inactive)
+            for content_program_id in content_program_ids
+        }
+
+    def list_content_submissions_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentSubmissionRecord]]:
+        return {
+            content_program_id: self.list_content_submissions(content_program_id, include_inactive=include_inactive)
+            for content_program_id in content_program_ids
+        }
+
+    def list_content_monitoring_updates_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentMonitoringUpdateRecord]]:
+        return {
+            content_program_id: self.list_content_monitoring_updates(content_program_id, include_inactive=include_inactive)
+            for content_program_id in content_program_ids
+        }
+
+    def list_content_invoice_checkpoints_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[ContentInvoiceCheckpointRecord]]:
+        return {
+            content_program_id: self.list_content_invoice_checkpoints(content_program_id, include_inactive=include_inactive)
+            for content_program_id in content_program_ids
+        }
+
+    def list_content_milestone_rows_for_programs(self, content_program_ids: list[str], include_inactive: bool = False) -> dict[str, list[MilestoneListRow]]:
+        grouped: dict[str, list[MilestoneListRow]] = {content_program_id: [] for content_program_id in content_program_ids}
+        for content_program_id in content_program_ids:
+            content = self.get_content_program(content_program_id)
+            if not content:
+                continue
+            grouped[content_program_id] = [
+                milestone
+                for milestone in self.list_milestone_rows_by_program(content.program_id, include_inactive=include_inactive)
+                if milestone.workstream_id == content.workstream_id or milestone.milestone_type == "Content Management"
+            ]
+        return grouped
+
     def append_note(self, program_id: str, note_text: str, author_user_id: str | None = None, **kwargs: object) -> ProgramNote:
         note = ProgramNote(
             id=f"88888888-8888-4888-8888-{len(self.notes) + 1:012d}",
@@ -3805,6 +3848,13 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         rendered = portfolio_rows([detail])[0]
         self.assertEqual(list(rendered), PORTFOLIO_COLUMNS)
         self.assertEqual(rendered["Graphics per SKU"], "5")
+        board_data = service.get_content_baseline_board_data(bailey, [detail])
+        self.assertEqual([group.group_name for group in board_data["groups"][content.id]], ["Sandibrochas", "Pelon", "Jumex"])
+        self.assertEqual([item.id for item in board_data["deliverables"][content.id]], [deliverable.id])
+        self.assertEqual([item.id for item in board_data["submissions"][content.id]], [submission.id])
+        self.assertEqual([item.id for item in board_data["monitoring"][content.id]], [update_two.id, update_one.id])
+        self.assertEqual([item.title for item in board_data["milestones"][content.id]], ["Submit PDP copy", "Monitoring window"])
+        self.assertEqual([item.resource_type for item in board_data["resources"][content.id]][:2], ["SKU List", "Tracksheet"])
 
         self.assertIn("campaign_ops_selected_content_program_id", SESSION_KEYS)
         state: dict[str, object] = {"campaign_ops_selected_content_program_id": "missing"}

@@ -6,8 +6,20 @@ from urllib.parse import urlsplit, urlunsplit
 
 import streamlit as st
 
+from app.campaign_ops.content_management.baseline import (
+    action_display_text,
+    content_quick_links,
+    current_status_text,
+    group_fact_text,
+    group_facts,
+    grouped_content_actions,
+    invoice_summary_rows,
+    next_current_action,
+    normalize_content_actions,
+)
 from app.campaign_ops.content_management.formatting import PORTFOLIO_COLUMNS, content_status_label, portfolio_rows
 from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date, format_datetime, safe_text, title_label
+from app.campaign_ops.influencer.planning_baseline import compact_date
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
 from app.campaign_ops.state import set_selected_program
@@ -56,6 +68,19 @@ def render_css() -> None:
         .campaign-ops-content-bar { background:#073149; color:white; padding:.35rem .55rem; font-weight:700; }
         .campaign-ops-content-row { border-top:1px solid #dbe4e4; padding:.32rem .55rem; font-size:.9rem; }
         .campaign-ops-content-subhead { background:#eef2f2; font-weight:700; padding:.25rem .45rem; border:1px solid #cfd8d8; }
+        .campaign-ops-content-card { border:1px solid #c9d4d4; margin:.55rem 0 .9rem 0; background:#fff; }
+        .campaign-ops-content-card-head { background:#32a6a6; color:#082525; padding:.42rem .6rem; font-weight:700; border-bottom:1px solid #62bcbc; }
+        .campaign-ops-content-card-meta { color:#244348; font-size:.84rem; font-weight:600; margin-top:.1rem; }
+        .campaign-ops-content-card-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.4rem; padding:.55rem; }
+        .campaign-ops-content-card-cell { border:1px solid #dbe4e4; padding:.38rem .45rem; min-height:3.2rem; }
+        .campaign-ops-content-card-label { color:#587174; font-size:.72rem; text-transform:uppercase; font-weight:700; }
+        .campaign-ops-content-card-value { color:#102f35; font-size:.9rem; margin-top:.12rem; overflow-wrap:anywhere; }
+        .campaign-ops-content-baseline { border:1px solid #c9d4d4; margin:.65rem 0 1rem 0; background:#fff; }
+        .campaign-ops-content-baseline-section { border-top:1px solid #dbe4e4; padding:.55rem .65rem; }
+        .campaign-ops-content-baseline-label { color:#587174; font-size:.72rem; text-transform:uppercase; font-weight:700; margin-bottom:.2rem; }
+        .campaign-ops-content-action-group { margin:.5rem 0; border:1px solid #dbe4e4; }
+        .campaign-ops-content-action-group-title { background:#eef2f2; color:#102f35; font-weight:700; padding:.3rem .45rem; }
+        @media (max-width: 900px) { .campaign-ops-content-card-grid { grid-template-columns:1fr; } }
         </style>
         """,
         unsafe_allow_html=True,
@@ -80,10 +105,14 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService) -> Non
         return
     filters = render_filters(programs)
     filtered = sort_programs(filter_programs(programs, filters), str(filters.get("sort_by") or "updated_at"))
-    st.markdown("<div class='campaign-ops-content-title'>Content Management Portfolio</div>", unsafe_allow_html=True)
-    st.dataframe(portfolio_rows(filtered), column_order=PORTFOLIO_COLUMNS, hide_index=True, use_container_width=True)
+    board_data = service.get_content_baseline_board_data(actor, filtered) if filtered else {"groups": {}, "deliverables": {}, "submissions": {}, "monitoring": {}, "milestones": {}, "resources": {}}
+    st.markdown("<div class='campaign-ops-content-title'>All Content Programs</div>", unsafe_allow_html=True)
+    if not filtered:
+        st.info("No content programs match these filters.")
     for program in filtered:
-        render_program_block(program)
+        render_program_scan_card(program, board_data)
+    with st.expander("Content Management Portfolio Summary", expanded=False):
+        st.dataframe(portfolio_rows(filtered), column_order=PORTFOLIO_COLUMNS, hide_index=True, use_container_width=True)
     if filtered:
         labels = {f"{item.content_program_title} | {safe_text(item.client_name)}": item.id for item in filtered}
         cols = st.columns(2)
@@ -91,6 +120,48 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService) -> Non
         if cols[1].button("Open Program", key="campaign_ops_content_program_open"):
             st.session_state["campaign_ops_selected_content_program_id"] = labels[chosen]
             st.rerun()
+
+
+def render_program_scan_card(program: Any, board_data: dict[str, Any]) -> None:
+    groups = board_data.get("groups", {}).get(program.id, [])
+    facts = group_facts(groups)
+    links = content_quick_links(program, board_data.get("resources", {}).get(program.id, []))
+    actions = normalize_content_actions(
+        groups=groups,
+        deliverables=board_data.get("deliverables", {}).get(program.id, []),
+        submissions=board_data.get("submissions", {}).get(program.id, []),
+        monitoring_updates=board_data.get("monitoring", {}).get(program.id, []),
+        milestones=board_data.get("milestones", {}).get(program.id, []),
+    )
+    next_action = next_current_action(actions, program.next_milestone, program.next_milestone_date)
+    total = program.total_sku_count or program.active_sku_count
+    facts_text = group_fact_text(facts, limit=4)
+    meta = f"{safe_text(program.owner_display_name)} | {content_status_label(program.content_status)} | {'Active' if program.is_active else 'Inactive'}"
+    html = [
+        "<div class='campaign-ops-content-card'>",
+        f"<div class='campaign-ops-content-card-head'>{escape(program.content_program_title)}<div class='campaign-ops-content-card-meta'>{escape(meta)}</div></div>",
+        "<div class='campaign-ops-content-card-grid'>",
+        _card_cell("Program Facts", f"{safe_text(total)} SKUs" + (f"<br>{escape(facts_text)}" if facts_text else "") + (f"<br>{safe_text(program.default_graphics_per_sku)} graphics per SKU" if program.default_graphics_per_sku else "")),
+        _card_cell("Latest Update", escape(safe_text(program.latest_update)) if program.latest_update else "-"),
+        _card_cell("Waiting On", escape(safe_text(program.waiting_on)) if program.waiting_on else "-"),
+        _card_cell("Issues", f"{program.issue_count}" + (f"<br>Delivered {program.delivered_count} | Live {program.live_count}" if program.delivered_count or program.live_count else "")),
+        "</div>",
+    ]
+    if next_action:
+        html.append(f"<div class='campaign-ops-content-row'><strong>Next / Current Action</strong><br>{escape(action_display_text(next_action))} | {escape(next_action.status)}</div>")
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+    if links:
+        cols = st.columns(min(len(links), 6))
+        for index, link in enumerate(links[:6]):
+            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_content_scan_link_{program.id}_{index}")
+    if st.button("Open Content Program", key=f"campaign_ops_content_scan_open_{program.id}"):
+        st.session_state["campaign_ops_selected_content_program_id"] = program.id
+        st.rerun()
+
+
+def _card_cell(label: str, value: str) -> str:
+    return f"<div class='campaign-ops-content-card-cell'><div class='campaign-ops-content-card-label'>{escape(label)}</div><div class='campaign-ops-content-card-value'>{value}</div></div>"
 
 
 def render_program_block(program: Any) -> None:
@@ -218,6 +289,7 @@ def render_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users:
         st.rerun()
     st.markdown(f"### {content.content_program_title}")
     st.caption(f"Client: {safe_text(content.client_name)} | Shared Program: {content.program_name} | Owner: {safe_text(content.owner_display_name)} | Status: {content_status_label(content.content_status)} | SKUs: {safe_text(content.total_sku_count or content.active_sku_count)} | Groups: {len(content.group_names)} | Delivered: {content.delivered_count} | Live: {content.live_count} | Issues: {content.issue_count} | Waiting On: {safe_text(content.waiting_on)} | Maintenance End: {format_date(content.maintenance_end_date)} | Risk: {RISK_LABELS.get(content.program_risk, content.program_risk)} | Latest: {safe_text(content.latest_update)} | Next: {safe_text(content.next_milestone)} | Updated: {format_datetime(content.updated_at)} | {'Active' if content.is_active else 'Inactive'}")
+    render_content_baseline_tracker(actor, service, content)
     tabs = st.tabs(["Overview", "SKU Groups", "SKUs / Products", "Deliverables", "Copy & Attributes", "Graphics / Assets", "Submission & Publication", "Monitoring & Maintenance", "Invoicing", "Timeline", "Resources", "Notes", "Activity"])
     with tabs[0]: render_overview(actor, service, users, content)
     with tabs[1]: render_sku_groups(actor, service, content)
@@ -266,6 +338,80 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
     if not content.is_active and cols[1].button("Reactivate Content Program", key=f"campaign_ops_content_reactivate_{content.id}"):
         service.reactivate_content_program(actor, content.id)
         st.rerun()
+
+
+def render_content_baseline_tracker(actor: CampaignOpsUser, service: CampaignOpsService, content: Any) -> None:
+    groups = service.list_content_sku_groups(actor, content.id)
+    facts = group_facts(groups)
+    resources = [r for r in service.list_program_resources(actor, content.program_id, include_inactive=True) if r.resource_type in CONTENT_RESOURCE_TYPES or r.workstream_id == content.workstream_id]
+    deliverables = service.list_content_deliverables(actor, content.id, include_inactive=True)
+    submissions = service.list_content_submissions(actor, content.id, include_inactive=True)
+    monitoring_updates = service.list_content_monitoring_updates(actor, content.id, include_inactive=True)
+    milestones = [m for m in service.list_program_milestones(actor, content.program_id, include_inactive=True) if m.workstream_id == content.workstream_id or m.milestone_type == "Content Management"]
+    actions = normalize_content_actions(groups=groups, deliverables=deliverables, submissions=submissions, monitoring_updates=monitoring_updates, milestones=milestones)
+    links = content_quick_links(content, resources, include_custom=True)
+    invoices = invoice_summary_rows(service.list_content_invoice_checkpoints(actor, content.id, include_inactive=True))
+    notes = service.list_program_notes(actor, content.program_id, limit=5)
+
+    st.markdown("<div class='campaign-ops-content-baseline'><div class='campaign-ops-content-card-head'>Content Program Baseline</div>", unsafe_allow_html=True)
+    header = f"{safe_text(content.owner_display_name)} | {content_status_label(content.content_status)} | {safe_text(content.client_name)} | {content.program_name} | {'Active' if content.is_active else 'Inactive'}"
+    st.markdown(f"<div class='campaign-ops-content-baseline-section'><div class='campaign-ops-content-baseline-label'>Program Header</div>{escape(content.content_program_title)}<br><span class='campaign-ops-content-card-meta'>{escape(header)}</span></div>", unsafe_allow_html=True)
+    fact_rows = [
+        f"Total SKUs {safe_text(content.total_sku_count or content.active_sku_count)}",
+        f"Graphics per SKU {safe_text(content.default_graphics_per_sku)}" if content.default_graphics_per_sku else "",
+        f"Delivered {content.delivered_count}",
+        f"Live {content.live_count}",
+        f"Issues {content.issue_count}",
+        f"Maintenance ends {format_date(content.maintenance_end_date)}" if content.maintenance_end_date else "",
+    ]
+    fact_rows.extend(f"{fact.name} {safe_text(fact.expected_sku_count)}" for fact in facts)
+    st.markdown(f"<div class='campaign-ops-content-baseline-section'><div class='campaign-ops-content-baseline-label'>Program Facts</div>{escape(' | '.join(item for item in fact_rows if item))}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if links:
+        st.markdown("#### Linked Sheets")
+        cols = st.columns(min(len(links), 6))
+        for index, link in enumerate(links):
+            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_content_baseline_link_{content.id}_{index}")
+
+    st.markdown("#### Grouped Content Actions")
+    grouped = grouped_content_actions(actions, facts)
+    if grouped:
+        for group_name, rows in grouped:
+            st.markdown(f"<div class='campaign-ops-content-action-group'><div class='campaign-ops-content-action-group-title'>{escape(group_name.upper())}</div></div>", unsafe_allow_html=True)
+            st.dataframe(
+                [
+                    {
+                        "Date": compact_date(row.display_date),
+                        "Action": row.action,
+                        "Status": row.status,
+                        "Note": safe_text(row.note or row.waiting_on),
+                        "Source": row.source,
+                    }
+                    for row in rows
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+    else:
+        st.info("No content actions yet.")
+
+    st.markdown("#### Current Status")
+    st.write(current_status_text(content, monitoring_updates))
+    cols = st.columns(2)
+    if content.latest_update:
+        cols[0].markdown(f"**Latest Update**  \n{content.latest_update}")
+    if content.waiting_on:
+        cols[1].markdown(f"**Waiting On**  \n{content.waiting_on}")
+    if notes:
+        st.markdown("#### Program Notes")
+        for note in notes[:3]:
+            st.caption(f"{safe_text(note.author_display_name)} | {format_datetime(note.created_at)}")
+            st.write(note.note_text)
+    if invoices:
+        st.markdown("#### Invoicing")
+        st.dataframe(invoices, hide_index=True, use_container_width=True)
+    st.caption("Existing workspace tabs remain below for detailed editing and history.")
 
 
 def group_options(groups: list[Any]) -> dict[str, str | None]:

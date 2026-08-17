@@ -4660,6 +4660,24 @@ class CampaignOpsService:
             return rows
         return [row for row in rows if can_view_program(actor, self._require_program(repository, row.program_id), repository.list_assignments_by_program(row.program_id))]
 
+    def get_content_baseline_board_data(self, actor: CampaignOpsUser | None, programs: list[ContentPortfolioRow]) -> dict[str, Any]:
+        repository = self.repository or CampaignOpsRepository()
+        visible = {program.id: program for program in programs}
+        content_program_ids = list(visible)
+        program_ids = list({program.program_id for program in programs})
+        resources_by_program = repository.list_resources_for_programs(program_ids)
+        return {
+            "groups": repository.list_content_sku_groups_for_programs(content_program_ids),
+            "deliverables": repository.list_content_deliverables_for_programs(content_program_ids),
+            "submissions": repository.list_content_submissions_for_programs(content_program_ids),
+            "monitoring": repository.list_content_monitoring_updates_for_programs(content_program_ids),
+            "milestones": repository.list_content_milestone_rows_for_programs(content_program_ids),
+            "resources": {
+                content_id: resources_by_program.get(program.program_id, [])
+                for content_id, program in visible.items()
+            },
+        }
+
     def get_content_program_detail(self, actor: CampaignOpsUser | None, content_program_id: str) -> ContentProgramDetail:
         repository = self.repository or CampaignOpsRepository()
         detail = repository.get_content_program_detail(content_program_id)
