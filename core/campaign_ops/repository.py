@@ -1636,6 +1636,35 @@ class CampaignOpsRepository:
             grouped.setdefault(str(normalized["content_program_id"]), []).append(self._milestone_list_row_from_db(row))
         return grouped
 
+    def list_retail_media_milestone_rows_for_campaigns(self, retail_media_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[MilestoneListRow]]:
+        if not retail_media_campaign_ids:
+            return {}
+        clauses = [f"rm.id in ({', '.join(['%s'] * len(retail_media_campaign_ids))})"]
+        params: list[Any] = list(retail_media_campaign_ids)
+        if not include_inactive:
+            clauses.append("m.is_active = true")
+        query = f"""
+            select
+                rm.id as retail_media_campaign_id,
+                m.*,
+                w.workstream_type,
+                u.display_name as owner_user_name
+            from campaign_ops_retail_media_campaigns rm
+            join campaign_ops_milestones m on m.program_id = rm.program_id
+            left join campaign_ops_workstreams w on w.id = m.workstream_id
+            left join campaign_ops_users u on u.id = m.owner_user_id
+            where {' and '.join(clauses)}
+              and m.milestone_type = 'Retail Media'
+            order by rm.id asc,
+                     coalesce(m.target_date, m.start_date, m.end_date) asc nulls last,
+                     m.created_at asc
+        """
+        grouped = {campaign_id: [] for campaign_id in retail_media_campaign_ids}
+        for row in self._fetch_raw_all(query, tuple(params)):
+            normalized = normalize_row(row)
+            grouped.setdefault(str(normalized["retail_media_campaign_id"]), []).append(self._milestone_list_row_from_db(row))
+        return grouped
+
     def list_dashboard_milestone_rows(
         self,
         include_inactive: bool = False,
@@ -2729,6 +2758,25 @@ class CampaignOpsRepository:
             RetailMediaChannelRecord,
         )
 
+    def list_retail_media_channels_for_campaigns(self, retail_media_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[RetailMediaChannelRecord]]:
+        if not retail_media_campaign_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(retail_media_campaign_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_retail_media_channels
+            where retail_media_campaign_id in ({placeholders}) {clause}
+            order by retail_media_campaign_id asc, channel_type asc, created_at asc
+            """,
+            tuple(retail_media_campaign_ids),
+            RetailMediaChannelRecord,
+        )
+        grouped = {campaign_id: [] for campaign_id in retail_media_campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.retail_media_campaign_id, []).append(row)
+        return grouped
+
     def update_retail_media_channel(self, channel_id: str, **kwargs: Any) -> RetailMediaChannelRecord:
         return self._write_returning(
             """
@@ -2794,6 +2842,25 @@ class CampaignOpsRepository:
             tuple(params),
             RetailMediaActivationRecord,
         )
+
+    def list_retail_media_activations_for_campaigns(self, retail_media_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[RetailMediaActivationRecord]]:
+        if not retail_media_campaign_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(retail_media_campaign_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_retail_media_activations
+            where retail_media_campaign_id in ({placeholders}) {clause}
+            order by retail_media_campaign_id asc, coalesce(start_date, end_date) asc nulls last, created_at asc
+            """,
+            tuple(retail_media_campaign_ids),
+            RetailMediaActivationRecord,
+        )
+        grouped = {campaign_id: [] for campaign_id in retail_media_campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.retail_media_campaign_id, []).append(row)
+        return grouped
 
     def update_retail_media_activation(self, activation_id: str, **kwargs: Any) -> RetailMediaActivationRecord:
         return self._write_returning(
@@ -2865,6 +2932,25 @@ class CampaignOpsRepository:
             RetailMediaCreativeRecord,
         )
 
+    def list_retail_media_creative_for_campaigns(self, retail_media_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[RetailMediaCreativeRecord]]:
+        if not retail_media_campaign_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(retail_media_campaign_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_retail_media_creative_items
+            where retail_media_campaign_id in ({placeholders}) {clause}
+            order by retail_media_campaign_id asc, due_date asc nulls last, created_at asc
+            """,
+            tuple(retail_media_campaign_ids),
+            RetailMediaCreativeRecord,
+        )
+        grouped = {campaign_id: [] for campaign_id in retail_media_campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.retail_media_campaign_id, []).append(row)
+        return grouped
+
     def update_retail_media_creative(self, creative_id: str, **kwargs: Any) -> RetailMediaCreativeRecord:
         return self._write_returning(
             """
@@ -2928,6 +3014,25 @@ class CampaignOpsRepository:
             tuple(params),
             RetailMediaOptimizationRecord,
         )
+
+    def list_retail_media_optimizations_for_campaigns(self, retail_media_campaign_ids: list[str], include_inactive: bool = False) -> dict[str, list[RetailMediaOptimizationRecord]]:
+        if not retail_media_campaign_ids:
+            return {}
+        clause = "" if include_inactive else "and is_active = true"
+        placeholders = ", ".join(["%s"] * len(retail_media_campaign_ids))
+        rows = self._fetch_all(
+            f"""
+            select * from campaign_ops_retail_media_optimization_updates
+            where retail_media_campaign_id in ({placeholders}) {clause}
+            order by retail_media_campaign_id asc, update_date desc, created_at desc
+            """,
+            tuple(retail_media_campaign_ids),
+            RetailMediaOptimizationRecord,
+        )
+        grouped = {campaign_id: [] for campaign_id in retail_media_campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.retail_media_campaign_id, []).append(row)
+        return grouped
 
     def update_retail_media_optimization(self, optimization_id: str, **kwargs: Any) -> RetailMediaOptimizationRecord:
         return self._write_returning(

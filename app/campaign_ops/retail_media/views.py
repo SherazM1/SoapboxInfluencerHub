@@ -9,6 +9,15 @@ import streamlit as st
 from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date, format_datetime, safe_text, title_label
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
+from app.campaign_ops.retail_media.baseline import (
+    action_display_text,
+    current_status_text,
+    next_current_retail_media_action,
+    normalize_retail_media_actions,
+    over_budget,
+    retail_media_quick_links,
+    spend_budget_values,
+)
 from app.campaign_ops.retail_media.formatting import (
     PORTFOLIO_COLUMNS,
     channel_mix_label,
@@ -69,6 +78,18 @@ def render_css() -> None:
         .campaign-ops-rm-bar { background:#073149; color:white; padding:.35rem .55rem; font-weight:700; }
         .campaign-ops-rm-row { border-top:1px solid #dbe4e4; padding:.32rem .55rem; font-size:.9rem; }
         .campaign-ops-rm-note { background:#f8fbfb; }
+        .campaign-ops-rm-card { border:1px solid #c9d4d4; margin:.55rem 0 .9rem 0; background:#fff; }
+        .campaign-ops-rm-card-head { background:#32a6a6; color:#082525; padding:.42rem .6rem; font-weight:700; border-bottom:1px solid #62bcbc; }
+        .campaign-ops-rm-card-meta { color:#244348; font-size:.84rem; font-weight:600; margin-top:.1rem; }
+        .campaign-ops-rm-card-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.4rem; padding:.55rem; }
+        .campaign-ops-rm-card-cell { border:1px solid #dbe4e4; padding:.38rem .45rem; min-height:3.2rem; }
+        .campaign-ops-rm-card-label { color:#587174; font-size:.72rem; text-transform:uppercase; font-weight:700; }
+        .campaign-ops-rm-card-value { color:#102f35; font-size:.9rem; margin-top:.12rem; overflow-wrap:anywhere; }
+        .campaign-ops-rm-alert { color:#8a4100; font-weight:700; }
+        .campaign-ops-rm-baseline { border:1px solid #c9d4d4; margin:.65rem 0 1rem 0; background:#fff; }
+        .campaign-ops-rm-baseline-section { border-top:1px solid #dbe4e4; padding:.55rem .65rem; }
+        .campaign-ops-rm-baseline-label { color:#587174; font-size:.72rem; text-transform:uppercase; font-weight:700; margin-bottom:.2rem; }
+        @media (max-width: 900px) { .campaign-ops-rm-card-grid { grid-template-columns:1fr; } }
         </style>
         """,
         unsafe_allow_html=True,
@@ -93,10 +114,14 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService) -> Non
         return
     filters = render_filters(campaigns)
     filtered = sort_campaigns(filter_campaigns(campaigns, filters), str(filters.get("sort_by") or "updated_at"))
-    st.markdown("<div class='campaign-ops-rm-title'>Retail Media Portfolio</div>", unsafe_allow_html=True)
-    st.dataframe(portfolio_rows(filtered), column_order=PORTFOLIO_COLUMNS, hide_index=True, use_container_width=True)
+    board_data = service.get_retail_media_baseline_board_data(actor, filtered) if filtered else {"channels": {}, "activations": {}, "creative": {}, "optimizations": {}, "milestones": {}, "resources": {}}
+    st.markdown("<div class='campaign-ops-rm-title'>All Retail Media Programs</div>", unsafe_allow_html=True)
+    if not filtered:
+        st.info("No retail media campaigns match these filters.")
     for campaign in filtered:
-        render_campaign_block(campaign)
+        render_campaign_scan_card(campaign, board_data)
+    with st.expander("Retail Media Portfolio Summary", expanded=False):
+        st.dataframe(portfolio_rows(filtered), column_order=PORTFOLIO_COLUMNS, hide_index=True, use_container_width=True)
     if filtered:
         labels = {f"{item.campaign_title} | {safe_text(item.client_name)}": item.id for item in filtered}
         cols = st.columns(2)
@@ -104,6 +129,72 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService) -> Non
         if cols[1].button("Open Campaign", key="campaign_ops_retail_media_campaign_open"):
             st.session_state["campaign_ops_selected_retail_media_campaign_id"] = labels[chosen]
             st.rerun()
+
+
+def render_campaign_scan_card(campaign: Any, board_data: dict[str, Any]) -> None:
+    resources = board_data.get("resources", {}).get(campaign.id, [])
+    channels = board_data.get("channels", {}).get(campaign.id, [])
+    links = retail_media_quick_links(campaign, resources)
+    actions = normalize_retail_media_actions(
+        activations=board_data.get("activations", {}).get(campaign.id, []),
+        creative=board_data.get("creative", {}).get(campaign.id, []),
+        optimizations=board_data.get("optimizations", {}).get(campaign.id, []),
+        milestones=board_data.get("milestones", {}).get(campaign.id, []),
+        channels=channels,
+    )
+    next_action = next_current_retail_media_action(actions)
+    budget, spend = spend_budget_values(campaign)
+    status = retail_status_label(campaign.retail_media_status)
+    active_state = "Active" if campaign.is_active else "Inactive"
+    paused = " | PAUSED" if campaign.is_paused else ""
+    pause = f"<br><span class='campaign-ops-rm-alert'>{escape(safe_text(campaign.pause_reason))}</span>" if campaign.is_paused and campaign.pause_reason else ""
+    risk_parts = []
+    if over_budget(campaign):
+        risk_parts.append("Over budget")
+    if campaign.is_paused:
+        risk_parts.append("Paused")
+    if campaign.waiting_on:
+        risk_parts.append("Waiting")
+    if campaign.program_risk and campaign.program_risk != "unrated":
+        risk_parts.append(RISK_LABELS.get(campaign.program_risk, title_label(campaign.program_risk)))
+    meta = f"{safe_text(campaign.owner_display_name)} | {status} | {active_state}{paused}"
+    dates = " | ".join(part for part in [
+        f"Launch {format_date(campaign.launch_date)}" if campaign.launch_date else "",
+        f"Wrap {format_date(campaign.wrap_date)}" if campaign.wrap_date else "",
+    ] if part)
+    budget_text = " | ".join(part for part in [
+        f"Budget {currency(budget)}" if budget is not None else "",
+        f"Spend {currency(spend)}" if spend is not None else "",
+    ] if part)
+    if over_budget(campaign) and budget_text:
+        budget_text = f"<span class='campaign-ops-rm-alert'>{escape(budget_text)}</span>"
+    html = [
+        "<div class='campaign-ops-rm-card'>",
+        f"<div class='campaign-ops-rm-card-head'>{escape(campaign.campaign_title)}<div class='campaign-ops-rm-card-meta'>{escape(meta)}</div></div>",
+        "<div class='campaign-ops-rm-card-grid'>",
+        _card_cell("Channels", escape(channel_mix_label(campaign.channel_mix))),
+        _card_cell("Latest Update", escape(safe_text(campaign.latest_update)) if campaign.latest_update else "-"),
+        _card_cell("Waiting On", escape(safe_text(campaign.waiting_on)) if campaign.waiting_on else "-"),
+        _card_cell("Budget / Spend", budget_text or "-"),
+        _card_cell("Launch / Wrap", escape(dates) if dates else "-"),
+        _card_cell("Current Status", escape(current_status_text(campaign)) + pause),
+        _card_cell("Next / Current Action", escape(action_display_text(next_action)) + f"<br>{escape(next_action.status)}" if next_action else "No open media action."),
+        _card_cell("Attention", escape(" | ".join(risk_parts)) if risk_parts else "-"),
+        "</div>",
+        "</div>",
+    ]
+    st.markdown("".join(html), unsafe_allow_html=True)
+    if links:
+        cols = st.columns(min(len(links), 6))
+        for index, link in enumerate(links[:6]):
+            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_retail_media_scan_link_{campaign.id}_{index}")
+    if st.button("Open Retail Media Campaign", key=f"campaign_ops_retail_media_scan_open_{campaign.id}"):
+        st.session_state["campaign_ops_selected_retail_media_campaign_id"] = campaign.id
+        st.rerun()
+
+
+def _card_cell(label: str, value: str) -> str:
+    return f"<div class='campaign-ops-rm-card-cell'><div class='campaign-ops-rm-card-label'>{escape(label)}</div><div class='campaign-ops-rm-card-value'>{value}</div></div>"
 
 
 def render_campaign_block(campaign: Any) -> None:
@@ -246,6 +337,7 @@ def render_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users:
         f"Spend: {currency(campaign.total_spend)} | Paused: {'Yes' if campaign.is_paused else 'No'} | Risk: {RISK_LABELS.get(campaign.program_risk, campaign.program_risk)} | "
         f"Latest: {safe_text(campaign.latest_update)} | Next: {safe_text(campaign.next_milestone)} | Updated: {format_datetime(campaign.updated_at)} | {'Active' if campaign.is_active else 'Inactive'}"
     )
+    render_retail_media_baseline_tracker(actor, service, campaign)
     tabs = st.tabs(["Overview", "Channels", "Activations / Flights", "Budget & Spend", "Creative & Approvals", "Timeline", "Optimization Log", "Resources", "Notes", "Activity"])
     with tabs[0]:
         render_overview(actor, service, users, campaign)
@@ -267,6 +359,105 @@ def render_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users:
         render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
     with tabs[9]:
         render_activity(actor, service, campaign)
+
+
+def render_retail_media_baseline_tracker(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
+    channels = service.list_retail_media_channels(actor, campaign.id, include_inactive=False)
+    activations = service.list_retail_media_activations(actor, campaign.id, include_inactive=False)
+    creative = service.list_retail_media_creative(actor, campaign.id, include_inactive=False)
+    optimizations = service.list_retail_media_optimizations(actor, campaign.id, include_inactive=False)
+    milestones = [
+        m
+        for m in service.list_program_milestones(actor, campaign.program_id, include_inactive=False)
+        if m.milestone_type == "Retail Media"
+    ]
+    resources = [
+        r
+        for r in service.list_program_resources(actor, campaign.program_id, include_inactive=False)
+        if r.resource_type in RETAIL_MEDIA_RESOURCE_TYPES or r.workstream_id == campaign.workstream_id
+    ]
+    links = retail_media_quick_links(campaign, resources, include_custom=True)
+    actions = normalize_retail_media_actions(activations=activations, creative=creative, optimizations=optimizations, milestones=milestones, channels=channels)
+    next_action = next_current_retail_media_action(actions)
+    budget_summary = service.retail_media_budget_summary(campaign, channels)
+    header = f"{safe_text(campaign.client_name)} | {campaign.program_name} | Owner {safe_text(campaign.owner_display_name)} | {retail_status_label(campaign.retail_media_status)} | {'Active' if campaign.is_active else 'Inactive'}"
+    media_facts = " | ".join(part for part in [
+        f"Channels: {channel_mix_label(campaign.channel_mix)}",
+        f"Launch {format_date(campaign.launch_date)}" if campaign.launch_date else "",
+        f"Wrap {format_date(campaign.wrap_date)}" if campaign.wrap_date else "",
+        f"Risk {RISK_LABELS.get(campaign.program_risk, title_label(campaign.program_risk))}" if campaign.program_risk else "",
+    ] if part)
+    status = current_status_text(campaign)
+
+    st.markdown("<div class='campaign-ops-rm-baseline'><div class='campaign-ops-rm-card-head'>Retail Media Baseline</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Campaign Header</div>{escape(campaign.campaign_title)}<br><span class='campaign-ops-rm-card-meta'>{escape(header)}</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Media Facts</div>{escape(media_facts) if media_facts else '-'}</div>", unsafe_allow_html=True)
+    if links:
+        st.markdown("<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Linked Sheets</div></div>", unsafe_allow_html=True)
+        cols = st.columns(min(len(links), 6))
+        for index, link in enumerate(links):
+            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_retail_media_baseline_link_{campaign.id}_{index}")
+    if actions:
+        st.markdown("<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Dated Media Actions</div></div>", unsafe_allow_html=True)
+        st.dataframe(
+            [
+                {
+                    "Date": format_date(row.display_date),
+                    "Action": row.action,
+                    "Source": row.source,
+                    "Channel": safe_text(row.channel_label),
+                    "Status": row.status,
+                    "Waiting On": safe_text(row.waiting_on),
+                    "Notes": safe_text(row.note),
+                    "Hard Deadline": "Yes" if row.hard_deadline else "No",
+                }
+                for row in actions
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+    else:
+        st.info("No media actions yet.")
+    cols = st.columns(2)
+    cols[0].markdown(f"**Current Status**  \n{status}")
+    if next_action:
+        cols[1].markdown(f"**Next / Current Action**  \n{action_display_text(next_action)}  \n{next_action.status}")
+    else:
+        cols[1].markdown("**Next / Current Action**  \nNo open media action.")
+    cols = st.columns(2)
+    if campaign.latest_update:
+        cols[0].markdown(f"**Latest Update**  \n{campaign.latest_update}")
+    if campaign.waiting_on:
+        cols[1].markdown(f"**Waiting On**  \n{campaign.waiting_on}")
+    spend_rows = [
+        {"Metric": "Campaign Budget", "Value": currency(budget_summary["budget"])},
+        {"Metric": "Campaign Spend", "Value": currency(budget_summary["spend"])},
+        {"Metric": "Remaining Budget", "Value": currency(budget_summary["remaining"])},
+        {"Metric": "Spend Percentage", "Value": percent(budget_summary["spend_percentage"])},
+    ]
+    st.markdown("<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Spend / Reporting Summary</div></div>", unsafe_allow_html=True)
+    st.dataframe(spend_rows, hide_index=True, use_container_width=True)
+    channel_spend = [
+        {
+            "Channel": channel.channel_type,
+            "Spend": currency(channel.spend_to_date),
+            "Budget": currency(channel.budget),
+            "Reporting": safe_text(channel.reporting_requirement),
+        }
+        for channel in channels
+        if channel.spend_to_date is not None or channel.budget is not None or channel.reporting_requirement
+    ]
+    if channel_spend:
+        st.dataframe(channel_spend, hide_index=True, use_container_width=True)
+    reporting = " | ".join(part for part in [
+        f"Cadence: {campaign.reporting_cadence}" if campaign.reporting_cadence else "",
+        "Over budget" if budget_summary["over_budget"] else "",
+        f"Latest optimization: {optimizations[0].update_text}" if optimizations else "",
+    ] if part)
+    if reporting:
+        st.caption(reporting)
+    st.caption("Existing workspace tabs remain below for detailed editing and history.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], campaign: Any) -> None:

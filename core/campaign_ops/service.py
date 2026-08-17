@@ -2866,6 +2866,24 @@ class CampaignOpsService:
                 visible.append(row)
         return visible
 
+    def get_retail_media_baseline_board_data(self, actor: CampaignOpsUser | None, campaigns: list[RetailMediaPortfolioRow]) -> dict[str, Any]:
+        repository = self.repository or CampaignOpsRepository()
+        visible = {campaign.id: campaign for campaign in campaigns}
+        campaign_ids = list(visible)
+        program_ids = list({campaign.program_id for campaign in campaigns})
+        resources_by_program = repository.list_resources_for_programs(program_ids)
+        return {
+            "channels": repository.list_retail_media_channels_for_campaigns(campaign_ids),
+            "activations": repository.list_retail_media_activations_for_campaigns(campaign_ids),
+            "creative": repository.list_retail_media_creative_for_campaigns(campaign_ids),
+            "optimizations": repository.list_retail_media_optimizations_for_campaigns(campaign_ids),
+            "milestones": repository.list_retail_media_milestone_rows_for_campaigns(campaign_ids),
+            "resources": {
+                campaign_id: resources_by_program.get(campaign.program_id, [])
+                for campaign_id, campaign in visible.items()
+            },
+        }
+
     def get_retail_media_campaign_detail(self, actor: CampaignOpsUser | None, campaign_id: str) -> RetailMediaCampaignDetail:
         repository = self.repository or CampaignOpsRepository()
         detail = repository.get_retail_media_campaign_detail(campaign_id)
