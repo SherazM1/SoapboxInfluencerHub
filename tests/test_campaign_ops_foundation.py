@@ -3312,12 +3312,27 @@ class CampaignOpsFoundationTests(unittest.TestCase):
 
     def test_prompt5a_display_column_order_and_labels(self) -> None:
         from app.campaign_ops.reporting_requests.formatting import (
+            ALL_REQUEST_COLUMNS,
             REPORTING_COLUMNS,
             SURVEY_COLUMNS,
+            all_request_rows,
+            attention_label,
+            delivered_label,
+            next_gate_label,
             reporting_request_rows,
             survey_request_rows,
         )
-        from core.campaign_ops.reporting_requests import REQUEST_CATEGORY_REPORT, REQUEST_CATEGORY_SURVEY
+        from core.campaign_ops.reporting_requests import (
+            REQUEST_CATEGORY_REPORT,
+            REQUEST_CATEGORY_SURVEY,
+            REQUEST_STATUS_CANCELLED,
+            REQUEST_STATUS_COMPLETED,
+            REQUEST_STATUS_DELIVERED,
+            REQUEST_STATUS_IN_PROGRESS,
+            REQUEST_STATUS_READY_FOR_REVIEW,
+            REQUEST_STATUS_REQUESTED,
+            REQUEST_STATUS_WAITING_FOR_APPROVAL,
+        )
 
         base = ReportingRequestListRow(
             id="request-1",
@@ -3345,7 +3360,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
             approved=False,
             questions_requested="Questions You'd Like Included",
             special_requests="Special Requests",
-            status="requested",
+            status=REQUEST_STATUS_REQUESTED,
             risk=RiskLevel.UNRATED.value,
             waiting_on=None,
             completed_at=None,
@@ -3355,19 +3370,163 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         )
         survey_rows = survey_request_rows([base])
         self.assertEqual(list(survey_rows[0]), SURVEY_COLUMNS)
+        self.assertEqual(SURVEY_COLUMNS, ["Type of Survey", "AM", "Program", "Due Date", "Link to Brief", "Delivered", "Review", "Questions / Notes"])
+        self.assertEqual(survey_rows[0]["Type of Survey"], "EOP Survey")
+        self.assertEqual(survey_rows[0]["AM"], "T")
+        self.assertEqual(survey_rows[0]["Program"], "Program")
+        self.assertEqual(survey_rows[0]["Due Date"], "Aug 10, 2026")
+        self.assertEqual(survey_rows[0]["Link to Brief"], "Sent to Tori")
+        self.assertEqual(survey_rows[0]["Delivered"], "Not Delivered")
+        self.assertEqual(survey_rows[0]["Review"], "Required")
+        self.assertEqual(survey_rows[0]["Questions / Notes"], "Questions You'd Like Included")
+        self.assertEqual(delivered_label(True), "Delivered")
+        self.assertEqual(delivered_label(False), "Not Delivered")
+        self.assertEqual(survey_request_rows([replace(base, brief_url="https://example.com/brief")])[0]["Link to Brief"], "Open Brief")
+        self.assertEqual(survey_request_rows([replace(base, brief_url=None, brief_status_text=None)])[0]["Link to Brief"], "")
+        self.assertEqual(survey_request_rows([replace(base, review_complete=True)])[0]["Review"], "Complete")
+        self.assertEqual(survey_request_rows([replace(base, review_required=False, review_complete=False)])[0]["Review"], "-")
         report = replace(
             base,
             id="request-2",
             request_category=REQUEST_CATEGORY_REPORT,
             request_type="Program Recap",
+            delivered=True,
+            recap_date_with_client=date(2026, 8, 12),
             recap_date_text="Week of 8/10",
             review_required=False,
             approval_required=True,
         )
         reporting_rows = reporting_request_rows([report])
         self.assertEqual(list(reporting_rows[0]), REPORTING_COLUMNS)
-        self.assertIn("Questions You'd Like Included", base.questions_requested or "")
-        self.assertIn("Special Requests", base.special_requests or "")
+        self.assertEqual(REPORTING_COLUMNS, ["Type of Report", "AM", "Program", "Due Date", "Recap Date with Client", "Delivered", "Approval", "Special Requests"])
+        self.assertEqual(reporting_rows[0]["Type of Report"], "Program Recap")
+        self.assertEqual(reporting_rows[0]["AM"], "T")
+        self.assertEqual(reporting_rows[0]["Program"], "Program")
+        self.assertEqual(reporting_rows[0]["Due Date"], "Aug 10, 2026")
+        self.assertEqual(reporting_rows[0]["Recap Date with Client"], "Aug 12, 2026")
+        self.assertEqual(reporting_rows[0]["Delivered"], "Delivered")
+        self.assertEqual(reporting_rows[0]["Approval"], "Required")
+        self.assertEqual(reporting_rows[0]["Special Requests"], "Special Requests")
+        self.assertEqual(reporting_request_rows([replace(report, recap_date_with_client=None)])[0]["Recap Date with Client"], "Week of 8/10")
+        self.assertEqual(reporting_request_rows([replace(report, approved=True)])[0]["Approval"], "Approved")
+        self.assertEqual(reporting_request_rows([replace(report, approval_required=False, approved=False)])[0]["Approval"], "-")
+
+        today = date(2026, 8, 18)
+        self.assertEqual(attention_label(replace(base, status=REQUEST_STATUS_COMPLETED), today), "DONE")
+        self.assertEqual(attention_label(replace(base, completed_at=datetime(2026, 8, 18, tzinfo=UTC), status=REQUEST_STATUS_DELIVERED), today), "DONE")
+        self.assertEqual(attention_label(replace(base, status=REQUEST_STATUS_CANCELLED), today), "CANCELLED")
+        self.assertEqual(attention_label(replace(base, due_date=date(2026, 8, 17)), today), "OVERDUE")
+        self.assertEqual(attention_label(replace(base, due_date=today), today), "DUE TODAY")
+        self.assertEqual(attention_label(replace(base, due_date=date(2026, 8, 25)), today), "DUE THIS WEEK")
+        self.assertEqual(attention_label(replace(base, due_date=date(2026, 8, 26)), today), "UPCOMING")
+        self.assertEqual(attention_label(replace(base, due_date=None), today), "")
+        self.assertNotEqual(attention_label(replace(base, delivered=True, status=REQUEST_STATUS_DELIVERED), today), "DONE")
+
+        self.assertEqual(next_gate_label(base), "Deliver Survey")
+        self.assertEqual(next_gate_label(replace(base, delivered=True, status=REQUEST_STATUS_READY_FOR_REVIEW)), "Review Required")
+        self.assertEqual(next_gate_label(replace(base, delivered=True, review_complete=True, status=REQUEST_STATUS_DELIVERED)), "Review Complete")
+        self.assertEqual(next_gate_label(replace(report, delivered=False)), "Deliver Report")
+        self.assertEqual(next_gate_label(replace(report, status=REQUEST_STATUS_WAITING_FOR_APPROVAL)), "Approval Required")
+        self.assertEqual(next_gate_label(replace(report, approved=True)), "Client Recap Aug 12, 2026")
+        self.assertEqual(next_gate_label(replace(report, approved=True, recap_date_with_client=None)), "Approved")
+        self.assertEqual(next_gate_label(replace(report, status=REQUEST_STATUS_COMPLETED)), "Complete")
+        self.assertEqual(next_gate_label(replace(report, status=REQUEST_STATUS_CANCELLED)), "Cancelled")
+        self.assertEqual(next_gate_label(replace(report, approval_required=False, approved=False, recap_date_with_client=None, status=REQUEST_STATUS_IN_PROGRESS)), "In Progress")
+
+        all_rows = all_request_rows([base, report])
+        self.assertEqual(list(all_rows[0]), ALL_REQUEST_COLUMNS)
+        self.assertEqual(ALL_REQUEST_COLUMNS, ["Category", "Request Type", "AM", "Program", "Due Date", "Status", "Next Gate", "Attention", "Risk"])
+        self.assertEqual(all_rows[0]["Category"], "Survey Request")
+        self.assertEqual(all_rows[0]["Request Type"], "EOP Survey")
+        self.assertEqual(all_rows[0]["Next Gate"], "Deliver Survey")
+        self.assertEqual(all_rows[0]["Attention"], "OVERDUE")
+        self.assertEqual(all_rows[0]["Risk"], "Unrated")
+
+    def test_prompt5a_request_queue_filters_and_sorting_are_preserved(self) -> None:
+        from app.campaign_ops.reporting_requests.views import filter_requests, sort_requests
+        from core.campaign_ops.reporting_requests import REQUEST_CATEGORY_REPORT, REQUEST_CATEGORY_SURVEY
+
+        survey = ReportingRequestListRow(
+            id="survey-1",
+            program_id="program-1",
+            program_name="Alpha Program",
+            client_name="Client A",
+            primary_workstream_type=WorkstreamType.INFLUENCER.value,
+            request_category=REQUEST_CATEGORY_SURVEY,
+            request_type="EOP Survey",
+            am_user_id="am-t",
+            am_display_name="T",
+            assigned_user_id=None,
+            assigned_display_name=None,
+            workstream_id=None,
+            workstream_type=None,
+            due_date=date(2026, 8, 10),
+            recap_date_with_client=None,
+            recap_date_text=None,
+            brief_url=None,
+            brief_status_text=None,
+            delivered=False,
+            review_required=True,
+            review_complete=False,
+            approval_required=False,
+            approved=False,
+            questions_requested=None,
+            special_requests=None,
+            status="ready_for_review",
+            risk=RiskLevel.NEEDS_ATTENTION.value,
+            waiting_on=None,
+            completed_at=None,
+            is_active=True,
+            created_at=None,
+            updated_at=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+        report = replace(
+            survey,
+            id="report-1",
+            program_id="program-2",
+            program_name="Beta Program",
+            client_name="Client B",
+            request_category=REQUEST_CATEGORY_REPORT,
+            request_type="Program Recap",
+            am_user_id="am-l",
+            am_display_name="L",
+            due_date=date(2026, 8, 20),
+            delivered=True,
+            review_required=False,
+            review_complete=False,
+            approval_required=True,
+            approved=False,
+            status="waiting_for_approval",
+            risk=RiskLevel.AT_RISK.value,
+            updated_at=datetime(2026, 8, 2, tzinfo=UTC),
+        )
+        undated = replace(
+            survey,
+            id="survey-2",
+            program_id="program-3",
+            program_name="Gamma Program",
+            due_date=None,
+            delivered=True,
+            review_required=True,
+            review_complete=True,
+            status="delivered",
+            risk=RiskLevel.UNRATED.value,
+        )
+        rows = [report, undated, survey]
+
+        self.assertEqual([row.id for row in filter_requests(rows, {}, REQUEST_CATEGORY_SURVEY)], ["survey-2", "survey-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {}, REQUEST_CATEGORY_REPORT)], ["report-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"search": "beta"}, "")], ["report-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"am_user_id": "am-t"}, "")], ["survey-2", "survey-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"program_id": "program-2"}, "")], ["report-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"delivered": "Yes"}, "")], ["report-1", "survey-2"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"delivered": "No"}, "")], ["survey-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"state": "Required"}, "")], ["report-1", "survey-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"state": "Complete"}, "")], ["survey-2"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"status": "waiting_for_approval"}, "")], ["report-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"risk": RiskLevel.AT_RISK.value}, "")], ["report-1"])
+        self.assertEqual([row.id for row in filter_requests(rows, {"due_from": date(2026, 8, 11), "due_to": date(2026, 8, 30)}, "")], ["report-1"])
+        self.assertEqual([row.id for row in sort_requests(rows, "due_date")], ["survey-1", "report-1", "survey-2"])
 
     def test_prompt5a_state_keys_are_namespaced_and_stale_request_clears(self) -> None:
         self.assertTrue(all(key.startswith("campaign_ops_") for key in SESSION_KEYS))

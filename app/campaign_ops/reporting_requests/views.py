@@ -11,9 +11,11 @@ from app.campaign_ops.reporting_requests.formatting import (
     REPORTING_COLUMNS,
     SURVEY_COLUMNS,
     all_request_rows,
-    category_label,
+    attention_label,
+    next_gate_label,
     program_context_label,
     reporting_request_rows,
+    status_label,
     survey_request_rows,
 )
 from app.campaign_ops.state import set_selected_program
@@ -110,9 +112,18 @@ def render_section_table(title: str, rows: list[dict[str, str]], columns: list[s
     st.markdown(f"<div class='campaign-ops-sheet-title'>{title}</div>", unsafe_allow_html=True)
     ordered_rows = [{column: row.get(column, "") for column in columns} for row in rows]
     if ordered_rows:
-        st.dataframe(ordered_rows, hide_index=True, use_container_width=True)
+        column_config = {
+            "Questions / Notes": st.column_config.TextColumn("Questions / Notes", width="medium"),
+            "Special Requests": st.column_config.TextColumn("Special Requests", width="medium"),
+        }
+        st.dataframe(ordered_rows, hide_index=True, use_container_width=True, column_config=column_config)
     else:
-        st.info(f"No {title.lower()} match this view.")
+        empty_messages = {
+            "Survey Requests": "No survey requests match these filters.",
+            "Reporting Requests": "No reporting requests match these filters.",
+            "All Requests": "No requests match these filters.",
+        }
+        st.info(empty_messages.get(title, f"No {title.lower()} match this view."))
 
 
 def render_filters(requests: list[ReportingRequestListRow], category: str) -> dict[str, object]:
@@ -213,6 +224,7 @@ def render_request_detail(
         return
     st.markdown(f"### {request.request_type}")
     st.caption(program_context_label(request))
+    render_deadline_summary(request)
     cols = st.columns(4)
     if cols[0].button("Open Program", key=f"campaign_ops_request_open_program_{request.id}"):
         set_selected_program(st.session_state, request.program_id)
@@ -221,6 +233,18 @@ def render_request_detail(
     cols[2].button("Open Resources", key=f"campaign_ops_request_open_resources_{request.id}", disabled=True)
     cols[3].button("Open Notes", key=f"campaign_ops_request_open_notes_{request.id}", disabled=True)
     render_request_form(actor, service, users, request)
+
+
+def render_deadline_summary(request: ReportingRequestListRow) -> None:
+    rows = [
+        {
+            "Due Date": format_date(request.due_date),
+            "Status": status_label(request.status),
+            "Next Gate": next_gate_label(request),
+            "Attention": attention_label(request),
+        }
+    ]
+    st.dataframe(rows, hide_index=True, use_container_width=True)
 
 
 def render_request_form(
