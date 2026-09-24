@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-
+import hmac
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +10,32 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.navigation import hide_default_streamlit_sidebar_nav, switch_to_page
+
+
+def require_access_code() -> None:
+    expected_code = st.secrets.get("APP_ACCESS_CODE")
+
+    if not expected_code:
+        st.error("Access has not been configured. Contact the app owner.")
+        st.stop()
+
+    if st.session_state.get("access_granted"):
+        return
+
+    st.title("Soapbox Influencer Hub")
+    st.write("Enter the access code to continue.")
+
+    with st.form("access_code_form"):
+        entered_code = st.text_input("Access code", type="password")
+        submitted = st.form_submit_button("Continue")
+
+    if submitted:
+        if hmac.compare_digest(entered_code, str(expected_code)):
+            st.session_state["access_granted"] = True
+            st.rerun()
+        st.error("Incorrect access code.")
+
+    st.stop()
 
 
 def get_logo_path() -> Path:
@@ -74,6 +100,7 @@ def render_module_cards() -> None:
 def main() -> None:
     """Render multi-function platform hub page."""
     st.set_page_config(page_title="Platform Hub", page_icon="??", layout="wide")
+    require_access_code()
     hide_default_streamlit_sidebar_nav()
 
     render_header()
