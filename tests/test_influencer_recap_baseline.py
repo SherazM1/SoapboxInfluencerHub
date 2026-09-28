@@ -1,42 +1,24 @@
-from __future__ import annotations
-
 import unittest
-from types import SimpleNamespace
-
-from app.campaign_ops.influencer.recap_baseline import ready_to_close_blockers, select_recap_campaign_for_open
-
-
-class FakeColumn:
-    def __init__(self, clicked: bool = False) -> None:
-        self.clicked = clicked
-
-    def button(self, label: str, **kwargs) -> bool:
-        return self.clicked and label == "Open Recap Campaign"
-
+from copy import deepcopy
+from tests.test_influencer_timeline import fixture
 
 class InfluencerRecapBaselineTests(unittest.TestCase):
-
-
-    def test_ready_to_close_blockers_cover_workspace_parity_inputs(self) -> None:
-        campaign = SimpleNamespace(
-            open_exception_count=1,
-            open_checkpoint_count=2,
-            open_requirement_count=3,
-            paid_live_incomplete_count=4,
-            missing_final_links_count=5,
-            missing_final_impressions_count=6,
-        )
-
-        blockers = ready_to_close_blockers(campaign)
-
-        self.assertEqual(["1 unresolved exception(s)", "2 open checkpoint(s)", "3 open requirement(s)"], blockers)
-
-
-    def test_select_recap_campaign_for_open_helper(self) -> None:
-        state: dict[str, object] = {}
-        select_recap_campaign_for_open(state, "campaign-1")
-        self.assertEqual("campaign-1", state["campaign_ops_selected_influencer_recap_campaign_id"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_retired_readiness_does_not_block_and_old_records_are_unchanged(self):
+        repo, service, actor, t, l, program = fixture()
+        campaign = service.create_campaign(actor, program, 'Legacy records', t.id)
+        service.advance(actor, campaign.id, 'planning')
+        creator = service.create_influencer_live_creator(actor, campaign.id, 'Historical creator', impressions_reporting_required=True)
+        checkpoint = service.create_influencer_live_checkpoint(actor, campaign.id, 'Open checkpoint')
+        wave = service.create_influencer_creator_wave(actor, campaign.id, 1, wave_name='Existing wave')
+        exception = service.create_influencer_live_exception(actor, campaign.id, 'Open exception')
+        before = deepcopy((creator, checkpoint, wave, exception))
+        service.advance(t, campaign.id, 'live')
+        recap = service.create_or_update_influencer_recap_record(actor, campaign.id, latest_update='Historical recap')
+        requirement = service.create_influencer_recap_requirement(actor, campaign.id, 'Client Recap', 'Unfinished requirement', required=True)
+        old_recap = deepcopy((recap, requirement))
+        service.advance(t, campaign.id, 'recapping')
+        self.assertEqual('complete', campaign.influencer_stage)
+        self.assertTrue(campaign.is_active)
+        self.assertEqual(before, (creator, checkpoint, wave, exception))
+        self.assertEqual(old_recap, (recap, requirement))
+        self.assertEqual(9, len(service.workspace(actor, campaign.id)[1]))

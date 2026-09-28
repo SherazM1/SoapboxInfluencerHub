@@ -3469,6 +3469,25 @@ class CampaignOpsRepository:
     def get_influencer_campaign(self, campaign_id: str) -> InfluencerCampaignRecord | None:
         return self._fetch_one("select * from campaign_ops_influencer_campaigns where id = %s", (campaign_id,), InfluencerCampaignRecord)
 
+    def lock_influencer_timeline_program(self, program_id: str) -> Program | None:
+        # Serialize new timeline campaigns before the existing duplicate-title check.
+        return self._fetch_one(
+            "select * from campaign_ops_programs where id = %s for update",
+            (program_id,), Program,
+        )
+
+    def list_influencer_timeline_campaigns(self, stage: str) -> list[InfluencerCampaignRecord]:
+        return self._fetch_all(
+            "select * from campaign_ops_influencer_campaigns where is_active = true and influencer_stage = %s order by campaign_title, id",
+            (stage,), InfluencerCampaignRecord,
+        )
+
+    def get_influencer_campaign_for_update(self, campaign_id: str) -> InfluencerCampaignRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_influencer_campaigns where id = %s for update",
+            (campaign_id,), InfluencerCampaignRecord,
+        )
+
     def get_active_influencer_campaign_by_title(self, program_id: str, campaign_title: str) -> InfluencerCampaignRecord | None:
         return self._fetch_one(
             "select * from campaign_ops_influencer_campaigns where program_id = %s and lower(campaign_title) = lower(%s) and is_active = true",
