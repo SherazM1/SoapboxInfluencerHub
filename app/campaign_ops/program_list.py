@@ -62,10 +62,6 @@ def clean_filters(filters: dict[str, str | None]) -> dict[str, str | None]:
     return {key: value for key, value in filters.items() if value not in ("", None)}
 
 
-def option_value(label: str, options: dict[str, str]) -> str:
-    return options.get(label, "")
-
-
 def user_options(users: list[CampaignOpsUser]) -> dict[str, str]:
     return {"Any": "", **{user.display_name: user.id for user in users}}
 
@@ -176,26 +172,10 @@ def _enum_select(column: object, label: str, label_map: dict[str, str], key: str
     return values[column.selectbox(label, labels, key=key)]
 
 
-def render_program_rows(rows: list[ProgramPortfolioRow], mode: str, my_programs: bool = False) -> None:
+def render_program_rows(rows: list[ProgramPortfolioRow], my_programs: bool = False) -> None:
     if not rows:
         st.info("No programs match this view.")
         return
-    if mode == "Cards":
-        for row in rows:
-            with st.container(border=True):
-                st.markdown(f"### {row.program_name}")
-                st.caption(f"{safe_text(row.client_name)} | {format_list(row.workstream_types)}")
-                st.markdown(
-                    f"Status: **{STATUS_LABELS.get(row.status, row.status)}**  "
-                    f"Stage: **{CROSS_STAGE_LABELS.get(row.cross_stage, row.cross_stage)}**  "
-                    f"Risk: **{RISK_LABELS.get(row.risk_level, row.risk_level)}**"
-                )
-                st.caption(
-                    f"Owner: {safe_text(row.primary_owner_name)} | "
-                    f"Updated: {format_datetime(row.updated_at)}"
-                )
-        return
-
     table_rows = []
     for row in rows:
         base = {
@@ -251,12 +231,6 @@ def render_all_programs(
         st.session_state["campaign_ops_create_program_open"] = True
         set_section(st.session_state, "New Program")
         st.rerun()
-    mode = actions[3].segmented_control(
-        "View",
-        ["Table", "Cards"],
-        key="campaign_ops_program_view_mode",
-        default=st.session_state.get("campaign_ops_program_view_mode", "Table"),
-    )
     filters = render_portfolio_filters(
         "campaign_ops_program_filters",
         clients,
@@ -269,7 +243,7 @@ def render_all_programs(
     except CampaignOpsError as exc:
         st.error(f"Unable to load programs: {exc}")
         return
-    render_program_rows(rows, str(mode or "Table"))
+    render_program_rows(rows)
     render_open_program_control(rows, "campaign_ops_all_open_program")
 
 
@@ -304,5 +278,5 @@ def render_my_programs(
     except CampaignOpsError as exc:
         st.error(f"Unable to load assigned programs: {exc}")
         return
-    render_program_rows(rows, "Table", my_programs=True)
+    render_program_rows(rows, my_programs=True)
     render_open_program_control(rows, "campaign_ops_my_open_program")

@@ -5,20 +5,9 @@ from datetime import date
 from typing import Any
 
 from app.campaign_ops.formatting import safe_text, title_label
-from app.campaign_ops.influencer.planning_baseline import QuickLink, compact_date
+from app.campaign_ops.influencer.planning_baseline import compact_date
 from core.campaign_ops.enums import TaskStatus
 
-RETAIL_MEDIA_LINK_ORDER = {
-    "Program Tracksheet": 1,
-    "Tracksheet": 2,
-    "WPSR Weekly Update": 3,
-    "Media Plan / Budget": 4,
-    "Budget Tracker": 5,
-    "RM Strategy": 6,
-    "Optimization Log": 7,
-    "Reporting Folder": 8,
-    "Custom": 20,
-}
 
 RETAIL_MEDIA_MILESTONE_TYPE = "Retail Media"
 
@@ -36,49 +25,6 @@ class RetailMediaActionRow:
     source_order: int = 0
     channel_id: str | None = None
     channel_label: str | None = None
-
-
-def retail_media_quick_links(
-    campaign: Any,
-    resources: list[Any] | None = None,
-    *,
-    include_custom: bool = False,
-) -> list[QuickLink]:
-    links: list[tuple[int, QuickLink]] = []
-    seen: set[tuple[str, str]] = set()
-
-    def add(order: int, label: str, url: str | None) -> None:
-        cleaned_url = str(url).strip() if url is not None else ""
-        cleaned_label = label.strip()
-        if not cleaned_label or not cleaned_url:
-            return
-        key = (cleaned_label.lower(), cleaned_url)
-        if key in seen:
-            return
-        seen.add(key)
-        links.append((order, QuickLink(cleaned_label, cleaned_url)))
-
-    add(RETAIL_MEDIA_LINK_ORDER["Tracksheet"], "Tracksheet", getattr(campaign, "tracksheet_url", None))
-    add(RETAIL_MEDIA_LINK_ORDER["Budget Tracker"], "Budget Tracker", getattr(campaign, "budget_tracker_url", None))
-    add(RETAIL_MEDIA_LINK_ORDER["Optimization Log"], "Optimization Log", getattr(campaign, "optimization_log_url", None))
-
-    for resource in resources or []:
-        if not getattr(resource, "is_active", True):
-            continue
-        resource_type = safe_text(getattr(resource, "resource_type", "")).strip()
-        title = safe_text(getattr(resource, "title", "")).strip()
-        url = getattr(resource, "url", None)
-        if resource_type == "Custom" and not include_custom and not _looks_like_retail_media_custom(title):
-            continue
-        order = RETAIL_MEDIA_LINK_ORDER.get(resource_type) or RETAIL_MEDIA_LINK_ORDER.get(title)
-        if order is None and resource_type == "Custom":
-            order = RETAIL_MEDIA_LINK_ORDER["Custom"]
-        if order is None:
-            continue
-        label = title if resource_type == "Custom" and title else title or resource_type
-        add(order, label, url)
-
-    return [link for _, link in sorted(links, key=lambda item: (item[0], item[1].label.lower()))]
 
 
 def normalize_retail_media_actions(
@@ -307,8 +253,3 @@ def _has_waiting(row: RetailMediaActionRow) -> bool:
 def _clean_id(value: Any) -> str | None:
     cleaned = str(value).strip() if value is not None else ""
     return cleaned or None
-
-
-def _looks_like_retail_media_custom(title: str) -> bool:
-    lowered = title.lower()
-    return any(marker in lowered for marker in ("tracksheet", "media", "wpsr", "budget", "strategy", "optimization", "reporting"))

@@ -4,26 +4,9 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from app.campaign_ops.formatting import safe_text, title_label
-from app.campaign_ops.influencer.planning_baseline import QuickLink, compact_date
+from app.campaign_ops.formatting import safe_text
+from app.campaign_ops.influencer.planning_baseline import compact_date
 
-LIVE_QUICK_LINK_FIELDS = [
-    ("Track Sheet", "track_sheet_url"),
-    ("Influencer Brief", "influencer_brief_url"),
-    ("Click2Cart Link", "click2cart_link_url"),
-    ("Client-Facing Live Doc", "client_facing_live_doc_url"),
-    ("Daily Impressions", "daily_impressions_url"),
-    ("Invoice", "invoice_url"),
-    ("EOP Survey", "eop_survey_url"),
-]
-
-LIVE_RESOURCE_ORDER = {
-    "Walmart Link": 4,
-    "Retailer Link": 4,
-    "Influencer Education": 9,
-    "Client Guidelines": 10,
-    "Custom": 11,
-}
 
 TERMINAL_MARKERS = ("campaign wrap", "campaign wraps", "ready for recap", "wrap review")
 
@@ -38,36 +21,6 @@ class LiveOperationalRow:
     status: str
     waiting_on: str | None = None
     terminal: bool = False
-
-
-def live_quick_links(campaign: Any, resources: list[Any] | None = None) -> list[QuickLink]:
-    links: list[tuple[int, QuickLink]] = []
-    seen: set[tuple[str, str]] = set()
-
-    def add(order: int, label: str, url: str | None) -> None:
-        cleaned = str(url).strip() if url is not None else ""
-        if not cleaned:
-            return
-        key = (label.strip().lower(), cleaned)
-        if key in seen:
-            return
-        seen.add(key)
-        links.append((order, QuickLink(label.strip(), cleaned)))
-
-    for order, (label, attr) in enumerate(LIVE_QUICK_LINK_FIELDS, start=1):
-        add(order, label, getattr(campaign, attr, None))
-
-    for resource in resources or []:
-        if not getattr(resource, "is_active", True):
-            continue
-        resource_type = safe_text(getattr(resource, "resource_type", "")).strip()
-        title = safe_text(getattr(resource, "title", "")).strip()
-        label = title if resource_type == "Custom" and title else resource_type or title
-        order = LIVE_RESOURCE_ORDER.get(resource_type)
-        if order is not None or resource_type in {"Click2Cart Link", "Walmart Link", "Retailer Link"}:
-            add(order or 4, label, getattr(resource, "url", None))
-
-    return [link for _, link in sorted(links, key=lambda item: (item[0], item[1].label.lower()))]
 
 
 def compose_live_operational_sequence(planning_steps: list[Any], checkpoints: list[Any], waves: list[Any]) -> list[LiveOperationalRow]:

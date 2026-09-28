@@ -65,15 +65,15 @@ def render_module_cards() -> None:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown("### Campaign Operations")
+        st.markdown("### Program Tracker")
         st.caption("Status: Active")
         st.markdown(
             "Manage campaign alignment, team workflows, progress, requests, and "
             "cross-team oversight."
         )
-        if st.button("Open Campaign Operations", type="primary", use_container_width=True):
+        if st.button("Open Program Tracker", type="primary", use_container_width=True):
             switch_to_page("pages/campaigns.py")
-        st.page_link("pages/campaigns.py", label="Go to Campaign Operations Workspace")
+        st.page_link("pages/campaigns.py", label="Go to Program Tracker Workspace")
 
     with col2:
         st.markdown("### Reporting")

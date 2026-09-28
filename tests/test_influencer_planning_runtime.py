@@ -9,13 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app.campaign_ops.influencer import views
-from app.campaign_ops.influencer.planning_baseline import (
-    campaign_quick_links,
-    compact_date,
-    next_sequence_step,
-    planning_sequence_preview,
-    select_campaign_for_open,
-)
+from app.campaign_ops.influencer.planning_baseline import compact_date, next_sequence_step, planning_sequence_preview, select_campaign_for_open
 from core.campaign_ops.enums import UserRole
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.repository import CampaignOpsRepository
@@ -95,14 +89,11 @@ class InfluencerPlanningRuntimeTests(unittest.TestCase):
             patch.object(views.st, "markdown"),
             patch.object(views.st, "caption"),
             patch.object(views.st, "info"),
-            patch.object(views.st, "tabs", return_value=[DummyTab() for _ in range(9)]),
+            patch.object(views.st, "tabs", return_value=[DummyTab() for _ in range(5)]),
+            patch.object(views.st, "expander", return_value=DummyTab()),
             patch.object(views, "render_overview") as render_overview,
             patch.object(views, "render_steps") as render_steps,
-            patch.object(views, "render_approvals") as render_approvals,
-            patch.object(views, "render_content_rounds") as render_content_rounds,
-            patch.object(views, "render_creator_summary") as render_creator_summary,
             patch.object(views, "render_timeline") as render_timeline,
-            patch.object(views, "render_resources") as render_resources,
             patch.object(views, "render_notes") as render_notes,
             patch.object(views, "render_activity") as render_activity,
         ):
@@ -111,56 +102,10 @@ class InfluencerPlanningRuntimeTests(unittest.TestCase):
         service.get_program_workspace_summary.assert_called_once_with(actor, campaign.program_id)
         render_overview.assert_called_once_with(actor, service, [actor], campaign)
         render_steps.assert_called_once_with(actor, service, [actor], campaign)
-        render_approvals.assert_called_once_with(actor, service, campaign)
-        render_content_rounds.assert_called_once_with(actor, service, campaign)
-        render_creator_summary.assert_called_once_with(actor, service, campaign)
         render_timeline.assert_called_once_with(actor, service, campaign)
-        render_resources.assert_called_once_with(actor, service, campaign)
         render_notes.assert_called_once_with(actor, service, summary)
         render_activity.assert_called_once_with(actor, service, campaign)
 
-    def test_quick_resource_links_do_not_pass_streamlit_keys(self) -> None:
-        actor = CampaignOpsUser(id="u1", display_name="Bailey", role=UserRole.ADMINISTRATOR.value)
-        campaign = SimpleNamespace(
-            id="campaign-1",
-            program_id="program-1",
-            workstream_id="workstream-1",
-            track_sheet_url="https://example.com/track",
-            influencer_brief_url=None,
-            bitly_link_url=None,
-            invoice_url=None,
-            eop_survey_url=None,
-            campaign_brief_url=None,
-            click2cart_link_url=None,
-        )
-        service = Mock()
-        service.get_program_workspace_summary.return_value = SimpleNamespace(id="summary")
-        service.list_program_resources.return_value = []
-
-        with (
-            patch.object(views.st, "columns", side_effect=lambda count: [FakeColumn() for _ in range(count)]),
-            patch.object(views.st, "dataframe"),
-            patch.object(views.st, "form", return_value=DummyForm()),
-            patch.object(views.st, "form_submit_button", return_value=False),
-        ):
-            views.render_resources(actor, service, campaign)
-
-    def test_quick_link_normalization_uses_workbook_order_and_omits_missing_urls(self) -> None:
-        campaign = SimpleNamespace(
-            track_sheet_url="https://example.com/track",
-            influencer_brief_url=None,
-            bitly_link_url="https://example.com/bitly",
-            click2cart_link_url="https://example.com/c2c",
-            invoice_url=None,
-            eop_survey_url="https://example.com/eop",
-            influencer_education_url="https://example.com/edu",
-            campaign_brief_url=None,
-        )
-
-        links = campaign_quick_links(campaign)
-
-        self.assertEqual(["Track Sheet", "Bitly Link", "Click2Cart Link", "EOP Survey", "Influencer Education"], [link.label for link in links])
-        self.assertNotIn("Invoice", [link.label for link in links])
 
     def test_sequence_preview_preserves_sequence_order_undated_rows_and_avoids_duplicates(self) -> None:
         steps = [

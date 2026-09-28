@@ -7,7 +7,7 @@ import streamlit as st
 
 from app.campaign_ops.formatting import ROLE_LABELS
 from app.campaign_ops.state import get_sections_for_user, set_section
-from app.campaign_ops.ui.components import render_empty_state, render_page_header, render_section_header
+from app.campaign_ops.ui.components import render_section_header
 from core.campaign_ops.db import CampaignOpsSetupStatus
 from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.migrations import initialize_campaign_ops_database
@@ -162,11 +162,11 @@ def render_role_caption(user: CampaignOpsUser | None) -> None:
 def render_section_navigation(user: CampaignOpsUser | None, viewer: str) -> str:
     sections = get_sections_for_user(user, viewer)
     active_section = st.session_state.get("campaign_ops_section", sections[0])
-    render_section_header("Workspace Areas", "Choose the active Campaign Operations module.")
-    columns = st.columns(4)
-    for index, section in enumerate(sections):
-        with columns[index % 4]:
-            if st.button(
+    for group, group_sections in (("Programs", sections[:2]), ("Workflows", sections[2:])):
+        render_section_header(group)
+        columns = st.columns(len(group_sections))
+        for column, section in zip(columns, group_sections):
+            if column.button(
                 section,
                 type="primary" if section == active_section else "secondary",
                 use_container_width=True,
@@ -174,8 +174,3 @@ def render_section_navigation(user: CampaignOpsUser | None, viewer: str) -> str:
                 set_section(st.session_state, section)
                 active_section = section
     return str(active_section)
-
-
-def render_placeholder(section: str) -> None:
-    render_page_header(section, "This Campaign Operations area is reserved for a later implementation pass.", active_module=section)
-    render_empty_state("module not initialized")

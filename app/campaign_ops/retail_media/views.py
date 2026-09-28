@@ -2,43 +2,19 @@ from __future__ import annotations
 
 from html import escape
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 import streamlit as st
 
 from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date, format_datetime, safe_text, title_label
 from app.campaign_ops.note_views import render_notes
-from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
-from app.campaign_ops.retail_media.baseline import (
-    action_display_text,
-    current_status_text,
-    next_current_retail_media_action,
-    normalize_retail_media_actions,
-    over_budget,
-    retail_media_quick_links,
-    spend_budget_values,
-)
-from app.campaign_ops.retail_media.formatting import (
-    PORTFOLIO_COLUMNS,
-    channel_mix_label,
-    currency,
-    percent,
-    portfolio_rows,
-    retail_status_label,
-)
+from app.campaign_ops.retail_media.baseline import action_display_text, current_status_text, next_current_retail_media_action, normalize_retail_media_actions, over_budget
+from app.campaign_ops.retail_media.formatting import channel_mix_label, retail_status_label
 from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
-from core.campaign_ops.enums import TaskStatus, WorkstreamType
+from core.campaign_ops.enums import TaskStatus
 from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.models import CampaignOpsUser
-from core.campaign_ops.retail_media import (
-    RETAIL_MEDIA_APPROVAL_STATUSES,
-    RETAIL_MEDIA_CHANNEL_TYPES,
-    RETAIL_MEDIA_RESOURCE_TYPES,
-    RETAIL_MEDIA_STATUSES,
-    RETAIL_MEDIA_STATUS_NOT_STARTED,
-    RETAIL_MEDIA_SUBMISSION_STATUSES,
-)
+from core.campaign_ops.retail_media import RETAIL_MEDIA_APPROVAL_STATUSES, RETAIL_MEDIA_CHANNEL_TYPES, RETAIL_MEDIA_STATUSES, RETAIL_MEDIA_STATUS_NOT_STARTED, RETAIL_MEDIA_SUBMISSION_STATUSES
 from core.campaign_ops.service import CampaignOpsService
 
 SORT_OPTIONS = {
@@ -120,21 +96,10 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService) -> Non
         st.info("No retail media campaigns match these filters.")
     for campaign in filtered:
         render_campaign_scan_card(campaign, board_data)
-    with st.expander("Retail Media Portfolio Summary", expanded=False):
-        st.dataframe(portfolio_rows(filtered), column_order=PORTFOLIO_COLUMNS, hide_index=True, use_container_width=True)
-    if filtered:
-        labels = {f"{item.campaign_title} | {safe_text(item.client_name)}": item.id for item in filtered}
-        cols = st.columns(2)
-        chosen = cols[0].selectbox("Open campaign", list(labels), key="campaign_ops_retail_media_campaign_select")
-        if cols[1].button("Open Campaign", key="campaign_ops_retail_media_campaign_open"):
-            st.session_state["campaign_ops_selected_retail_media_campaign_id"] = labels[chosen]
-            st.rerun()
 
 
 def render_campaign_scan_card(campaign: Any, board_data: dict[str, Any]) -> None:
-    resources = board_data.get("resources", {}).get(campaign.id, [])
     channels = board_data.get("channels", {}).get(campaign.id, [])
-    links = retail_media_quick_links(campaign, resources)
     actions = normalize_retail_media_actions(
         activations=board_data.get("activations", {}).get(campaign.id, []),
         creative=board_data.get("creative", {}).get(campaign.id, []),
@@ -143,7 +108,6 @@ def render_campaign_scan_card(campaign: Any, board_data: dict[str, Any]) -> None
         channels=channels,
     )
     next_action = next_current_retail_media_action(actions)
-    budget, spend = spend_budget_values(campaign)
     status = retail_status_label(campaign.retail_media_status)
     active_state = "Active" if campaign.is_active else "Inactive"
     paused = " | PAUSED" if campaign.is_paused else ""
@@ -162,12 +126,6 @@ def render_campaign_scan_card(campaign: Any, board_data: dict[str, Any]) -> None
         f"Launch {format_date(campaign.launch_date)}" if campaign.launch_date else "",
         f"Wrap {format_date(campaign.wrap_date)}" if campaign.wrap_date else "",
     ] if part)
-    budget_text = " | ".join(part for part in [
-        f"Budget {currency(budget)}" if budget is not None else "",
-        f"Spend {currency(spend)}" if spend is not None else "",
-    ] if part)
-    if over_budget(campaign) and budget_text:
-        budget_text = f"<span class='campaign-ops-rm-alert'>{escape(budget_text)}</span>"
     html = [
         "<div class='campaign-ops-rm-card'>",
         f"<div class='campaign-ops-rm-card-head'>{escape(campaign.campaign_title)}<div class='campaign-ops-rm-card-meta'>{escape(meta)}</div></div>",
@@ -175,7 +133,6 @@ def render_campaign_scan_card(campaign: Any, board_data: dict[str, Any]) -> None
         _card_cell("Channels", escape(channel_mix_label(campaign.channel_mix))),
         _card_cell("Latest Update", escape(safe_text(campaign.latest_update)) if campaign.latest_update else "-"),
         _card_cell("Waiting On", escape(safe_text(campaign.waiting_on)) if campaign.waiting_on else "-"),
-        _card_cell("Budget / Spend", budget_text or "-"),
         _card_cell("Launch / Wrap", escape(dates) if dates else "-"),
         _card_cell("Current Status", escape(current_status_text(campaign)) + pause),
         _card_cell("Next / Current Action", escape(action_display_text(next_action)) + f"<br>{escape(next_action.status)}" if next_action else "No open media action."),
@@ -184,10 +141,6 @@ def render_campaign_scan_card(campaign: Any, board_data: dict[str, Any]) -> None
         "</div>",
     ]
     st.markdown("".join(html), unsafe_allow_html=True)
-    if links:
-        cols = st.columns(min(len(links), 6))
-        for index, link in enumerate(links[:6]):
-            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_retail_media_scan_link_{campaign.id}_{index}")
     if st.button("Open Retail Media Campaign", key=f"campaign_ops_retail_media_scan_open_{campaign.id}"):
         st.session_state["campaign_ops_selected_retail_media_campaign_id"] = campaign.id
         st.rerun()
@@ -195,19 +148,6 @@ def render_campaign_scan_card(campaign: Any, board_data: dict[str, Any]) -> None
 
 def _card_cell(label: str, value: str) -> str:
     return f"<div class='campaign-ops-rm-card-cell'><div class='campaign-ops-rm-card-label'>{escape(label)}</div><div class='campaign-ops-rm-card-value'>{value}</div></div>"
-
-
-def render_campaign_block(campaign: Any) -> None:
-    rows = [
-        f"Channel mix: {escape(channel_mix_label(campaign.channel_mix))} | Status: {escape(retail_status_label(campaign.retail_media_status))}",
-        f"Latest update: {escape(safe_text(campaign.latest_update))}",
-        f"Launch: {format_date(campaign.launch_date)} | Wrap: {format_date(campaign.wrap_date)} | Budget: {currency(campaign.overall_budget)} | Spend: {currency(campaign.total_spend)}",
-        f"Tracksheet: {'Available' if campaign.tracksheet_url else 'Missing'} | Budget Tracker: {'Available' if campaign.budget_tracker_url else 'Missing'} | Optimization Log: {'Available' if campaign.optimization_log_url else 'Missing'}",
-    ]
-    html = f"<div class='campaign-ops-rm-block'><div class='campaign-ops-rm-bar'>{escape(campaign.campaign_title)}</div>"
-    html += "".join(f"<div class='campaign-ops-rm-row'>{row}</div>" for row in rows)
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
 
 
 def render_filters(campaigns: list[Any]) -> dict[str, object]:
@@ -274,18 +214,14 @@ def render_new_campaign(actor: CampaignOpsUser, service: CampaignOpsService, use
         status = cols[0].selectbox("Status", RETAIL_MEDIA_STATUSES, index=RETAIL_MEDIA_STATUSES.index(RETAIL_MEDIA_STATUS_NOT_STARTED), format_func=retail_status_label)
         latest_update = cols[1].text_input("Latest Update")
         waiting_on = cols[2].text_input("Waiting On")
-        cols = st.columns(4)
+        cols = st.columns(2)
         launch_date = cols[0].date_input("Launch Date", value=None)
         wrap_date = cols[1].date_input("Wrap Date", value=None)
-        budget = cols[2].number_input("Overall Budget", min_value=0.0, value=0.0)
-        spend = cols[3].number_input("Total Spend", min_value=0.0, value=0.0)
         cols = st.columns(3)
         cadence = cols[0].text_input("Reporting Cadence")
         paused = cols[1].checkbox("Paused")
         pause_reason = cols[2].text_input("Pause Reason")
         channels = st.multiselect("Initial Channels", RETAIL_MEDIA_CHANNEL_TYPES, default=[])
-        st.caption("Optional initial resources")
-        resource_urls = {resource_type: st.text_input(resource_type) for resource_type in RETAIL_MEDIA_RESOURCE_TYPES[:7]}
         submitted = st.form_submit_button("Create Retail Media Campaign", type="primary")
     if not submitted:
         return
@@ -301,12 +237,12 @@ def render_new_campaign(actor: CampaignOpsUser, service: CampaignOpsService, use
             launch_date=launch_date,
             wrap_date=wrap_date,
             reporting_cadence=trim_or_none(cadence),
-            overall_budget=budget,
-            total_spend=spend,
+
+
             is_paused=paused,
             pause_reason=trim_or_none(pause_reason),
             initial_channels=[{"channel_type": channel} for channel in channels],
-            initial_resources={k: trim_or_none(v) for k, v in resource_urls.items()},
+
         )
     except CampaignOpsError as exc:
         st.error(f"Retail Media campaign was not created: {exc}")
@@ -333,131 +269,25 @@ def render_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users:
     st.caption(
         f"Client: {safe_text(campaign.client_name)} | Program: {campaign.program_name} | Owner: {safe_text(campaign.owner_display_name)} | "
         f"Status: {retail_status_label(campaign.retail_media_status)} | Channels: {channel_mix_label(campaign.channel_mix)} | "
-        f"Launch: {format_date(campaign.launch_date)} | Wrap: {format_date(campaign.wrap_date)} | Budget: {currency(campaign.overall_budget)} | "
-        f"Spend: {currency(campaign.total_spend)} | Paused: {'Yes' if campaign.is_paused else 'No'} | Risk: {RISK_LABELS.get(campaign.program_risk, campaign.program_risk)} | "
+        f"Launch: {format_date(campaign.launch_date)} | Wrap: {format_date(campaign.wrap_date)} | "
+        f"Paused: {'Yes' if campaign.is_paused else 'No'} | Risk: {RISK_LABELS.get(campaign.program_risk, campaign.program_risk)} | "
         f"Latest: {safe_text(campaign.latest_update)} | Next: {safe_text(campaign.next_milestone)} | Updated: {format_datetime(campaign.updated_at)} | {'Active' if campaign.is_active else 'Inactive'}"
     )
-    render_retail_media_baseline_tracker(actor, service, campaign)
-    tabs = st.tabs(["Overview", "Channels", "Activations / Flights", "Budget & Spend", "Creative & Approvals", "Timeline", "Optimization Log", "Resources", "Notes", "Activity"])
+    tabs = st.tabs(['Overview', 'Activations / Flights', 'Creative & Approvals', 'Timeline', 'Notes', 'Activity'])
     with tabs[0]:
         render_overview(actor, service, users, campaign)
     with tabs[1]:
-        render_channels(actor, service, campaign)
-    with tabs[2]:
         render_activations(actor, service, campaign)
-    with tabs[3]:
-        render_budget(actor, service, campaign)
-    with tabs[4]:
+    with tabs[2]:
         render_creative(actor, service, campaign)
-    with tabs[5]:
+    with tabs[3]:
         render_timeline(actor, service, campaign)
-    with tabs[6]:
-        render_optimization(actor, service, campaign)
-    with tabs[7]:
-        render_resources(actor, service, campaign)
-    with tabs[8]:
-        render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
-    with tabs[9]:
-        render_activity(actor, service, campaign)
-
-
-def render_retail_media_baseline_tracker(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    channels = service.list_retail_media_channels(actor, campaign.id, include_inactive=False)
-    activations = service.list_retail_media_activations(actor, campaign.id, include_inactive=False)
-    creative = service.list_retail_media_creative(actor, campaign.id, include_inactive=False)
-    optimizations = service.list_retail_media_optimizations(actor, campaign.id, include_inactive=False)
-    milestones = [
-        m
-        for m in service.list_program_milestones(actor, campaign.program_id, include_inactive=False)
-        if m.milestone_type == "Retail Media"
-    ]
-    resources = [
-        r
-        for r in service.list_program_resources(actor, campaign.program_id, include_inactive=False)
-        if r.resource_type in RETAIL_MEDIA_RESOURCE_TYPES or r.workstream_id == campaign.workstream_id
-    ]
-    links = retail_media_quick_links(campaign, resources, include_custom=True)
-    actions = normalize_retail_media_actions(activations=activations, creative=creative, optimizations=optimizations, milestones=milestones, channels=channels)
-    next_action = next_current_retail_media_action(actions)
-    budget_summary = service.retail_media_budget_summary(campaign, channels)
-    header = f"{safe_text(campaign.client_name)} | {campaign.program_name} | Owner {safe_text(campaign.owner_display_name)} | {retail_status_label(campaign.retail_media_status)} | {'Active' if campaign.is_active else 'Inactive'}"
-    media_facts = " | ".join(part for part in [
-        f"Channels: {channel_mix_label(campaign.channel_mix)}",
-        f"Launch {format_date(campaign.launch_date)}" if campaign.launch_date else "",
-        f"Wrap {format_date(campaign.wrap_date)}" if campaign.wrap_date else "",
-        f"Risk {RISK_LABELS.get(campaign.program_risk, title_label(campaign.program_risk))}" if campaign.program_risk else "",
-    ] if part)
-    status = current_status_text(campaign)
-
-    st.markdown("<div class='campaign-ops-rm-baseline'><div class='campaign-ops-rm-card-head'>Retail Media Baseline</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Campaign Header</div>{escape(campaign.campaign_title)}<br><span class='campaign-ops-rm-card-meta'>{escape(header)}</span></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Media Facts</div>{escape(media_facts) if media_facts else '-'}</div>", unsafe_allow_html=True)
-    if links:
-        st.markdown("<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Linked Sheets</div></div>", unsafe_allow_html=True)
-        cols = st.columns(min(len(links), 6))
-        for index, link in enumerate(links):
-            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_retail_media_baseline_link_{campaign.id}_{index}")
-    if actions:
-        st.markdown("<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Dated Media Actions</div></div>", unsafe_allow_html=True)
-        st.dataframe(
-            [
-                {
-                    "Date": format_date(row.display_date),
-                    "Action": row.action,
-                    "Source": row.source,
-                    "Channel": safe_text(row.channel_label),
-                    "Status": row.status,
-                    "Waiting On": safe_text(row.waiting_on),
-                    "Notes": safe_text(row.note),
-                    "Hard Deadline": "Yes" if row.hard_deadline else "No",
-                }
-                for row in actions
-            ],
-            hide_index=True,
-            use_container_width=True,
-        )
-    else:
-        st.info("No media actions yet.")
-    cols = st.columns(2)
-    cols[0].markdown(f"**Current Status**  \n{status}")
-    if next_action:
-        cols[1].markdown(f"**Next / Current Action**  \n{action_display_text(next_action)}  \n{next_action.status}")
-    else:
-        cols[1].markdown("**Next / Current Action**  \nNo open media action.")
-    cols = st.columns(2)
-    if campaign.latest_update:
-        cols[0].markdown(f"**Latest Update**  \n{campaign.latest_update}")
-    if campaign.waiting_on:
-        cols[1].markdown(f"**Waiting On**  \n{campaign.waiting_on}")
-    spend_rows = [
-        {"Metric": "Campaign Budget", "Value": currency(budget_summary["budget"])},
-        {"Metric": "Campaign Spend", "Value": currency(budget_summary["spend"])},
-        {"Metric": "Remaining Budget", "Value": currency(budget_summary["remaining"])},
-        {"Metric": "Spend Percentage", "Value": percent(budget_summary["spend_percentage"])},
-    ]
-    st.markdown("<div class='campaign-ops-rm-baseline-section'><div class='campaign-ops-rm-baseline-label'>Spend / Reporting Summary</div></div>", unsafe_allow_html=True)
-    st.dataframe(spend_rows, hide_index=True, use_container_width=True)
-    channel_spend = [
-        {
-            "Channel": channel.channel_type,
-            "Spend": currency(channel.spend_to_date),
-            "Budget": currency(channel.budget),
-            "Reporting": safe_text(channel.reporting_requirement),
-        }
-        for channel in channels
-        if channel.spend_to_date is not None or channel.budget is not None or channel.reporting_requirement
-    ]
-    if channel_spend:
-        st.dataframe(channel_spend, hide_index=True, use_container_width=True)
-    reporting = " | ".join(part for part in [
-        f"Cadence: {campaign.reporting_cadence}" if campaign.reporting_cadence else "",
-        "Over budget" if budget_summary["over_budget"] else "",
-        f"Latest optimization: {optimizations[0].update_text}" if optimizations else "",
-    ] if part)
-    if reporting:
-        st.caption(reporting)
-    st.caption("Existing workspace tabs remain below for detailed editing and history.")
-    st.markdown("</div>", unsafe_allow_html=True)
+    with tabs[4]:
+        with st.expander("Notes", expanded=False):
+            render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
+    with tabs[5]:
+        with st.expander("Activity", expanded=False):
+            render_activity(actor, service, campaign)
 
 
 def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], campaign: Any) -> None:
@@ -472,11 +302,9 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         latest = cols[0].text_input("Latest Update", value=campaign.latest_update or "")
         waiting = cols[1].text_input("Waiting On", value=campaign.waiting_on or "")
         cadence = cols[2].text_input("Reporting Cadence", value=campaign.reporting_cadence or "")
-        cols = st.columns(4)
+        cols = st.columns(2)
         launch = cols[0].date_input("Launch Date", value=campaign.launch_date)
         wrap = cols[1].date_input("Wrap Date", value=campaign.wrap_date)
-        budget = cols[2].number_input("Overall Budget", min_value=0.0, value=float(campaign.overall_budget or 0))
-        spend = cols[3].number_input("Total Spend", min_value=0.0, value=float(campaign.total_spend or 0))
         cols = st.columns(2)
         paused = cols[0].checkbox("Paused", value=campaign.is_paused)
         pause_reason = cols[1].text_input("Pause Reason", value=campaign.pause_reason or "")
@@ -484,7 +312,7 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
     st.caption(f"Program: {campaign.program_name} | Client: {safe_text(campaign.client_name)} | Workstream: {safe_text(campaign.workstream_id)} | Program status: {STATUS_LABELS.get(campaign.program_status, campaign.program_status)}")
     if submitted:
         try:
-            service.update_retail_media_campaign(actor, campaign.id, campaign_title=title, owner_user_id=user_options[owner], retail_media_status=status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), reporting_cadence=trim_or_none(cadence), launch_date=launch, wrap_date=wrap, overall_budget=budget, total_spend=spend, is_paused=paused, pause_reason=trim_or_none(pause_reason))
+            service.update_retail_media_campaign(actor, campaign.id, campaign_title=title, owner_user_id=user_options[owner], retail_media_status=status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), reporting_cadence=trim_or_none(cadence), launch_date=launch, wrap_date=wrap, is_paused=paused, pause_reason=trim_or_none(pause_reason))
         except CampaignOpsError as exc:
             st.error(f"Overview was not saved: {exc}")
             return
@@ -500,49 +328,6 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
 
 def channel_options(channels: list[Any]) -> dict[str, str | None]:
     return {"Campaign-level": None, **{channel.channel_type: channel.id for channel in channels if channel.is_active}}
-
-
-def render_channels(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    st.markdown("<div class='campaign-ops-rm-title'>Channels</div>", unsafe_allow_html=True)
-    show_inactive = st.checkbox("Show inactive channels", key="campaign_ops_retail_media_channels_inactive")
-    channels = service.list_retail_media_channels(actor, campaign.id, include_inactive=show_inactive)
-    with st.form(f"campaign_ops_retail_media_channel_add_{campaign.id}"):
-        cols = st.columns(4)
-        channel_type = cols[0].selectbox("Channel Type", RETAIL_MEDIA_CHANNEL_TYPES)
-        platform = cols[1].text_input("Platform")
-        budget = cols[2].number_input("Budget", min_value=0.0, value=0.0)
-        spend = cols[3].number_input("Spend to Date", min_value=0.0, value=0.0)
-        submitted = st.form_submit_button("Add Channel", type="primary")
-    if submitted:
-        try:
-            service.create_retail_media_channel(actor, campaign.id, channel_type=channel_type, platform_name=trim_or_none(platform), budget=budget, spend_to_date=spend)
-        except CampaignOpsError as exc:
-            st.error(str(exc))
-        st.rerun()
-    st.dataframe([{ "Channel Type": c.channel_type, "Platform": safe_text(c.platform_name), "Status": safe_text(c.status), "Budget": currency(c.budget), "Spend": currency(c.spend_to_date), "Active State": "Active" if c.is_active else "Inactive" } for c in channels], hide_index=True, use_container_width=True)
-    for c in channels:
-        with st.expander(f"Edit Channel: {c.channel_type}", expanded=False):
-            with st.form(f"campaign_ops_retail_media_channel_edit_{c.id}"):
-                cols = st.columns(4)
-                new_type = cols[0].text_input("Channel Type", value=c.channel_type)
-                platform = cols[1].text_input("Platform", value=c.platform_name or "")
-                status = cols[2].text_input("Status", value=c.status or "")
-                reporting = cols[3].text_input("Reporting Requirement", value=c.reporting_requirement or "")
-                cols = st.columns(4)
-                budget = cols[0].number_input("Budget", min_value=0.0, value=float(c.budget or 0), key=f"budget_{c.id}")
-                spend = cols[1].number_input("Spend to Date", min_value=0.0, value=float(c.spend_to_date or 0), key=f"spend_{c.id}")
-                launch = cols[2].date_input("Launch Date", value=c.launch_date)
-                end = cols[3].date_input("End Date", value=c.end_date)
-                save = st.form_submit_button("Save Channel")
-            if save:
-                service.update_retail_media_channel(actor, campaign.id, c.id, channel_type=new_type, platform_name=trim_or_none(platform), status=trim_or_none(status), reporting_requirement=trim_or_none(reporting), budget=budget, spend_to_date=spend, launch_date=launch, end_date=end)
-                st.rerun()
-            if c.is_active and st.button("Deactivate Channel", key=f"campaign_ops_retail_media_channel_deactivate_{c.id}"):
-                service.deactivate_retail_media_channel(actor, campaign.id, c.id)
-                st.rerun()
-            if not c.is_active and st.button("Reactivate Channel", key=f"campaign_ops_retail_media_channel_reactivate_{c.id}"):
-                service.reactivate_retail_media_channel(actor, campaign.id, c.id)
-                st.rerun()
 
 
 def render_activations(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
@@ -579,19 +364,6 @@ def render_activations(actor: CampaignOpsUser, service: CampaignOpsService, camp
         if not a.is_active and cols[3].button("Reactivate", key=f"campaign_ops_retail_media_activation_reactivate_{a.id}"):
             service.reactivate_retail_media_activation(actor, campaign.id, a.id)
             st.rerun()
-
-
-def render_budget(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    channels = service.list_retail_media_channels(actor, campaign.id, include_inactive=False)
-    summary = service.retail_media_budget_summary(campaign, channels)
-    cols = st.columns(4)
-    cols[0].metric("Overall Budget", currency(summary["budget"]))
-    cols[1].metric("Total Spend", currency(summary["spend"]))
-    cols[2].metric("Remaining Budget", currency(summary["remaining"]))
-    cols[3].metric("Spend Percentage", percent(summary["spend_percentage"]))
-    if summary["over_budget"]:
-        st.warning("Spend is over budget.")
-    st.dataframe([{ "Channel": c.channel_type, "Budget": currency(c.budget), "Spend": currency(c.spend_to_date), "Remaining": currency((c.budget or 0) - (c.spend_to_date or 0)) if c.budget is not None else "-" } for c in channels], hide_index=True, use_container_width=True)
 
 
 def render_creative(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
@@ -657,56 +429,6 @@ def render_timeline(actor: CampaignOpsUser, service: CampaignOpsService, campaig
             st.rerun()
 
 
-def render_optimization(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    channels = service.list_retail_media_channels(actor, campaign.id)
-    options = channel_options(channels)
-    with st.form(f"campaign_ops_retail_media_optimization_add_{campaign.id}"):
-        cols = st.columns(3)
-        update_date = cols[0].date_input("Date")
-        channel_label = cols[1].selectbox("Channel", list(options))
-        opt_type = cols[2].text_input("Optimization Type")
-        text = st.text_area("Update")
-        submitted = st.form_submit_button("Add Optimization Update", type="primary")
-    if submitted:
-        service.create_retail_media_optimization(actor, campaign.id, update_date, text, channel_id=options[channel_label], optimization_type=trim_or_none(opt_type))
-        st.rerun()
-    updates = service.list_retail_media_optimizations(actor, campaign.id, include_inactive=True)
-    st.dataframe([{ "Date": format_date(u.update_date), "Type": safe_text(u.optimization_type), "Update": u.update_text, "Active State": "Active" if u.is_active else "Inactive" } for u in updates], hide_index=True, use_container_width=True)
-    for u in updates:
-        cols = st.columns(2)
-        if u.is_active and cols[0].button("Deactivate", key=f"campaign_ops_retail_media_optimization_deactivate_{u.id}"):
-            service.deactivate_retail_media_optimization(actor, campaign.id, u.id)
-            st.rerun()
-        if not u.is_active and cols[1].button("Reactivate", key=f"campaign_ops_retail_media_optimization_reactivate_{u.id}"):
-            service.reactivate_retail_media_optimization(actor, campaign.id, u.id)
-            st.rerun()
-
-
-def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    st.markdown("<div class='campaign-ops-rm-title'>Resources</div>", unsafe_allow_html=True)
-    cols = st.columns(3)
-    for idx, (label, url) in enumerate((("Tracksheet", campaign.tracksheet_url), ("Budget Tracker", campaign.budget_tracker_url), ("Optimization Log", campaign.optimization_log_url))):
-        if url:
-            cols[idx].link_button(label, sanitize_link(url), key=f"campaign_ops_retail_media_quick_{label}_{campaign.id}")
-        else:
-            cols[idx].metric(label, "Missing")
-    summary = service.get_program_workspace_summary(actor, campaign.program_id)
-    resources = [r for r in service.list_program_resources(actor, campaign.program_id, include_inactive=True) if r.resource_type in RETAIL_MEDIA_RESOURCE_TYPES or r.workstream_id == campaign.workstream_id]
-    st.dataframe(resource_table_rows(resources), hide_index=True, use_container_width=True)
-    with st.form(f"campaign_ops_retail_media_resource_add_{campaign.id}"):
-        cols = st.columns(3)
-        title = cols[0].text_input("Title")
-        resource_type = cols[1].selectbox("Resource type", RETAIL_MEDIA_RESOURCE_TYPES)
-        url = cols[2].text_input("URL")
-        notes = st.text_area("Notes")
-        submitted = st.form_submit_button("Add Resource", type="primary")
-    if submitted:
-        service.create_resource(actor, campaign.program_id, title=title, resource_type=resource_type, workstream_id=campaign.workstream_id, url=trim_or_none(url), notes=trim_or_none(notes))
-        st.rerun()
-    for resource in resources:
-        render_resource_actions(actor, service, summary, resource)
-
-
 def render_activity(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
     summary = service.get_program_workspace_summary(actor, campaign.program_id)
     rows = [
@@ -715,11 +437,3 @@ def render_activity(actor: CampaignOpsUser, service: CampaignOpsService, campaig
         if event.event_type.startswith("retail_media_") or event.entity_type.startswith("retail_media_")
     ]
     st.dataframe(rows, hide_index=True, use_container_width=True)
-
-
-def sanitize_link(url: str) -> str:
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))

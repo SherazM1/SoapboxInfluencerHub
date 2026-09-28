@@ -3,64 +3,21 @@ from __future__ import annotations
 from datetime import date
 from html import escape
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 import streamlit as st
 
 from app.campaign_ops.formatting import format_date, format_datetime, safe_text, title_label
-from app.campaign_ops.influencer.live_baseline import (
-    compose_live_operational_sequence,
-    live_quick_links,
-    next_go_live_text,
-    select_live_campaign_for_open,
-    smart_live_sequence_preview,
-)
+from app.campaign_ops.influencer.live_baseline import compose_live_operational_sequence, next_go_live_text, select_live_campaign_for_open, smart_live_sequence_preview
 from app.campaign_ops.influencer.planning_baseline import compact_date
 from app.campaign_ops.note_views import render_notes
-from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
 from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.enums import TaskStatus
 from core.campaign_ops.exceptions import CampaignOpsError
-from core.campaign_ops.influencer import (
-    INFLUENCER_RESOURCE_TYPES,
-    LIVE_EXCEPTION_TYPES,
-    LIVE_RESOURCE_TYPES,
-    LIVE_STATUSES,
-    RESPONSIBLE_PARTIES,
-)
+from core.campaign_ops.influencer import CREATOR_LIVE_STATUSES, LIVE_EXCEPTION_TYPES, LIVE_STATUSES, RESPONSIBLE_PARTIES
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.service import CampaignOpsService
 
-LIVE_COLUMNS = [
-    "Campaign",
-    "Client",
-    "Shared Program",
-    "Manager",
-    "Live Status",
-    "Latest Update",
-    "Waiting On",
-    "Hold State",
-    "Hold Reason",
-    "Live Creator Count",
-    "Planned Creator Count",
-    "Active Waves",
-    "Next Go-Live Date",
-    "Paid Live End Date",
-    "Open Exceptions",
-    "Wrap Date",
-    "Invoice Status",
-    "Track Sheet",
-    "Influencer Brief",
-    "EOP Survey",
-    "Invoice",
-    "Click2Cart",
-    "Client-Facing Live Doc",
-    "Daily Impressions",
-    "Risk",
-    "Updated Date",
-    "Active State",
-]
 
 SORT_OPTIONS = {
     "Recently updated": "updated_at",
@@ -143,25 +100,14 @@ def render_live_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, m
     planning_steps = board_data.get("planning_steps", {})
     checkpoints = board_data.get("checkpoints", {})
     waves = board_data.get("waves", {})
-    resources_by_program = board_data.get("resources", {})
     for campaign in filtered:
         render_live_block(
             campaign,
             planning_steps.get(campaign.id, []),
             checkpoints.get(campaign.id, []),
             waves.get(campaign.id, []),
-            resources_by_program.get(campaign.program_id, []),
             compact=current_view == "All Live",
         )
-    with st.expander("Live Portfolio Summary", expanded=False):
-        st.dataframe(live_rows(filtered), column_order=LIVE_COLUMNS, hide_index=True, use_container_width=True)
-    if filtered:
-        labels = {f"{c.campaign_title} | {safe_text(c.client_name)}": c.id for c in filtered}
-        cols = st.columns(2)
-        chosen = cols[0].selectbox("Open Live Campaign", list(labels), key="campaign_ops_influencer_live_campaign_select")
-        if cols[1].button("Open Live Workspace", key="campaign_ops_influencer_live_open"):
-            st.session_state["campaign_ops_selected_influencer_live_campaign_id"] = labels[chosen]
-            st.rerun()
 
 
 def render_filters(campaigns: list[Any], *, show_manager_filter: bool = True) -> dict[str, object]:
@@ -222,50 +168,14 @@ def sort_rows(campaigns: list[Any], sort_by: str) -> list[Any]:
     return sorted(campaigns, key=lambda c: (getattr(c, sort_by, None) is None, getattr(c, sort_by, None) or "", c.campaign_title))
 
 
-def live_rows(campaigns: list[Any]) -> list[dict[str, str]]:
-    return [
-        {
-            "Campaign": c.campaign_title,
-            "Client": safe_text(c.client_name),
-            "Shared Program": c.program_name,
-            "Manager": safe_text(c.manager_display_name),
-            "Live Status": title_label(c.live_status),
-            "Latest Update": safe_text(c.latest_update),
-            "Waiting On": safe_text(c.waiting_on),
-            "Hold State": "ON HOLD" if c.is_on_hold else "Active",
-            "Hold Reason": safe_text(c.hold_reason),
-            "Live Creator Count": str(c.live_creator_count),
-            "Planned Creator Count": safe_text(c.planned_creator_count),
-            "Active Waves": str(c.active_wave_count),
-            "Next Go-Live Date": format_date(c.next_go_live_date),
-            "Paid Live End Date": format_date(c.paid_live_end_date),
-            "Open Exceptions": str(c.open_exception_count),
-            "Wrap Date": format_date(c.wrap_date),
-            "Invoice Status": safe_text(c.invoice_status),
-            "Track Sheet": "Available" if c.track_sheet_url else "Missing",
-            "Influencer Brief": "Available" if c.influencer_brief_url else "Missing",
-            "EOP Survey": "Available" if c.eop_survey_url else "Missing",
-            "Invoice": "Available" if c.invoice_url else "Missing",
-            "Click2Cart": "Available" if c.click2cart_link_url else "Missing",
-            "Client-Facing Live Doc": "Available" if c.client_facing_live_doc_url else "Missing",
-            "Daily Impressions": "Available" if c.daily_impressions_url else "Missing",
-            "Risk": title_label(c.program_risk),
-            "Updated Date": format_datetime(c.updated_at),
-            "Active State": "Active" if c.is_active else "Inactive",
-        }
-        for c in campaigns
-    ]
-
-
-def render_live_block(campaign: Any, planning_steps: list[Any], checkpoints: list[Any], waves: list[Any], resources: list[Any], *, compact: bool = False) -> None:
+def render_live_block(campaign: Any, planning_steps: list[Any], checkpoints: list[Any], waves: list[Any], *, compact: bool = False) -> None:
     expanded_key = f"campaign_ops_influencer_live_sequence_full_{campaign.id}"
     expanded = bool(st.session_state.get(expanded_key))
     sequence = compose_live_operational_sequence(planning_steps, checkpoints, waves)
     visible_sequence = sequence if expanded else smart_live_sequence_preview(sequence, today=date.today(), upcoming_limit=3 if compact else 4, compact=compact)
     urgent = " background:#fff9d8;" if campaign.highlighted_exception_count else ""
-    hold_badge = "<span class='campaign-ops-live-hold'>ON HOLD</span>" if campaign.is_on_hold else "<span>ACTIVE</span>"
+    hold_badge = "<span class='campaign-ops-live-hold'>ON HOLD</span>" if campaign.is_on_hold else ("<span>ACTIVE</span>" if campaign.is_active else "<span>INACTIVE</span>")
     hold_reason = f"<div class='campaign-ops-live-hold-reason'>Hold reason: {escape(safe_text(campaign.hold_reason))}</div>" if campaign.is_on_hold and campaign.hold_reason else ""
-    links = live_quick_links(campaign, resources)
     all_live = bool(campaign.planned_creator_count) and campaign.live_creator_count >= int(campaign.planned_creator_count or 0)
     html = f"""
     <div class='campaign-ops-live-block' style='{urgent}'>
@@ -278,8 +188,6 @@ def render_live_block(campaign: Any, planning_steps: list[Any], checkpoints: lis
         {hold_reason}
       </div>
     """
-    if links:
-        html += "<div class='campaign-ops-live-links'>" + " &nbsp; ".join(f"<a href='{escape(sanitize_link(link.url), quote=True)}' target='_blank'>{escape(link.label)}</a>" for link in links) + "</div>"
     if visible_sequence:
         html += "<table class='campaign-ops-live-sequence'><thead><tr><th>Date</th><th>Operational Action</th><th>Status</th><th>Source</th></tr></thead><tbody>"
         for row in visible_sequence:
@@ -342,8 +250,8 @@ def render_live_workspace(actor: CampaignOpsUser, service: CampaignOpsService, u
         st.rerun()
     st.markdown(f"### {campaign.campaign_title}")
     st.caption(f"{safe_text(campaign.client_name)} | {campaign.program_name} | Manager: {safe_text(campaign.manager_display_name)} | {title_label(campaign.live_status)} | Wrap readiness: {summary.wrap_readiness}")
-    st.info(f"Live creators: {campaign.live_creator_count} | Waves: {campaign.active_wave_count} | Open exceptions: {campaign.open_exception_count} | Next go-live: {format_date(campaign.next_go_live_date)} | Paid live end: {format_date(campaign.paid_live_end_date)}")
-    tabs = st.tabs(["Overview", "Live Checkpoints", "Creator Waves", "Creator Live Status", "Exceptions", "Timeline", "Resources", "Program Notes", "Activity"])
+    st.caption(f"Live creators: {campaign.live_creator_count} | Waves: {campaign.active_wave_count} | Open exceptions: {campaign.open_exception_count} | Next go-live: {format_date(campaign.next_go_live_date)} | Paid live end: {format_date(campaign.paid_live_end_date)}")
+    tabs = st.tabs(['Overview', 'Live Checkpoints', 'Creator Waves', 'Exceptions', 'Timeline', 'Program Notes', 'Activity'])
     with tabs[0]:
         render_overview(actor, service, users, campaign, summary)
     with tabs[1]:
@@ -351,17 +259,17 @@ def render_live_workspace(actor: CampaignOpsUser, service: CampaignOpsService, u
     with tabs[2]:
         render_waves(actor, service, campaign)
     with tabs[3]:
-        render_creators(actor, service, campaign)
-    with tabs[4]:
         render_exceptions(actor, service, users, campaign)
-    with tabs[5]:
+    with tabs[4]:
         render_timeline(actor, service, campaign)
+    with tabs[5]:
+        with st.expander("Program Notes", expanded=False):
+            render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
     with tabs[6]:
-        render_resources(actor, service, campaign)
-    with tabs[7]:
-        render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
-    with tabs[8]:
-        render_activity(actor, service, campaign)
+        with st.expander("Activity", expanded=False):
+            render_activity(actor, service, campaign)
+
+    render_creator_blocker_editor(actor, service, campaign)
 
 
 def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], campaign: Any, summary: Any) -> None:
@@ -379,12 +287,11 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         wrap = cols[1].date_input("Wrap Date", value=campaign.wrap_date)
         invoice_date = cols[2].date_input("Invoice Date", value=campaign.invoice_date)
         invoice_status = cols[3].text_input("Invoice Status", value=safe_text(campaign.invoice_status))
-        invoice_amount = st.number_input("Invoice Amount", min_value=0.0, value=float(campaign.invoice_amount or 0))
         submitted = st.form_submit_button("Save Live Overview", type="primary")
     if submitted:
-        service.update_influencer_live_overview(actor, campaign.id, manager_user_id=user_options[manager], planning_status=live_status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), is_on_hold=on_hold, hold_reason=trim_or_none(hold_reason), launch_date=launch, wrap_date=wrap, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status), invoice_amount=invoice_amount)
+        service.update_influencer_live_overview(actor, campaign.id, manager_user_id=user_options[manager], planning_status=live_status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), is_on_hold=on_hold, hold_reason=trim_or_none(hold_reason), launch_date=launch, wrap_date=wrap, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status))
         st.rerun()
-    st.write(f"Planning history: {len(summary.planning_steps)} planning steps, {len(summary.approval_rounds)} approvals, {len(summary.content_rounds)} content rounds preserved.")
+    st.caption(f"Planning history: {len(summary.planning_steps)} planning steps, {len(summary.approval_rounds)} approvals, {len(summary.content_rounds)} content rounds preserved.")
     override = st.checkbox("Administrator override unresolved Live readiness", key=f"campaign_ops_influencer_live_recap_override_{campaign.id}")
     if st.button("Move Campaign to Recapping", key=f"campaign_ops_influencer_live_to_recap_{campaign.id}"):
         service.transition_influencer_campaign_to_recapping(actor, campaign.id, allow_override=override)
@@ -456,43 +363,37 @@ def render_waves(actor: CampaignOpsUser, service: CampaignOpsService, campaign: 
             service.reactivate_influencer_creator_wave(actor, campaign.id, wave.id); st.rerun()
 
 
-def render_creators(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    waves = service.list_influencer_creator_waves(actor, campaign.id)
-    wave_options = {"": None, **{f"Wave {w.wave_number} {safe_text(w.wave_name)}": w.id for w in waves}}
-    with st.form(f"campaign_ops_influencer_live_creator_add_{campaign.id}"):
-        cols = st.columns(5)
-        name = cols[0].text_input("Creator Name")
-        handle = cols[1].text_input("Creator Handle")
-        platform = cols[2].text_input("Platform")
-        wave = cols[3].selectbox("Wave", list(wave_options))
-        scheduled = cols[4].date_input("Scheduled Live Date", value=None)
-        urls = st.columns(3)
-        content_url = urls[0].text_input("Content URL")
-        click2cart_url = urls[1].text_input("Click2Cart URL")
-        retailer_url = urls[2].text_input("Retailer URL")
-        impressions_required = st.checkbox("Daily Impressions Required")
-        submitted = st.form_submit_button("Add Creator", type="primary")
-    if submitted:
-        service.create_influencer_live_creator(actor, campaign.id, name, creator_handle=trim_or_none(handle), platform=trim_or_none(platform), wave_id=wave_options[wave], scheduled_live_date=scheduled, content_url=trim_or_none(content_url), click2cart_url=trim_or_none(click2cart_url), retailer_url=trim_or_none(retailer_url), impressions_reporting_required=impressions_required, live_status="not_started")
-        st.rerun()
-    creators = service.list_influencer_live_creators(actor, campaign.id, include_inactive=True)
-    st.dataframe([{"Creator": c.creator_name, "Handle": safe_text(c.creator_handle), "Platform": safe_text(c.platform), "Status": title_label(c.live_status), "Draft": title_label(c.draft_status), "Approval": title_label(c.approval_status), "Scheduled": format_date(c.scheduled_live_date), "Actual Live": format_date(c.actual_live_date), "Paid End": format_date(c.paid_live_end_date), "Impressions": safe_text(c.latest_impressions), "Exception": safe_text(c.exception_status), "Active State": "Active" if c.is_active else "Inactive"} for c in creators], hide_index=True, use_container_width=True)
-    for creator in creators:
-        cols = st.columns(7)
-        if cols[0].button("Draft", key=f"campaign_ops_influencer_creator_draft_{creator.id}"):
-            service.mark_influencer_live_creator_draft_submitted(actor, campaign.id, creator.id); st.rerun()
-        if cols[1].button("Approved", key=f"campaign_ops_influencer_creator_approved_{creator.id}"):
-            service.mark_influencer_live_creator_approved(actor, campaign.id, creator.id); st.rerun()
-        if cols[2].button("Scheduled", key=f"campaign_ops_influencer_creator_scheduled_{creator.id}"):
-            service.mark_influencer_live_creator_scheduled(actor, campaign.id, creator.id, creator.scheduled_live_date); st.rerun()
-        if cols[3].button("Live", key=f"campaign_ops_influencer_creator_live_{creator.id}"):
-            service.mark_influencer_live_creator_live(actor, campaign.id, creator.id); st.rerun()
-        if cols[4].button("Paid Complete", key=f"campaign_ops_influencer_creator_paid_{creator.id}"):
-            service.mark_influencer_live_creator_paid_live_complete(actor, campaign.id, creator.id); st.rerun()
-        if creator.is_active and cols[5].button("Deactivate", key=f"campaign_ops_influencer_creator_deactivate_{creator.id}"):
-            service.deactivate_influencer_live_creator(actor, campaign.id, creator.id); st.rerun()
-        if not creator.is_active and cols[6].button("Reactivate", key=f"campaign_ops_influencer_creator_reactivate_{creator.id}"):
-            service.reactivate_influencer_live_creator(actor, campaign.id, creator.id); st.rerun()
+def render_creator_blocker_editor(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
+    with st.expander("Advanced / Resolve creator blocker", expanded=False):
+        if campaign.influencer_stage != "live":
+            st.caption("Creator changes require the campaign to be in Live.")
+            return
+        creators = service.list_influencer_live_creators(actor, campaign.id)
+        if not creators:
+            st.caption("No active creator records.")
+            return
+        by_id = {creator.id: creator for creator in creators}
+        selected = st.selectbox("Creator to resolve", list(by_id), format_func=lambda key: by_id[key].creator_name, key=f"campaign_ops_creator_resolve_select_{campaign.id}")
+        creator = by_id[selected]
+        with st.form(f"campaign_ops_creator_resolve_{creator.id}"):
+            statuses = [None, *CREATOR_LIVE_STATUSES]
+            status = st.selectbox("Live status", statuses, index=statuses.index(creator.live_status) if creator.live_status in statuses else 0, format_func=lambda value: title_label(value) if value else "Not set")
+            content_url = st.text_input("Final content link", value=creator.content_url or "")
+            impressions = creator.latest_impressions
+            if creator.impressions_reporting_required:
+                impressions = st.number_input("Final impressions", min_value=0, value=creator.latest_impressions, step=1)
+            cols = st.columns(3)
+            scheduled = cols[0].date_input("Scheduled live date", value=creator.scheduled_live_date)
+            actual = cols[1].date_input("Actual live date", value=creator.actual_live_date)
+            paid_end = cols[2].date_input("Paid live end", value=creator.paid_live_end_date)
+            submitted = st.form_submit_button("Save blocker resolution")
+        if submitted:
+            try:
+                service.update_influencer_live_creator(actor, campaign.id, creator.id, live_status=status, content_url=trim_or_none(content_url), latest_impressions=impressions, scheduled_live_date=scheduled, actual_live_date=actual, paid_live_end_date=paid_end)
+            except CampaignOpsError as exc:
+                st.error(f"Creator was not updated: {exc}")
+                return
+            st.rerun()
 
 
 def render_exceptions(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], campaign: Any) -> None:
@@ -546,36 +447,7 @@ def render_timeline(actor: CampaignOpsUser, service: CampaignOpsService, campaig
             service.reopen_milestone(actor, m.id); st.rerun()
 
 
-def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    quick = live_quick_links(campaign)
-    cols = st.columns(4)
-    for index, link in enumerate(quick):
-        cols[index % 4].link_button(link.label, sanitize_link(link.url))
-    summary = service.get_program_workspace_summary(actor, campaign.program_id)
-    resources = [r for r in service.list_program_resources(actor, campaign.program_id, include_inactive=True) if r.resource_type in set(INFLUENCER_RESOURCE_TYPES) | set(LIVE_RESOURCE_TYPES) or r.workstream_id == campaign.workstream_id]
-    st.dataframe(resource_table_rows(resources), hide_index=True, use_container_width=True)
-    with st.form(f"campaign_ops_influencer_live_resource_add_{campaign.id}"):
-        cols = st.columns(3)
-        title = cols[0].text_input("Title")
-        resource_type = cols[1].selectbox("Resource type", LIVE_RESOURCE_TYPES)
-        url = cols[2].text_input("URL")
-        submitted = st.form_submit_button("Add Resource", type="primary")
-    if submitted:
-        service.create_resource(actor, campaign.program_id, title=title, resource_type=resource_type, workstream_id=campaign.workstream_id, url=trim_or_none(url))
-        st.rerun()
-    for resource in resources:
-        render_resource_actions(actor, service, summary, resource)
-
-
 def render_activity(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
     summary = service.get_program_workspace_summary(actor, campaign.program_id)
     rows = [{"Timestamp": format_datetime(e.created_at), "Event": title_label(e.event_type), "Message": safe_text(e.message)} for e in summary.activity if e.event_type.startswith("influencer_live_") or e.event_type.startswith("influencer_creator_") or e.event_type == "influencer_stage_moved_to_live"]
     st.dataframe(rows, hide_index=True, use_container_width=True)
-
-
-def sanitize_link(url: str) -> str:
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))

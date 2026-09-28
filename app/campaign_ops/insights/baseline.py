@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any
 
 from app.campaign_ops.formatting import safe_text, title_label
-from app.campaign_ops.influencer.planning_baseline import QuickLink, compact_date
+from app.campaign_ops.influencer.planning_baseline import compact_date
 from core.campaign_ops.enums import TaskStatus
 
 
@@ -16,25 +16,6 @@ class InsightsDeliverable:
     display_date: date | None
     status: str
     source_order: int = 0
-
-
-def insights_quick_links(project: Any) -> list[QuickLink]:
-    links: list[QuickLink] = []
-    seen: set[tuple[str, str]] = set()
-    for label, attr in (
-        ("Tracksheet", "tracksheet_url"),
-        ("Results Deck", "results_deck_url"),
-        ("Raw Data Key", "raw_data_url"),
-    ):
-        url = str(getattr(project, attr, "") or "").strip()
-        if not url:
-            continue
-        key = (label.lower(), url)
-        if key in seen:
-            continue
-        seen.add(key)
-        links.append(QuickLink(label, url))
-    return links
 
 
 def current_status_text(project: Any) -> str:

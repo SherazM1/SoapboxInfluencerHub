@@ -46,23 +46,25 @@ def render_program_workspace(
 
     render_workspace_header(summary)
     render_admin_archive_controls(actor, service, summary)
-    tabs = st.tabs(["Overview", "Workstreams", "Tasks", "Timeline", "Resources", "Notes", "Team", "Activity"])
+    tabs = st.tabs(["Overview", "Tasks", "Timeline", "Notes", "Team", "Activity"])
     with tabs[0]:
         render_overview(summary, actor)
+        with st.expander("Workstreams", expanded=False):
+            render_workstreams(summary, actor, service)
+        with st.expander("Links", expanded=False):
+            render_resources(actor, service, summary)
     with tabs[1]:
-        render_workstreams(summary, actor, service)
-    with tabs[2]:
         render_program_tasks(actor, service, summary)
-    with tabs[3]:
+    with tabs[2]:
         render_timeline(actor, service, summary)
+    with tabs[3]:
+        with st.expander("Program notes", expanded=False):
+            render_notes(actor, service, summary)
     with tabs[4]:
-        render_resources(actor, service, summary)
-    with tabs[5]:
-        render_notes(actor, service, summary)
-    with tabs[6]:
         render_team(summary, actor, service)
-    with tabs[7]:
-        render_activity(summary)
+    with tabs[5]:
+        with st.expander("Activity history", expanded=False):
+            render_activity(summary)
 
 
 def render_workspace_header(summary: ProgramWorkspaceSummary) -> None:

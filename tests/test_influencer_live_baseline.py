@@ -6,13 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app.campaign_ops.influencer import live_views
-from app.campaign_ops.influencer.live_baseline import (
-    compose_live_operational_sequence,
-    live_quick_links,
-    next_go_live_text,
-    select_live_campaign_for_open,
-    smart_live_sequence_preview,
-)
+from app.campaign_ops.influencer.live_baseline import compose_live_operational_sequence, next_go_live_text, select_live_campaign_for_open, smart_live_sequence_preview
 
 
 class FakeColumn:
@@ -44,40 +38,6 @@ class DummyExpander:
 
 
 class InfluencerLiveBaselineTests(unittest.TestCase):
-    def test_live_quick_links_include_supported_and_custom_resources(self) -> None:
-        campaign = SimpleNamespace(
-            track_sheet_url="https://example.com/track",
-            influencer_brief_url="https://example.com/brief",
-            click2cart_link_url="https://example.com/c2c",
-            client_facing_live_doc_url="https://example.com/live",
-            daily_impressions_url="https://example.com/daily",
-            invoice_url="https://example.com/invoice",
-            eop_survey_url="https://example.com/eop",
-        )
-        resources = [
-            SimpleNamespace(resource_type="Walmart Link", title="Walmart", url="https://example.com/walmart", is_active=True),
-            SimpleNamespace(resource_type="Retailer Link", title="Retailer", url="https://example.com/retailer", is_active=True),
-            SimpleNamespace(resource_type="Influencer Education", title="Education", url="https://example.com/edu", is_active=True),
-            SimpleNamespace(resource_type="Client Guidelines", title="Guidelines", url="https://example.com/guidelines", is_active=True),
-            SimpleNamespace(resource_type="Custom", title="AZ & O'Reilly Click2Cart", url="https://example.com/custom", is_active=True),
-            SimpleNamespace(resource_type="Custom", title="Missing", url=None, is_active=True),
-        ]
-
-        labels = [link.label for link in live_quick_links(campaign, resources)]
-
-        self.assertIn("Track Sheet", labels)
-        self.assertIn("Influencer Brief", labels)
-        self.assertIn("Click2Cart Link", labels)
-        self.assertIn("Walmart Link", labels)
-        self.assertIn("Retailer Link", labels)
-        self.assertIn("Client-Facing Live Doc", labels)
-        self.assertIn("Daily Impressions", labels)
-        self.assertIn("Invoice", labels)
-        self.assertIn("EOP Survey", labels)
-        self.assertIn("Influencer Education", labels)
-        self.assertIn("Client Guidelines", labels)
-        self.assertIn("AZ & O'Reilly Click2Cart", labels)
-        self.assertNotIn("Missing", labels)
 
     def test_unified_sequence_sources_order_undated_and_duplicates(self) -> None:
         planning = [
@@ -159,7 +119,7 @@ class InfluencerLiveBaselineTests(unittest.TestCase):
             patch.object(live_views.st, "columns", return_value=[FakeColumn(), FakeColumn(clicked=True), FakeColumn()]),
             patch.object(live_views.st, "rerun"),
         ):
-            live_views.render_live_block(campaign, [], [], [], [])
+            live_views.render_live_block(campaign, [], [], [])
 
         html = "".join(rendered)
         self.assertIn("ON HOLD", html)

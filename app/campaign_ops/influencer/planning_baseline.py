@@ -1,29 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
 from app.campaign_ops.formatting import safe_text
 
-QUICK_LINK_ORDER = [
-    ("Track Sheet", "track_sheet_url"),
-    ("Influencer Brief", "influencer_brief_url"),
-    ("Bitly Link", "bitly_link_url"),
-    ("Click2Cart Link", "click2cart_link_url"),
-    ("Invoice", "invoice_url"),
-    ("EOP Survey", "eop_survey_url"),
-    ("Influencer Education", "influencer_education_url"),
-    ("Campaign Brief", "campaign_brief_url"),
-]
 
 TERMINAL_STEP_MARKERS = ("campaign wraps", "campaign wrap", "wraps")
-
-
-@dataclass(frozen=True, slots=True)
-class QuickLink:
-    label: str
-    url: str
 
 
 def compact_date(value: date | None, *, reference_year: int | None = None) -> str:
@@ -32,16 +15,6 @@ def compact_date(value: date | None, *, reference_year: int | None = None) -> st
     if reference_year is not None and value.year != reference_year:
         return f"{value.month}/{value.day}/{value.year}"
     return f"{value.month}/{value.day}"
-
-
-def campaign_quick_links(campaign: Any) -> list[QuickLink]:
-    links: list[QuickLink] = []
-    for label, attr in QUICK_LINK_ORDER:
-        raw_url = getattr(campaign, attr, None)
-        url = str(raw_url).strip() if raw_url is not None else ""
-        if url:
-            links.append(QuickLink(label, url))
-    return links
 
 
 def active_planning_steps(steps: list[Any]) -> list[Any]:

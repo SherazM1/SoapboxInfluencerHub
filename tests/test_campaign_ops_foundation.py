@@ -112,23 +112,7 @@ from core.campaign_ops.content_management import (
     CONTENT_STATUS_LIVE,
     CONTENT_STATUS_READY_TO_SUBMIT,
 )
-from core.campaign_ops.influencer import (
-    INFLUENCER_STAGE_PLANNING,
-    INFLUENCER_STAGE_LIVE,
-    INFLUENCER_STAGE_RECAPPING,
-    LIVE_STATUS_LIVE,
-    LIVE_STATUS_READY_TO_LAUNCH,
-    PLANNING_STATUS_BRIEF_DEVELOPMENT,
-    PLANNING_STATUS_INFLUENCER_LIST_REVIEW,
-    PLANNING_STATUS_ON_HOLD,
-    STANDARD_PLANNING_TEMPLATE,
-    STANDARD_LIVE_CHECKPOINT_TEMPLATE,
-    RECAP_STATUS_READY_TO_RECAP,
-    RECAP_STATUS_COLLECTING_DATA,
-    RECAP_STATUS_READY_TO_CLOSE,
-    RECAP_STATUS_COMPLETE,
-    STANDARD_RECAP_CHECKLIST_TEMPLATE,
-)
+from core.campaign_ops.influencer import INFLUENCER_STAGE_PLANNING, INFLUENCER_STAGE_LIVE, INFLUENCER_STAGE_RECAPPING, LIVE_STATUS_LIVE, LIVE_STATUS_READY_TO_LAUNCH, PLANNING_STATUS_BRIEF_DEVELOPMENT, PLANNING_STATUS_INFLUENCER_LIST_REVIEW, PLANNING_STATUS_ON_HOLD, STANDARD_PLANNING_TEMPLATE, STANDARD_LIVE_CHECKPOINT_TEMPLATE, RECAP_STATUS_READY_TO_RECAP, RECAP_STATUS_COLLECTING_DATA, RECAP_STATUS_READY_TO_CLOSE, STANDARD_RECAP_CHECKLIST_TEMPLATE
 from core.campaign_ops.insights import INSIGHTS_STATUS_DRAFTING_SURVEY, INSIGHTS_STATUS_NOT_STARTED
 from core.campaign_ops.retail_media import RETAIL_MEDIA_STATUS_LIVE, RETAIL_MEDIA_STATUS_PLANNING
 from core.campaign_ops.reporting_requests import REQUEST_CATEGORY_REPORT, REQUEST_CATEGORY_SURVEY, normalize_am_name
@@ -2361,21 +2345,21 @@ class CampaignOpsFoundationTests(unittest.TestCase):
             with patch("app.pages.campaigns.hide_default_streamlit_sidebar_nav"):
                 with patch("app.pages.campaigns.clear_legacy_workflow_session_state"):
                     with patch("app.pages.campaigns.render_initialization_message"):
-                        with patch("app.pages.campaigns.render_temporary_viewer_selector", return_value=("Bailey", "Cross-Team Dashboard")):
+                        with patch("app.pages.campaigns.render_temporary_viewer_selector", return_value=("Bailey", "All Programs")):
                             with patch("app.pages.campaigns.get_campaign_ops_setup_status", return_value=status):
                                 with patch("app.pages.campaigns.render_setup_state") as render_setup:
                                     with patch("app.pages.campaigns.resolve_initialized_viewer", return_value=CampaignOpsUser(id="u1", display_name="Bailey", role=UserRole.ADMINISTRATOR.value)) as resolve_viewer:
                                         with patch("app.pages.campaigns.render_initialization_control"):
-                                            with patch("app.pages.campaigns.render_section_navigation", return_value="Cross-Team Dashboard"):
+                                            with patch("app.pages.campaigns.render_section_navigation", return_value="All Programs"):
                                                 with patch("app.pages.campaigns.render_active_section") as render_active:
                                                     with patch("app.pages.campaigns.st.set_page_config"):
-                                                        with patch("app.pages.campaigns.st.divider"):
+                                                        with patch("app.pages.campaigns.st.divider"), patch("app.pages.campaigns.CampaignOpsService.list_active_users", return_value=[]):
                                                             campaigns.main()
 
         render_setup.assert_not_called()
         resolve_viewer.assert_called_once_with("Bailey")
         self.assertEqual(render_active.call_count, 1)
-        self.assertEqual(render_active.call_args.args[0], "Cross-Team Dashboard")
+        self.assertEqual(render_active.call_args.args[0], "All Programs")
         self.assertEqual(render_active.call_args.args[1], "Bailey")
 
     def test_initialized_seeded_users_resolve_to_expected_roles(self) -> None:
@@ -3153,7 +3137,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual(milestone_due_state(undated, today=date(2026, 7, 31)), "Undated")
 
     def test_prompt4d_resource_validation_lifecycle_and_missing_required_indicator(self) -> None:
-        from app.campaign_ops.resource_views import sanitize_link, url_status
+        from app.campaign_ops.resource_views import sanitize_link
 
         repository, service, bailey, t_user, _l_user, program_id, influencer, retail = self._prompt4c_fixture()
         with self.assertRaises(CampaignOpsValidationError):
@@ -3170,7 +3154,8 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         missing = service.create_resource(bailey, program_id, "TEST - Prompt 4D Required", "Brief", is_required=True)
         row = service.list_program_resources(bailey, program_id)[0]
         self.assertEqual(row.id, missing.id)
-        self.assertEqual(url_status(row), "Missing required URL")
+        self.assertTrue(row.is_required)
+        self.assertIsNone(row.url)
         resource = service.create_resource(bailey, program_id, "TEST - Prompt 4D Link", "Live Tracker", workstream_id=influencer.id, url="https://user:pass@example.com/path")
         self.assertEqual(sanitize_link(resource.url or ""), "https://example.com/path")
         event_count = len(repository.events)
@@ -3310,223 +3295,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("reporting_request_questions_requested_changed", event_types)
         self.assertIn("reporting_request_special_requests_changed", event_types)
 
-    def test_prompt5a_display_column_order_and_labels(self) -> None:
-        from app.campaign_ops.reporting_requests.formatting import (
-            ALL_REQUEST_COLUMNS,
-            REPORTING_COLUMNS,
-            SURVEY_COLUMNS,
-            all_request_rows,
-            attention_label,
-            delivered_label,
-            next_gate_label,
-            reporting_request_rows,
-            survey_request_rows,
-        )
-        from core.campaign_ops.reporting_requests import (
-            REQUEST_CATEGORY_REPORT,
-            REQUEST_CATEGORY_SURVEY,
-            REQUEST_STATUS_CANCELLED,
-            REQUEST_STATUS_COMPLETED,
-            REQUEST_STATUS_DELIVERED,
-            REQUEST_STATUS_IN_PROGRESS,
-            REQUEST_STATUS_READY_FOR_REVIEW,
-            REQUEST_STATUS_REQUESTED,
-            REQUEST_STATUS_WAITING_FOR_APPROVAL,
-        )
-
-        base = ReportingRequestListRow(
-            id="request-1",
-            program_id="program-1",
-            program_name="Program",
-            client_name="Client",
-            primary_workstream_type=WorkstreamType.INFLUENCER.value,
-            request_category=REQUEST_CATEGORY_SURVEY,
-            request_type="EOP Survey",
-            am_user_id="user-1",
-            am_display_name="T",
-            assigned_user_id=None,
-            assigned_display_name=None,
-            workstream_id=None,
-            workstream_type=None,
-            due_date=date(2026, 8, 10),
-            recap_date_with_client=None,
-            recap_date_text=None,
-            brief_url=None,
-            brief_status_text="Sent to Tori",
-            delivered=False,
-            review_required=True,
-            review_complete=False,
-            approval_required=False,
-            approved=False,
-            questions_requested="Questions You'd Like Included",
-            special_requests="Special Requests",
-            status=REQUEST_STATUS_REQUESTED,
-            risk=RiskLevel.UNRATED.value,
-            waiting_on=None,
-            completed_at=None,
-            is_active=True,
-            created_at=None,
-            updated_at=None,
-        )
-        survey_rows = survey_request_rows([base])
-        self.assertEqual(list(survey_rows[0]), SURVEY_COLUMNS)
-        self.assertEqual(SURVEY_COLUMNS, ["Type of Survey", "AM", "Program", "Due Date", "Link to Brief", "Delivered", "Review", "Questions / Notes"])
-        self.assertEqual(survey_rows[0]["Type of Survey"], "EOP Survey")
-        self.assertEqual(survey_rows[0]["AM"], "T")
-        self.assertEqual(survey_rows[0]["Program"], "Program")
-        self.assertEqual(survey_rows[0]["Due Date"], "Aug 10, 2026")
-        self.assertEqual(survey_rows[0]["Link to Brief"], "Sent to Tori")
-        self.assertEqual(survey_rows[0]["Delivered"], "Not Delivered")
-        self.assertEqual(survey_rows[0]["Review"], "Required")
-        self.assertEqual(survey_rows[0]["Questions / Notes"], "Questions You'd Like Included")
-        self.assertEqual(delivered_label(True), "Delivered")
-        self.assertEqual(delivered_label(False), "Not Delivered")
-        self.assertEqual(survey_request_rows([replace(base, brief_url="https://example.com/brief")])[0]["Link to Brief"], "Open Brief")
-        self.assertEqual(survey_request_rows([replace(base, brief_url=None, brief_status_text=None)])[0]["Link to Brief"], "")
-        self.assertEqual(survey_request_rows([replace(base, review_complete=True)])[0]["Review"], "Complete")
-        self.assertEqual(survey_request_rows([replace(base, review_required=False, review_complete=False)])[0]["Review"], "-")
-        report = replace(
-            base,
-            id="request-2",
-            request_category=REQUEST_CATEGORY_REPORT,
-            request_type="Program Recap",
-            delivered=True,
-            recap_date_with_client=date(2026, 8, 12),
-            recap_date_text="Week of 8/10",
-            review_required=False,
-            approval_required=True,
-        )
-        reporting_rows = reporting_request_rows([report])
-        self.assertEqual(list(reporting_rows[0]), REPORTING_COLUMNS)
-        self.assertEqual(REPORTING_COLUMNS, ["Type of Report", "AM", "Program", "Due Date", "Recap Date with Client", "Delivered", "Approval", "Special Requests"])
-        self.assertEqual(reporting_rows[0]["Type of Report"], "Program Recap")
-        self.assertEqual(reporting_rows[0]["AM"], "T")
-        self.assertEqual(reporting_rows[0]["Program"], "Program")
-        self.assertEqual(reporting_rows[0]["Due Date"], "Aug 10, 2026")
-        self.assertEqual(reporting_rows[0]["Recap Date with Client"], "Aug 12, 2026")
-        self.assertEqual(reporting_rows[0]["Delivered"], "Delivered")
-        self.assertEqual(reporting_rows[0]["Approval"], "Required")
-        self.assertEqual(reporting_rows[0]["Special Requests"], "Special Requests")
-        self.assertEqual(reporting_request_rows([replace(report, recap_date_with_client=None)])[0]["Recap Date with Client"], "Week of 8/10")
-        self.assertEqual(reporting_request_rows([replace(report, approved=True)])[0]["Approval"], "Approved")
-        self.assertEqual(reporting_request_rows([replace(report, approval_required=False, approved=False)])[0]["Approval"], "-")
-
-        today = date(2026, 8, 18)
-        self.assertEqual(attention_label(replace(base, status=REQUEST_STATUS_COMPLETED), today), "DONE")
-        self.assertEqual(attention_label(replace(base, completed_at=datetime(2026, 8, 18, tzinfo=UTC), status=REQUEST_STATUS_DELIVERED), today), "DONE")
-        self.assertEqual(attention_label(replace(base, status=REQUEST_STATUS_CANCELLED), today), "CANCELLED")
-        self.assertEqual(attention_label(replace(base, due_date=date(2026, 8, 17)), today), "OVERDUE")
-        self.assertEqual(attention_label(replace(base, due_date=today), today), "DUE TODAY")
-        self.assertEqual(attention_label(replace(base, due_date=date(2026, 8, 25)), today), "DUE THIS WEEK")
-        self.assertEqual(attention_label(replace(base, due_date=date(2026, 8, 26)), today), "UPCOMING")
-        self.assertEqual(attention_label(replace(base, due_date=None), today), "")
-        self.assertNotEqual(attention_label(replace(base, delivered=True, status=REQUEST_STATUS_DELIVERED), today), "DONE")
-
-        self.assertEqual(next_gate_label(base), "Deliver Survey")
-        self.assertEqual(next_gate_label(replace(base, delivered=True, status=REQUEST_STATUS_READY_FOR_REVIEW)), "Review Required")
-        self.assertEqual(next_gate_label(replace(base, delivered=True, review_complete=True, status=REQUEST_STATUS_DELIVERED)), "Review Complete")
-        self.assertEqual(next_gate_label(replace(report, delivered=False)), "Deliver Report")
-        self.assertEqual(next_gate_label(replace(report, status=REQUEST_STATUS_WAITING_FOR_APPROVAL)), "Approval Required")
-        self.assertEqual(next_gate_label(replace(report, approved=True)), "Client Recap Aug 12, 2026")
-        self.assertEqual(next_gate_label(replace(report, approved=True, recap_date_with_client=None)), "Approved")
-        self.assertEqual(next_gate_label(replace(report, status=REQUEST_STATUS_COMPLETED)), "Complete")
-        self.assertEqual(next_gate_label(replace(report, status=REQUEST_STATUS_CANCELLED)), "Cancelled")
-        self.assertEqual(next_gate_label(replace(report, approval_required=False, approved=False, recap_date_with_client=None, status=REQUEST_STATUS_IN_PROGRESS)), "In Progress")
-
-        all_rows = all_request_rows([base, report])
-        self.assertEqual(list(all_rows[0]), ALL_REQUEST_COLUMNS)
-        self.assertEqual(ALL_REQUEST_COLUMNS, ["Category", "Request Type", "AM", "Program", "Due Date", "Status", "Next Gate", "Attention", "Risk"])
-        self.assertEqual(all_rows[0]["Category"], "Survey Request")
-        self.assertEqual(all_rows[0]["Request Type"], "EOP Survey")
-        self.assertEqual(all_rows[0]["Next Gate"], "Deliver Survey")
-        self.assertEqual(all_rows[0]["Attention"], "OVERDUE")
-        self.assertEqual(all_rows[0]["Risk"], "Unrated")
-
-    def test_prompt5a_request_queue_filters_and_sorting_are_preserved(self) -> None:
-        from app.campaign_ops.reporting_requests.views import filter_requests, sort_requests
-        from core.campaign_ops.reporting_requests import REQUEST_CATEGORY_REPORT, REQUEST_CATEGORY_SURVEY
-
-        survey = ReportingRequestListRow(
-            id="survey-1",
-            program_id="program-1",
-            program_name="Alpha Program",
-            client_name="Client A",
-            primary_workstream_type=WorkstreamType.INFLUENCER.value,
-            request_category=REQUEST_CATEGORY_SURVEY,
-            request_type="EOP Survey",
-            am_user_id="am-t",
-            am_display_name="T",
-            assigned_user_id=None,
-            assigned_display_name=None,
-            workstream_id=None,
-            workstream_type=None,
-            due_date=date(2026, 8, 10),
-            recap_date_with_client=None,
-            recap_date_text=None,
-            brief_url=None,
-            brief_status_text=None,
-            delivered=False,
-            review_required=True,
-            review_complete=False,
-            approval_required=False,
-            approved=False,
-            questions_requested=None,
-            special_requests=None,
-            status="ready_for_review",
-            risk=RiskLevel.NEEDS_ATTENTION.value,
-            waiting_on=None,
-            completed_at=None,
-            is_active=True,
-            created_at=None,
-            updated_at=datetime(2026, 8, 1, tzinfo=UTC),
-        )
-        report = replace(
-            survey,
-            id="report-1",
-            program_id="program-2",
-            program_name="Beta Program",
-            client_name="Client B",
-            request_category=REQUEST_CATEGORY_REPORT,
-            request_type="Program Recap",
-            am_user_id="am-l",
-            am_display_name="L",
-            due_date=date(2026, 8, 20),
-            delivered=True,
-            review_required=False,
-            review_complete=False,
-            approval_required=True,
-            approved=False,
-            status="waiting_for_approval",
-            risk=RiskLevel.AT_RISK.value,
-            updated_at=datetime(2026, 8, 2, tzinfo=UTC),
-        )
-        undated = replace(
-            survey,
-            id="survey-2",
-            program_id="program-3",
-            program_name="Gamma Program",
-            due_date=None,
-            delivered=True,
-            review_required=True,
-            review_complete=True,
-            status="delivered",
-            risk=RiskLevel.UNRATED.value,
-        )
-        rows = [report, undated, survey]
-
-        self.assertEqual([row.id for row in filter_requests(rows, {}, REQUEST_CATEGORY_SURVEY)], ["survey-2", "survey-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {}, REQUEST_CATEGORY_REPORT)], ["report-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"search": "beta"}, "")], ["report-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"am_user_id": "am-t"}, "")], ["survey-2", "survey-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"program_id": "program-2"}, "")], ["report-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"delivered": "Yes"}, "")], ["report-1", "survey-2"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"delivered": "No"}, "")], ["survey-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"state": "Required"}, "")], ["report-1", "survey-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"state": "Complete"}, "")], ["survey-2"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"status": "waiting_for_approval"}, "")], ["report-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"risk": RiskLevel.AT_RISK.value}, "")], ["report-1"])
-        self.assertEqual([row.id for row in filter_requests(rows, {"due_from": date(2026, 8, 11), "due_to": date(2026, 8, 30)}, "")], ["report-1"])
-        self.assertEqual([row.id for row in sort_requests(rows, "due_date")], ["survey-1", "report-1", "survey-2"])
 
     def test_prompt5a_state_keys_are_namespaced_and_stale_request_clears(self) -> None:
         self.assertTrue(all(key.startswith("campaign_ops_") for key in SESSION_KEYS))
@@ -3613,7 +3381,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("insights_project_reactivated", event_types)
 
     def test_prompt5b_insights_portfolio_timeline_objectives_and_resources(self) -> None:
-        from app.campaign_ops.insights.formatting import PORTFOLIO_COLUMNS, portfolio_rows, timeline_date_label
+        from app.campaign_ops.insights.formatting import timeline_date_label
 
         repository, service, bailey, t_user, _l_user, program_id, _influencer, _retail = self._prompt4c_fixture()
         project = service.create_insights_project(
@@ -3652,9 +3420,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual(rows[0].tracksheet_url, "https://example.com/tracksheet")
         self.assertEqual(rows[0].results_deck_url, "https://example.com/deck")
         self.assertEqual(rows[0].raw_data_url, "https://example.com/raw-key")
-        display_rows = portfolio_rows(rows)
-        self.assertEqual(list(display_rows[0]), PORTFOLIO_COLUMNS)
-        self.assertEqual(display_rows[0]["Tracksheet"], "Available")
         self.assertEqual(timeline_date_label(service.list_program_milestones(bailey, program_id)[0]), "8/10")
         self.assertEqual(timeline_date_label(ranged), "8/12 - 8/14")
         self.assertEqual(timeline_date_label(undated), "-")
@@ -3752,7 +3517,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("retail_media_campaign_reactivated", event_types)
 
     def test_prompt6_retail_media_children_portfolio_budget_and_state(self) -> None:
-        from app.campaign_ops.retail_media.formatting import PORTFOLIO_COLUMNS, portfolio_rows
 
         repository, service, bailey, t_user, _l_user, program_id, _influencer, _retail = self._prompt4c_fixture()
         campaign = service.create_retail_media_campaign(
@@ -3807,8 +3571,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         service.create_resource(bailey, program_id, "RM Strategy", resource_type="RM Strategy", workstream_id=campaign.workstream_id, url=None)
 
         detail = service.get_retail_media_campaign_detail(bailey, campaign.id)
-        rows = portfolio_rows([detail])
-        self.assertEqual(list(rows[0]), PORTFOLIO_COLUMNS)
         self.assertIn("Onsite Display", detail.channel_mix)
         self.assertEqual(detail.channel_budget_total, 1300)
         self.assertEqual(detail.channel_spend_total, 1150)
@@ -3909,7 +3671,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("content_program_reactivated", event_types)
 
     def test_prompt7_content_children_portfolio_resources_and_state(self) -> None:
-        from app.campaign_ops.content_management.formatting import PORTFOLIO_COLUMNS, portfolio_rows
 
         repository, service, bailey, t_user, _l_user, program_id, _influencer, _retail = self._prompt4c_fixture()
         content = service.create_content_program(
@@ -4003,10 +3764,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual(detail.issue_count, 0)
         self.assertEqual(detail.sku_list_url, "https://example.com/skus")
         self.assertEqual(detail.next_milestone, "Submit PDP copy")
-        self.assertEqual(PORTFOLIO_COLUMNS[:5], ["Content Program", "Client", "Shared Program", "Owner", "Status"])
-        rendered = portfolio_rows([detail])[0]
-        self.assertEqual(list(rendered), PORTFOLIO_COLUMNS)
-        self.assertEqual(rendered["Graphics per SKU"], "5")
         board_data = service.get_content_baseline_board_data(bailey, [detail])
         self.assertEqual([group.group_name for group in board_data["groups"][content.id]], ["Sandibrochas", "Pelon", "Jumex"])
         self.assertEqual([item.id for item in board_data["deliverables"][content.id]], [deliverable.id])
@@ -4107,7 +3864,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("influencer_campaign_reactivated", event_types)
 
     def test_prompt8_influencer_children_template_portfolio_resources_state(self) -> None:
-        from app.campaign_ops.influencer.formatting import PORTFOLIO_COLUMNS, planning_portfolio_rows
 
         repository, service, bailey, t_user, _l_user, program_id, influencer, _retail = self._prompt4c_fixture()
         campaign = service.create_influencer_campaign(
@@ -4179,9 +3935,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual("TEST - Custom planning action", detail.next_planning_step)
         self.assertEqual(8, detail.approved_creator_count)
         self.assertEqual("https://example.com/track", detail.track_sheet_url)
-        self.assertEqual(PORTFOLIO_COLUMNS[:4], ["Influencer Campaign", "Client", "Shared Program", "Manager"])
-        rendered = planning_portfolio_rows([detail])[0]
-        self.assertEqual(list(rendered), PORTFOLIO_COLUMNS)
 
         self.assertIn("campaign_ops_selected_influencer_campaign_id", SESSION_KEYS)
         state: dict[str, object] = {"campaign_ops_selected_influencer_campaign_id": "missing"}
@@ -4701,20 +4454,6 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual(service.normalize_waiting_on_category("asset missing"), "Assets")
         self.assertEqual(service.normalize_waiting_on_category("unknown"), "Other")
 
-    def test_prompt11_cross_team_state_and_imports(self) -> None:
-        import app.campaign_ops.cross_team.views as cross_team_views
-        import app.pages.campaigns as campaigns_page
-
-        self.assertTrue(hasattr(cross_team_views, "render_cross_team_dashboard"))
-        self.assertTrue(hasattr(campaigns_page, "render_cross_team_dashboard"))
-        for key in (
-            "campaign_ops_cross_team_filters",
-            "campaign_ops_cross_team_person_view",
-            "campaign_ops_cross_team_include_test_records",
-            "campaign_ops_cross_team_upcoming_days",
-            "campaign_ops_cross_team_selected_program_id",
-        ):
-            self.assertIn(key, SESSION_KEYS)
 
     def test_prompt12_shared_ui_formatting_and_navigation_helpers(self) -> None:
         from app.campaign_ops.ui.badges import status_label

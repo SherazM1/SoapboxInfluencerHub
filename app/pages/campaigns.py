@@ -13,7 +13,6 @@ from app.campaign_ops.components import (
     format_initialization_result,
     render_database_setup,
     render_initialization_message,
-    render_placeholder,
     render_role_caption,
     render_section_navigation,
 )
@@ -22,13 +21,10 @@ from app.campaign_ops.ui.styles import apply_campaign_ops_styles
 from app.campaign_ops.program_forms import render_new_program_form
 from app.campaign_ops.program_list import render_all_programs, render_my_programs
 from app.campaign_ops.program_workspace import render_program_workspace
-from app.campaign_ops.cross_team.views import render_cross_team_dashboard
 from app.campaign_ops.content_management.views import render_content_management
 from app.campaign_ops.influencer.views import render_influencer
 from app.campaign_ops.insights.views import render_insights
 from app.campaign_ops.retail_media.views import render_retail_media
-from app.campaign_ops.reporting_requests.views import render_reporting_requests
-from app.campaign_ops.personal_views import render_my_work
 from app.campaign_ops.state import (
     VIEWER_OPTIONS,
     get_default_section,
@@ -59,7 +55,7 @@ ROLE_LABELS = {
 def render_header() -> None:
     render_page_header(
         "Campaign Operations",
-        "Manage persisted programs, workstreams, team assignments, requests, and cross-team progress from one workspace.",
+        "Track programs, owners, key dates, milestones, and blockers from one workspace.",
         active_module="Campaign Operations",
     )
 
@@ -154,14 +150,6 @@ def render_setup_state(viewer: str, setup_status: CampaignOpsSetupStatus) -> Non
     st.stop()
 
 
-def render_cross_team_intro() -> None:
-    st.subheader("Cross-Team")
-    st.info("Cross-team dashboard metrics are planned for a later implementation pass.")
-    if st.button("Open All Programs", type="primary", key="campaign_ops_open_all_programs"):
-        set_section(st.session_state, "All Programs")
-        st.rerun()
-
-
 def render_active_section(
     section: str,
     viewer: str,
@@ -169,21 +157,23 @@ def render_active_section(
     service: CampaignOpsService,
     users: list[CampaignOpsUser],
 ) -> None:
+    if section not in get_sections_for_user(user, viewer) and section != "New Program":
+        set_section(st.session_state, get_default_section(user, viewer))
+        st.rerun()
+        return
+    if section == "New Program" and not can_access_admin(user):
+        set_section(st.session_state, get_default_section(user, viewer))
+        st.rerun()
+        return
     clients = service.list_active_clients()
-    if section == "Cross-Team":
-        render_cross_team_dashboard(user, service, users)
-    elif section == "All Programs":
+    if section == "All Programs":
         render_all_programs(user, service, users, clients)
     elif section == "My Programs":
         render_my_programs(user, service, users, clients)
     elif section == "New Program":
         render_new_program_form(user, service, users, clients)
-    elif section == "My Work":
-        render_my_work(user, service, users)
     elif section == "Influencer":
         render_influencer(user, service, users)
-    elif section == "Requests":
-        render_reporting_requests(user, service, users)
     elif section == "Retail Media":
         render_retail_media(user, service, users)
     elif section == "eCommerce / Content":
@@ -191,7 +181,8 @@ def render_active_section(
     elif section == "Insights":
         render_insights(user, service, users)
     else:
-        render_placeholder(section)
+        set_section(st.session_state, get_default_section(user, viewer))
+        st.rerun()
 
 
 def main() -> None:

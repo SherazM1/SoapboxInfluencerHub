@@ -4,15 +4,7 @@ import unittest
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from app.campaign_ops.retail_media.baseline import (
-    action_display_text,
-    current_status_text,
-    next_current_retail_media_action,
-    normalize_retail_media_actions,
-    over_budget,
-    retail_media_quick_links,
-    spend_budget_values,
-)
+from app.campaign_ops.retail_media.baseline import action_display_text, current_status_text, next_current_retail_media_action, normalize_retail_media_actions, over_budget, spend_budget_values
 
 
 @dataclass
@@ -28,34 +20,6 @@ def obj(**kwargs):
 
 
 class RetailMediaBaselineTests(unittest.TestCase):
-    def test_quick_links_are_ordered_deduped_and_omit_missing_urls(self) -> None:
-        campaign = obj(
-            id="rm-1",
-            tracksheet_url="https://example.com/track",
-            budget_tracker_url="",
-            optimization_log_url="https://example.com/opt",
-        )
-        resources = [
-            obj(id="r1", resource_type="WPSR Weekly Update", title="Update WPSR Weekly", url="https://example.com/wpsr", is_active=True),
-            obj(id="r2", resource_type="Budget Tracker", title="Budget Tracker", url=None, is_active=True),
-            obj(id="r3", resource_type="Media Plan / Budget", title="Media Plan / Budget", url="https://example.com/media", is_active=True),
-            obj(id="r4", resource_type="Custom", title="Summer Tracksheet", url="https://example.com/summer", is_active=True),
-            obj(id="r5", resource_type="Tracksheet", title="Tracksheet", url="https://example.com/track", is_active=True),
-            obj(id="r6", resource_type="RM Strategy", title="RM Strategy", url="https://example.com/strategy", is_active=False),
-        ]
-
-        links = retail_media_quick_links(campaign, resources, include_custom=True)
-
-        self.assertEqual(
-            [(link.label, link.url) for link in links],
-            [
-                ("Tracksheet", "https://example.com/track"),
-                ("Update WPSR Weekly", "https://example.com/wpsr"),
-                ("Media Plan / Budget", "https://example.com/media"),
-                ("Optimization Log", "https://example.com/opt"),
-                ("Summer Tracksheet", "https://example.com/summer"),
-            ],
-        )
 
     def test_normalizes_actions_and_excludes_unrelated_program_milestones(self) -> None:
         channel = obj(id="ch-1", channel_type="Onsite Display")

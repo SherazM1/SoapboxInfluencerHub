@@ -3,35 +3,20 @@ from __future__ import annotations
 from datetime import date
 from html import escape
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 import streamlit as st
 
-from app.campaign_ops.formatting import RISK_LABELS, format_date, format_datetime, safe_text, title_label
-from app.campaign_ops.influencer.formatting import PORTFOLIO_COLUMNS, planning_portfolio_rows, status_label
+from app.campaign_ops.formatting import format_date, format_datetime, safe_text, title_label
+from app.campaign_ops.influencer.formatting import status_label
 from app.campaign_ops.influencer.live_views import render_live
-from app.campaign_ops.influencer.planning_baseline import (
-    campaign_quick_links,
-    compact_date,
-    next_sequence_step,
-    planning_sequence_preview,
-    select_campaign_for_open,
-)
+from app.campaign_ops.influencer.planning_baseline import compact_date, next_sequence_step, planning_sequence_preview, select_campaign_for_open
 from app.campaign_ops.influencer.recap_views import render_recapping
 from app.campaign_ops.note_views import render_notes
-from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
 from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.enums import TaskStatus
 from core.campaign_ops.exceptions import CampaignOpsError
-from core.campaign_ops.influencer import (
-    APPROVAL_TYPES,
-    CONTENT_ROUND_TYPES,
-    INFLUENCER_RESOURCE_TYPES,
-    INFLUENCER_STAGES,
-    PLANNING_STATUSES,
-    RESPONSIBLE_PARTIES,
-)
+from core.campaign_ops.influencer import INFLUENCER_STAGES, PLANNING_STATUSES, RESPONSIBLE_PARTIES
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.service import CampaignOpsService
 
@@ -144,15 +129,6 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, manage
         except CampaignOpsError:
             steps = []
         render_campaign_block(campaign, steps, compact=current_view == "All Planning")
-    with st.expander("Portfolio Summary", expanded=False):
-        st.dataframe(planning_portfolio_rows(campaigns), column_order=PORTFOLIO_COLUMNS, hide_index=True, use_container_width=True)
-    if campaigns:
-        labels = {f"{item.campaign_title} | {safe_text(item.client_name)}": item.id for item in campaigns}
-        cols = st.columns(2)
-        chosen = cols[0].selectbox("Open Influencer Campaign", list(labels), key="campaign_ops_influencer_campaign_select")
-        if cols[1].button("Open Campaign", key="campaign_ops_influencer_campaign_open"):
-            st.session_state["campaign_ops_selected_influencer_campaign_id"] = labels[chosen]
-            st.rerun()
 
 
 def render_filters(campaigns: list[Any], *, show_manager_filter: bool = True) -> dict[str, object]:
@@ -218,7 +194,7 @@ def render_campaign_block(campaign: Any, steps: list[Any], *, compact: bool = Fa
     next_step = next_sequence_step(steps)
     next_title = safe_text(getattr(next_step, "step_title", None)) if next_step else "Planning sequence complete"
     next_due = compact_date(getattr(next_step, "due_date", None), reference_year=date.today().year) if next_step else ""
-    hold_badge = "<span class='campaign-ops-influencer-hold'>ON HOLD</span>" if campaign.is_on_hold else "<span>ACTIVE</span>"
+    hold_badge = "<span class='campaign-ops-influencer-hold'>ON HOLD</span>" if campaign.is_on_hold else ("<span>ACTIVE</span>" if campaign.is_active else "<span>INACTIVE</span>")
     hold_reason = f"<div class='campaign-ops-influencer-hold-reason'>Hold reason: {escape(safe_text(campaign.hold_reason))}</div>" if campaign.is_on_hold and campaign.hold_reason else ""
     html = f"""
     <div class='campaign-ops-influencer-block'>
@@ -231,9 +207,6 @@ def render_campaign_block(campaign: Any, steps: list[Any], *, compact: bool = Fa
         {hold_reason}
       </div>
     """
-    links = campaign_quick_links(campaign)
-    if links:
-        html += "<div class='campaign-ops-influencer-links'>" + " &nbsp; ".join(f"<a href='{escape(sanitize_link(link.url), quote=True)}' target='_blank'>{escape(link.label)}</a>" for link in links) + "</div>"
     if visible_steps:
         html += "<table class='campaign-ops-influencer-sequence'><thead><tr><th>Date</th><th>Planning Action</th><th>Status</th></tr></thead><tbody>"
         for step in visible_steps:
@@ -301,15 +274,9 @@ def render_new_campaign(actor: CampaignOpsUser, service: CampaignOpsService, use
         launch = cols[1].date_input("Launch Date", value=None)
         wrap = cols[2].date_input("Wrap Date", value=None)
         invoice_date = cols[3].date_input("Invoice Date", value=None)
-        cols = st.columns(4)
+        cols = st.columns(1)
         invoice_status = cols[0].text_input("Invoice Status")
-        invoice_amount = cols[1].number_input("Invoice Amount", min_value=0.0, value=0.0)
-        target = cols[2].number_input("Target Creator Count", min_value=0, value=0)
-        approved = cols[3].number_input("Approved Creator Count", min_value=0, value=0)
-        contracted = st.number_input("Contracted Creator Count", min_value=0, value=0)
         use_template = st.checkbox("Create standard planning template")
-        st.caption("Optional initial resources")
-        resource_values = {resource_type: st.text_input(resource_type) for resource_type in INFLUENCER_RESOURCE_TYPES if resource_type != "Custom"}
         submitted = st.form_submit_button("Create Influencer Campaign", type="primary")
     if submitted:
         try:
@@ -333,11 +300,8 @@ def render_new_campaign(actor: CampaignOpsUser, service: CampaignOpsService, use
                 wrap_date=wrap,
                 invoice_date=invoice_date,
                 invoice_status=trim_or_none(invoice_status),
-                invoice_amount=invoice_amount,
-                target_creator_count=target,
-                approved_creator_count=approved,
-                contracted_creator_count=contracted,
-                initial_resources={key: trim_or_none(value) for key, value in resource_values.items()},
+
+
                 use_standard_template=use_template,
             )
         except CampaignOpsError as exc:
@@ -365,25 +329,19 @@ def render_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users:
     st.markdown(f"### {campaign.campaign_title}")
     st.caption(f"{safe_text(campaign.client_name)} | {campaign.program_name} | Manager: {safe_text(campaign.manager_display_name)} | {status_label(campaign.planning_status)} | {hold}")
     st.info(f"Next: {safe_text(campaign.next_planning_step)} | Due: {format_date(campaign.next_planning_step_due_date)} | Launch: {format_date(campaign.launch_date)} | Wrap: {format_date(campaign.wrap_date)} | Invoice: {format_date(campaign.invoice_date)} {safe_text(campaign.invoice_status)}")
-    tabs = st.tabs(["Overview", "Planning Sequence", "Approvals", "Content Rounds", "Creator Summary", "Timeline", "Resources", "Program Notes", "Activity"])
+    tabs = st.tabs(['Overview', 'Planning Sequence', 'Timeline', 'Program Notes', 'Activity'])
     with tabs[0]:
         render_overview(actor, service, users, campaign)
     with tabs[1]:
         render_steps(actor, service, users, campaign)
     with tabs[2]:
-        render_approvals(actor, service, campaign)
-    with tabs[3]:
-        render_content_rounds(actor, service, campaign)
-    with tabs[4]:
-        render_creator_summary(actor, service, campaign)
-    with tabs[5]:
         render_timeline(actor, service, campaign)
-    with tabs[6]:
-        render_resources(actor, service, campaign)
-    with tabs[7]:
-        render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
-    with tabs[8]:
-        render_activity(actor, service, campaign)
+    with tabs[3]:
+        with st.expander("Program Notes", expanded=False):
+            render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
+    with tabs[4]:
+        with st.expander("Activity", expanded=False):
+            render_activity(actor, service, campaign)
 
 
 def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], campaign: Any) -> None:
@@ -405,14 +363,9 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         wrap = cols[1].date_input("Wrap Date", value=campaign.wrap_date)
         invoice_date = cols[2].date_input("Invoice Date", value=campaign.invoice_date)
         invoice_status = cols[3].text_input("Invoice Status", value=safe_text(campaign.invoice_status))
-        cols = st.columns(4)
-        invoice_amount = cols[0].number_input("Invoice Amount", min_value=0.0, value=float(campaign.invoice_amount or 0))
-        target = cols[1].number_input("Target Creators", min_value=0, value=int(campaign.target_creator_count or 0))
-        approved = cols[2].number_input("Approved Creators", min_value=0, value=int(campaign.approved_creator_count or 0))
-        contracted = cols[3].number_input("Contracted Creators", min_value=0, value=int(campaign.contracted_creator_count or 0))
         submitted = st.form_submit_button("Save Overview", type="primary")
     if submitted:
-        service.update_influencer_campaign(actor, campaign.id, campaign_title=title, manager_user_id=user_options[manager], influencer_stage=stage, planning_status=status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), is_on_hold=on_hold, hold_reason=trim_or_none(hold_reason), launch_date=launch, wrap_date=wrap, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status), invoice_amount=invoice_amount, target_creator_count=target, approved_creator_count=approved, contracted_creator_count=contracted)
+        service.update_influencer_campaign(actor, campaign.id, campaign_title=title, manager_user_id=user_options[manager], influencer_stage=stage, planning_status=status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), is_on_hold=on_hold, hold_reason=trim_or_none(hold_reason), launch_date=launch, wrap_date=wrap, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status))
         st.rerun()
     cols = st.columns(2)
     if campaign.influencer_stage == "planning" and st.button("Move Campaign to Live", key=f"campaign_ops_influencer_move_live_{campaign.id}"):
@@ -456,89 +409,10 @@ def render_steps(actor: CampaignOpsUser, service: CampaignOpsService, users: lis
             service.reactivate_influencer_planning_step(actor, campaign.id, step.id); st.rerun()
 
 
-def render_approvals(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    with st.form(f"campaign_ops_influencer_approval_add_{campaign.id}"):
-        cols = st.columns(4)
-        approval_type = cols[0].selectbox("Approval Type", APPROVAL_TYPES)
-        round_number = cols[1].number_input("Round Number", min_value=1, value=1)
-        scope = cols[2].text_input("Approval Scope")
-        due = cols[3].date_input("Feedback Due Date", value=None)
-        submitted = st.form_submit_button("Add Approval", type="primary")
-    if submitted:
-        service.create_influencer_approval_round(actor, campaign.id, approval_type, round_number=round_number, approval_scope=trim_or_none(scope), feedback_due_date=due, status="not_sent")
-        st.rerun()
-    approvals = service.list_influencer_approval_rounds(actor, campaign.id, include_inactive=True)
-    st.dataframe([{"Type": a.approval_type, "Round": a.round_number, "Scope": safe_text(a.approval_scope), "Requested": format_date(a.requested_date), "Feedback Due": format_date(a.feedback_due_date), "Feedback Received": format_date(a.feedback_received_date), "Approved": format_date(a.approved_date), "Status": status_label(a.status), "Active State": "Active" if a.is_active else "Inactive"} for a in approvals], hide_index=True, use_container_width=True)
-    for approval in approvals:
-        cols = st.columns(6)
-        if cols[0].button("Sent", key=f"campaign_ops_influencer_approval_sent_{approval.id}"):
-            service.mark_influencer_approval_sent(actor, campaign.id, approval.id); st.rerun()
-        if cols[1].button("Feedback", key=f"campaign_ops_influencer_approval_feedback_{approval.id}"):
-            service.mark_influencer_approval_feedback_received(actor, campaign.id, approval.id); st.rerun()
-        if cols[2].button("Approved", key=f"campaign_ops_influencer_approval_approved_{approval.id}"):
-            service.mark_influencer_approval_approved(actor, campaign.id, approval.id); st.rerun()
-        if cols[3].button("Reopen", key=f"campaign_ops_influencer_approval_reopen_{approval.id}"):
-            service.reopen_influencer_approval_round(actor, campaign.id, approval.id); st.rerun()
-        if approval.is_active and cols[4].button("Deactivate", key=f"campaign_ops_influencer_approval_deactivate_{approval.id}"):
-            service.deactivate_influencer_approval_round(actor, campaign.id, approval.id); st.rerun()
-        if not approval.is_active and cols[5].button("Reactivate", key=f"campaign_ops_influencer_approval_reactivate_{approval.id}"):
-            service.reactivate_influencer_approval_round(actor, campaign.id, approval.id); st.rerun()
-
-
-def render_content_rounds(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    with st.form(f"campaign_ops_influencer_content_round_add_{campaign.id}"):
-        cols = st.columns(4)
-        round_number = cols[0].number_input("Round Number", min_value=1, value=1)
-        content_type = cols[1].selectbox("Content Type", ["", *CONTENT_ROUND_TYPES])
-        internal_due = cols[2].date_input("Internal Review Due Date", value=None)
-        feedback_due = cols[3].date_input("Client Feedback Due Date", value=None)
-        submitted = st.form_submit_button("Add Content Round", type="primary")
-    if submitted:
-        service.create_influencer_content_round(actor, campaign.id, round_number, content_type=trim_or_none(content_type), internal_review_due_date=internal_due, client_feedback_due_date=feedback_due, status="not_started")
-        st.rerun()
-    rounds = service.list_influencer_content_rounds(actor, campaign.id, include_inactive=True)
-    st.dataframe([{"Round": r.round_number, "Type": safe_text(r.content_type), "Internal Due": format_date(r.internal_review_due_date), "Client Sent": format_date(r.client_review_sent_date), "Feedback Due": format_date(r.client_feedback_due_date), "Feedback Received": format_date(r.feedback_received_date), "Resubmission Due": format_date(r.resubmission_due_date), "Approved": format_date(r.approved_date), "Status": status_label(r.status), "Active State": "Active" if r.is_active else "Inactive"} for r in rounds], hide_index=True, use_container_width=True)
-    for item in rounds:
-        cols = st.columns(6)
-        if cols[0].button("Sent", key=f"campaign_ops_influencer_round_sent_{item.id}"):
-            service.mark_influencer_content_round_sent_for_review(actor, campaign.id, item.id); st.rerun()
-        if cols[1].button("Feedback", key=f"campaign_ops_influencer_round_feedback_{item.id}"):
-            service.mark_influencer_content_round_feedback_received(actor, campaign.id, item.id); st.rerun()
-        if cols[2].button("Approved", key=f"campaign_ops_influencer_round_approved_{item.id}"):
-            service.mark_influencer_content_round_approved(actor, campaign.id, item.id); st.rerun()
-        if cols[3].button("Reopen", key=f"campaign_ops_influencer_round_reopen_{item.id}"):
-            service.reopen_influencer_content_round(actor, campaign.id, item.id); st.rerun()
-        if item.is_active and cols[4].button("Deactivate", key=f"campaign_ops_influencer_round_deactivate_{item.id}"):
-            service.deactivate_influencer_content_round(actor, campaign.id, item.id); st.rerun()
-        if not item.is_active and cols[5].button("Reactivate", key=f"campaign_ops_influencer_round_reactivate_{item.id}"):
-            service.reactivate_influencer_content_round(actor, campaign.id, item.id); st.rerun()
-
-
-def render_creator_summary(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    summary = service.get_influencer_creator_summary(actor, campaign.id)
-    with st.form(f"campaign_ops_influencer_creator_summary_{campaign.id}"):
-        cols = st.columns(4)
-        target = cols[0].number_input("Target Creators", min_value=0, value=int((summary.target_creator_count if summary else campaign.target_creator_count) or 0))
-        applicants = cols[1].number_input("Applicants", min_value=0, value=int((summary.applicants_count if summary else 0) or 0))
-        vetted = cols[2].number_input("Vetted", min_value=0, value=int((summary.vetted_count if summary else 0) or 0))
-        submitted_count = cols[3].number_input("Submitted for Approval", min_value=0, value=int((summary.submitted_for_approval_count if summary else 0) or 0))
-        cols = st.columns(4)
-        approved = cols[0].number_input("Approved", min_value=0, value=int((summary.approved_count if summary else campaign.approved_creator_count) or 0))
-        contracted = cols[1].number_input("Contracted", min_value=0, value=int((summary.contracted_count if summary else campaign.contracted_creator_count) or 0))
-        content_submitted = cols[2].number_input("Content Submitted", min_value=0, value=int((summary.content_submitted_count if summary else 0) or 0))
-        content_approved = cols[3].number_input("Content Approved", min_value=0, value=int((summary.content_approved_count if summary else 0) or 0))
-        notes = st.text_area("Notes", value=safe_text(summary.notes if summary else ""))
-        submitted = st.form_submit_button("Save Creator Summary", type="primary")
-    if submitted:
-        service.create_or_update_influencer_creator_summary(actor, campaign.id, target_creator_count=target, applicants_count=applicants, vetted_count=vetted, submitted_for_approval_count=submitted_count, approved_count=approved, contracted_count=contracted, content_submitted_count=content_submitted, content_approved_count=content_approved, notes=trim_or_none(notes), is_active=True)
-        st.rerun()
-
-
 def render_timeline(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
     with st.form(f"campaign_ops_influencer_timeline_add_{campaign.id}"):
         cols = st.columns(4)
         title = cols[0].text_input("Timeline Item")
-        target = cols[1].date_input("Exact Date", value=None)
         start = cols[2].date_input("Start Date", value=None)
         end = cols[3].date_input("End Date", value=None)
         submitted = st.form_submit_button("Add Timeline Item", type="primary")
@@ -559,37 +433,7 @@ def render_timeline(actor: CampaignOpsUser, service: CampaignOpsService, campaig
             service.reactivate_milestone(actor, m.id); st.rerun()
 
 
-def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    quick = campaign_quick_links(campaign)
-    cols = st.columns(4)
-    for index, link in enumerate(quick):
-        target = cols[index % 4]
-        target.link_button(link.label, sanitize_link(link.url))
-    summary = service.get_program_workspace_summary(actor, campaign.program_id)
-    resources = [r for r in service.list_program_resources(actor, campaign.program_id, include_inactive=True) if r.resource_type in INFLUENCER_RESOURCE_TYPES or r.workstream_id == campaign.workstream_id]
-    st.dataframe(resource_table_rows(resources), hide_index=True, use_container_width=True)
-    with st.form(f"campaign_ops_influencer_resource_add_{campaign.id}"):
-        cols = st.columns(3)
-        title = cols[0].text_input("Title")
-        resource_type = cols[1].selectbox("Resource type", INFLUENCER_RESOURCE_TYPES)
-        url = cols[2].text_input("URL")
-        submitted = st.form_submit_button("Add Resource", type="primary")
-    if submitted:
-        service.create_resource(actor, campaign.program_id, title=title, resource_type=resource_type, workstream_id=campaign.workstream_id, url=trim_or_none(url))
-        st.rerun()
-    for resource in resources:
-        render_resource_actions(actor, service, summary, resource)
-
-
 def render_activity(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
     summary = service.get_program_workspace_summary(actor, campaign.program_id)
     rows = [{"Timestamp": format_datetime(e.created_at), "Event": title_label(e.event_type), "Message": safe_text(e.message)} for e in summary.activity if e.event_type.startswith("influencer_") or e.entity_type.startswith("influencer_")]
     st.dataframe(rows, hide_index=True, use_container_width=True)
-
-
-def sanitize_link(url: str) -> str:
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))

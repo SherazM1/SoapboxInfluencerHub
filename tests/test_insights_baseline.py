@@ -4,13 +4,7 @@ import unittest
 from datetime import date, datetime
 from types import SimpleNamespace
 
-from app.campaign_ops.insights.baseline import (
-    current_status_text,
-    deliverable_display_text,
-    insights_quick_links,
-    next_insights_deliverable,
-    normalize_insights_deliverables,
-)
+from app.campaign_ops.insights.baseline import current_status_text, deliverable_display_text, next_insights_deliverable, normalize_insights_deliverables
 
 
 def obj(**kwargs):
@@ -18,33 +12,7 @@ def obj(**kwargs):
 
 
 class InsightsBaselineTests(unittest.TestCase):
-    def test_quick_links_use_workbook_labels_and_omit_missing_urls(self) -> None:
-        project = obj(
-            tracksheet_url="https://example.com/tracksheet",
-            results_deck_url="",
-            raw_data_url="https://example.com/raw-key",
-        )
 
-        links = insights_quick_links(project)
-
-        self.assertEqual(
-            [(link.label, link.url) for link in links],
-            [
-                ("Tracksheet", "https://example.com/tracksheet"),
-                ("Raw Data Key", "https://example.com/raw-key"),
-            ],
-        )
-
-    def test_quick_links_dedupe_by_label_and_url(self) -> None:
-        project = obj(
-            tracksheet_url="https://example.com/same",
-            results_deck_url="https://example.com/same",
-            raw_data_url="https://example.com/same",
-        )
-
-        links = insights_quick_links(project)
-
-        self.assertEqual([link.label for link in links], ["Tracksheet", "Results Deck", "Raw Data Key"])
 
     def test_current_status_uses_latest_update_before_status_label(self) -> None:
         project = obj(latest_update="Working on draft survey - 7/17", insights_status="drafting_survey")

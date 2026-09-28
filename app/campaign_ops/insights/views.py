@@ -2,32 +2,17 @@ from __future__ import annotations
 
 from html import escape
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit, urlunsplit
 
 import streamlit as st
 
-from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, WORKFLOW_LABELS, format_date, format_datetime, safe_text
-from app.campaign_ops.insights.baseline import (
-    current_status_text,
-    deliverable_display_text,
-    insights_quick_links,
-    next_insights_deliverable,
-    normalize_insights_deliverables,
-)
-from app.campaign_ops.insights.formatting import (
-    PORTFOLIO_COLUMNS,
-    format_currency,
-    insights_status_label,
-    portfolio_rows,
-    quick_link_label,
-    timeline_date_label,
-)
-from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
+from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date, format_datetime, safe_text
+from app.campaign_ops.insights.baseline import current_status_text, deliverable_display_text, next_insights_deliverable
+from app.campaign_ops.insights.formatting import insights_status_label, timeline_date_label
 from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
-from core.campaign_ops.enums import RiskLevel, TaskStatus, WorkstreamType
+from core.campaign_ops.enums import TaskStatus
 from core.campaign_ops.exceptions import CampaignOpsError
-from core.campaign_ops.insights import INSIGHTS_RESOURCE_TYPES, INSIGHTS_STATUSES, INSIGHTS_STATUS_NOT_STARTED
+from core.campaign_ops.insights import INSIGHTS_STATUSES, INSIGHTS_STATUS_NOT_STARTED
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.service import CampaignOpsService
 
@@ -122,14 +107,6 @@ def render_portfolio(actor: CampaignOpsUser, service: CampaignOpsService) -> Non
         return
     for project in filtered:
         render_project_scan_card(project, board_data)
-    with st.expander("Insights Portfolio Summary", expanded=False):
-        render_workbook_table("Insights Portfolio", portfolio_rows(filtered), PORTFOLIO_COLUMNS)
-    labels = {f"{project.project_title} | {safe_text(project.client_name)}": project.id for project in filtered}
-    cols = st.columns(2)
-    selected = cols[0].selectbox("Open Insights project", list(labels), key="campaign_ops_insights_project_select")
-    if cols[1].button("Open Project", key="campaign_ops_insights_project_open"):
-        st.session_state["campaign_ops_selected_insights_project_id"] = labels[selected]
-        st.rerun()
 
 
 def render_project_scan_card(project: InsightsPortfolioRow, board_data: dict[str, object]) -> None:
@@ -145,17 +122,11 @@ def render_project_scan_card(project: InsightsPortfolioRow, board_data: dict[str
         "<div class='campaign-ops-insights-card-grid'>",
         _card_cell("Current Status", escape(current_status_text(project))),
         _card_cell("Next Deliverable", escape(deliverable_display_text(next_deliverable))),
-        _card_cell("Linked Sheets", escape(" | ".join(link.label for link in insights_quick_links(project))) if insights_quick_links(project) else "-"),
         _card_cell("Risk", escape(risk)),
         "</div>",
         "</div>",
     ]
     st.markdown("".join(html), unsafe_allow_html=True)
-    links = insights_quick_links(project)
-    if links:
-        cols = st.columns(min(len(links), 3))
-        for index, link in enumerate(links):
-            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_insights_scan_link_{project.id}_{index}")
     if st.button("Open Insights Project", key=f"campaign_ops_insights_scan_open_{project.id}"):
         st.session_state["campaign_ops_selected_insights_project_id"] = project.id
         st.rerun()
@@ -200,15 +171,6 @@ def sort_projects(projects: list[InsightsPortfolioRow], sort_by: str) -> list[In
     return sorted(projects, key=lambda project: (getattr(project, sort_by, None) is None, str(getattr(project, sort_by, "") or ""), project.project_title.lower()), reverse=sort_by == "updated_at")
 
 
-def render_workbook_table(title: str, rows: list[dict[str, str]], columns: list[str]) -> None:
-    st.markdown(f"<div class='campaign-ops-insights-title'>{title}</div>", unsafe_allow_html=True)
-    ordered = [{column: row.get(column, "") for column in columns} for row in rows]
-    if ordered:
-        st.dataframe(ordered, hide_index=True, use_container_width=True)
-    else:
-        st.info(f"No {title.lower()} records match this view.")
-
-
 def render_new_project_form(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
     if st.button("Back to Insights Portfolio", key="campaign_ops_insights_create_back"):
         st.session_state["campaign_ops_insights_create_open"] = False
@@ -228,20 +190,9 @@ def render_new_project_form(actor: CampaignOpsUser, service: CampaignOpsService,
         job_number = cols[0].text_input("Job Number")
         project_title = cols[1].text_input("Project Title")
         latest_update = cols[2].text_input("Latest Update")
-        cols = st.columns(3)
-        total_program_cost = cols[0].number_input("Total Program Cost", min_value=0.0, value=0.0)
-        sample_size = cols[1].number_input("Sample Size", min_value=0, value=0)
-        budget = cols[2].number_input("Budget", min_value=0.0, value=0.0)
-        cols = st.columns(3)
-        tracksheet = cols[0].text_input("Tracksheet URL")
-        results_deck = cols[1].text_input("Results Deck URL")
-        raw_data = cols[2].text_input("Raw Data URL")
-        objectives = st.text_area("Initial research objectives", height=160)
         submitted = st.form_submit_button("Create Insights Project", type="primary")
     if not submitted:
         return
-    initial_resources = {k: v for k, v in {"Tracksheet": trim_or_none(tracksheet), "Results Deck": trim_or_none(results_deck), "Raw Data": trim_or_none(raw_data)}.items() if v}
-    initial_objectives = [line.strip() for line in objectives.splitlines() if line.strip()]
     try:
         project = service.create_insights_project(
             actor,
@@ -251,11 +202,8 @@ def render_new_project_form(actor: CampaignOpsUser, service: CampaignOpsService,
             insights_status=status,
             latest_update=trim_or_none(latest_update),
             job_number=trim_or_none(job_number),
-            total_program_cost=total_program_cost,
-            sample_size=sample_size,
-            budget=budget,
-            initial_resources=initial_resources,
-            initial_objectives=initial_objectives,
+
+
         )
     except CampaignOpsError as exc:
         st.error(f"Insights project was not created: {exc}")
@@ -284,70 +232,18 @@ def render_insights_workspace(actor: CampaignOpsUser, service: CampaignOpsServic
     st.caption(
         f"Client: {safe_text(project.client_name)} | Job: {safe_text(project.job_number)} | "
         f"Owner: {safe_text(project.owner_display_name)} | Status: {insights_status_label(project.insights_status)} | "
-        f"Latest: {safe_text(project.latest_update)} | Next: {safe_text(project.next_milestone)} | "
+        f"Latest: {safe_text(project.latest_update)} | Next: {safe_text(project.next_milestone)} ({format_date(project.next_milestone_date)}) | "
         f"Risk: {RISK_LABELS.get(project.program_risk, project.program_risk)} | Updated: {format_datetime(project.updated_at)} | "
         f"{'Active' if project.is_active else 'Inactive'}"
     )
-    render_insights_baseline_tracker(actor, service, project)
-    tabs = st.tabs(["Overview", "Timeline", "Research Objectives", "Resources", "Activity"])
+    tabs = st.tabs(['Overview', 'Timeline', 'Activity'])
     with tabs[0]:
         render_overview(actor, service, users, project)
     with tabs[1]:
         render_timeline(actor, service, project)
     with tabs[2]:
-        render_objectives(actor, service, project)
-    with tabs[3]:
-        render_resources(actor, service, project)
-    with tabs[4]:
-        render_activity(actor, service, project)
-
-
-def render_insights_baseline_tracker(actor: CampaignOpsUser, service: CampaignOpsService, project: InsightsPortfolioRow) -> None:
-    milestones = [
-        milestone
-        for milestone in service.list_program_milestones(actor, project.program_id, include_inactive=False)
-        if milestone.milestone_type == "Insights" or milestone.workstream_id == project.workstream_id
-    ]
-    deliverables = normalize_insights_deliverables(milestones, project)
-    next_deliverable = deliverables[0] if deliverables else None
-    links = insights_quick_links(project)
-    header = " | ".join(part for part in [
-        safe_text(project.client_name),
-        f"Job {project.job_number}" if project.job_number else "",
-        f"Owner {safe_text(project.owner_display_name)}",
-        insights_status_label(project.insights_status),
-        "Active" if project.is_active else "Inactive",
-        f"Risk {RISK_LABELS.get(project.program_risk, project.program_risk)}" if project.program_risk else "",
-    ] if part and part != "-")
-    status_text = current_status_text(project)
-
-    st.markdown("<div class='campaign-ops-insights-baseline'><div class='campaign-ops-insights-card-head'>Insights Baseline</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Project Header</div>{escape(project.project_title)}<br><span class='campaign-ops-insights-card-meta'>{escape(header)}</span></div>", unsafe_allow_html=True)
-    if links:
-        st.markdown("<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Linked Sheets</div></div>", unsafe_allow_html=True)
-        cols = st.columns(min(len(links), 3))
-        for index, link in enumerate(links):
-            cols[index % len(cols)].link_button(link.label, sanitize_link(link.url), key=f"campaign_ops_insights_baseline_link_{project.id}_{index}")
-    st.markdown(f"<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Current Status</div>{escape(status_text)}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Next / Current Deliverable</div>{escape(deliverable_display_text(next_deliverable))}</div>", unsafe_allow_html=True)
-    if project.latest_update and project.latest_update.strip() != status_text:
-        st.markdown(f"<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Latest Update</div>{escape(project.latest_update)}</div>", unsafe_allow_html=True)
-    if deliverables:
-        st.markdown("<div class='campaign-ops-insights-baseline-section'><div class='campaign-ops-insights-baseline-label'>Open Insights Milestones</div></div>", unsafe_allow_html=True)
-        st.dataframe(
-            [
-                {
-                    "Date": format_date(row.display_date),
-                    "Milestone": row.title,
-                    "Status": row.status,
-                }
-                for row in deliverables[:5]
-            ],
-            hide_index=True,
-            use_container_width=True,
-        )
-    st.caption("Existing Overview, Timeline, Research Objectives, Resources, and Activity tabs remain below.")
-    st.markdown("</div>", unsafe_allow_html=True)
+        with st.expander("Activity", expanded=False):
+            render_activity(actor, service, project)
 
 
 def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], project: InsightsPortfolioRow) -> None:
@@ -358,19 +254,14 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         job_number = cols[0].text_input("Job Number", value=project.job_number or "")
         project_title = cols[1].text_input("Project", value=project.project_title)
         owner_label = cols[2].selectbox("Owner", list(user_options), index=list(user_options).index(current_owner))
-        cols = st.columns(3)
-        total_program_cost = cols[0].number_input("Total Program Cost", min_value=0.0, value=float(project.total_program_cost or 0))
-        sample_size = cols[1].number_input("Sample Size", min_value=0, value=int(project.sample_size or 0))
-        budget = cols[2].number_input("Budget", min_value=0.0, value=float(project.budget or 0))
         cols = st.columns(2)
         status = cols[0].selectbox("Insights Status", sorted(INSIGHTS_STATUSES), index=sorted(INSIGHTS_STATUSES).index(project.insights_status or INSIGHTS_STATUS_NOT_STARTED), format_func=insights_status_label)
         latest_update = cols[1].text_input("Latest Update", value=project.latest_update or "")
         submitted = st.form_submit_button("Save Overview", type="primary")
     st.caption(f"Program: {project.program_name} | Client: {safe_text(project.client_name)} | Workstream: {safe_text(project.workstream_id)} | Program status: {STATUS_LABELS.get(project.program_status, project.program_status)} | Program risk: {RISK_LABELS.get(project.program_risk, project.program_risk)}")
-    st.caption(f"Total Program Cost: {format_currency(project.total_program_cost)} | Budget: {format_currency(project.budget)} | Sample Size: {safe_text(project.sample_size)}")
     if submitted:
         try:
-            service.update_insights_project(actor, project.id, job_number=trim_or_none(job_number), project_title=project_title, owner_user_id=user_options[owner_label], total_program_cost=total_program_cost, sample_size=sample_size, budget=budget, insights_status=status, latest_update=trim_or_none(latest_update))
+            service.update_insights_project(actor, project.id, job_number=trim_or_none(job_number), project_title=project_title, owner_user_id=user_options[owner_label], insights_status=status, latest_update=trim_or_none(latest_update))
         except CampaignOpsError as exc:
             st.error(f"Overview was not saved: {exc}")
             return
@@ -424,83 +315,6 @@ def render_timeline(actor: CampaignOpsUser, service: CampaignOpsService, project
             st.rerun()
 
 
-def render_objectives(actor: CampaignOpsUser, service: CampaignOpsService, project: InsightsPortfolioRow) -> None:
-    st.markdown("<div class='campaign-ops-insights-title'>Research Objectives</div>", unsafe_allow_html=True)
-    include_inactive = st.checkbox("Show inactive objectives", key="campaign_ops_insights_objectives_show_inactive")
-    with st.form(f"campaign_ops_insights_objective_add_{project.id}"):
-        objective_text = st.text_area("Add objective", height=100)
-        sort_order = st.number_input("Sort order", min_value=0, value=0)
-        submitted = st.form_submit_button("Add Objective", type="primary")
-    if submitted:
-        try:
-            service.add_insights_objective(actor, project.id, objective_text, int(sort_order))
-        except CampaignOpsError as exc:
-            st.error(f"Objective was not added: {exc}")
-            return
-        st.rerun()
-    objectives = service.list_insights_objectives(actor, project.id, include_inactive=include_inactive)
-    for objective in objectives:
-        with st.expander(f"{objective.sort_order}. {objective.objective_text}", expanded=False):
-            text = st.text_area("Objective", value=objective.objective_text, key=f"campaign_ops_insights_objective_text_{objective.id}")
-            order = st.number_input("Sort order", min_value=0, value=objective.sort_order, key=f"campaign_ops_insights_objective_order_{objective.id}")
-            cols = st.columns(3)
-            if cols[0].button("Save Objective", key=f"campaign_ops_insights_objective_save_{objective.id}"):
-                service.update_insights_objective(actor, project.id, objective.id, text, int(order))
-                st.rerun()
-            if objective.is_active and cols[1].button("Deactivate", key=f"campaign_ops_insights_objective_deactivate_{objective.id}"):
-                service.deactivate_insights_objective(actor, project.id, objective.id)
-                st.rerun()
-            if not objective.is_active and cols[2].button("Reactivate", key=f"campaign_ops_insights_objective_reactivate_{objective.id}"):
-                service.reactivate_insights_objective(actor, project.id, objective.id)
-                st.rerun()
-
-
-def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, project: InsightsPortfolioRow) -> None:
-    st.markdown("<div class='campaign-ops-insights-title'>Resources</div>", unsafe_allow_html=True)
-    cols = st.columns(3)
-    for idx, (label, url) in enumerate((("Tracksheet", project.tracksheet_url), ("Results Deck", project.results_deck_url), ("Raw Data", project.raw_data_url))):
-        if url:
-            cols[idx].link_button(label, sanitize_link(url), key=f"campaign_ops_insights_quick_link_{label}_{project.id}")
-        else:
-            cols[idx].metric(label, quick_link_label(url))
-    summary = service.get_program_workspace_summary(actor, project.program_id)
-    resources = [r for r in service.list_program_resources(actor, project.program_id, include_inactive=True) if r.resource_type in INSIGHTS_RESOURCE_TYPES or r.workstream_id == project.workstream_id]
-    if resources:
-        st.dataframe(resource_table_rows(resources), hide_index=True, use_container_width=True)
-    with st.expander("Add Resource", expanded=False):
-        render_insights_resource_form(actor, service, project)
-    for resource in resources:
-        render_resource_actions(actor, service, summary, resource)
-
-
-def render_insights_resource_form(actor: CampaignOpsUser, service: CampaignOpsService, project: InsightsPortfolioRow) -> None:
-    with st.form(f"campaign_ops_insights_resource_form_{project.id}"):
-        title = st.text_input("Title")
-        resource_type = st.selectbox("Resource type", INSIGHTS_RESOURCE_TYPES)
-        url = st.text_input("URL")
-        is_required = st.checkbox("Required")
-        notes = st.text_area("Notes")
-        submitted = st.form_submit_button("Create Resource", type="primary")
-    if not submitted:
-        return
-    try:
-        service.create_resource(
-            actor,
-            project.program_id,
-            title=title,
-            resource_type=resource_type,
-            workstream_id=project.workstream_id,
-            url=trim_or_none(url),
-            is_required=is_required,
-            notes=trim_or_none(notes),
-        )
-    except CampaignOpsError as exc:
-        st.error(f"Resource was not created: {exc}")
-        return
-    st.success("Resource created.")
-    st.rerun()
-
-
 def render_activity(actor: CampaignOpsUser, service: CampaignOpsService, project: InsightsPortfolioRow) -> None:
     summary = service.get_program_workspace_summary(actor, project.program_id)
     rows = [
@@ -522,11 +336,3 @@ def render_project_state_actions(actor: CampaignOpsUser, service: CampaignOpsSer
     if not project.is_active and cols[1].button("Reactivate Insights Project", key=f"campaign_ops_insights_reactivate_{project.id}"):
         service.reactivate_insights_project(actor, project.id)
         st.rerun()
-
-
-def sanitize_link(url: str) -> str:
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))

@@ -19,14 +19,11 @@ CAMPAIGN_OPS_IMPORT_ROOTS = (
 
 REQUIRED_TRACKED_FILES = (
     "app/pages/campaigns.py",
-    "app/campaign_ops/cross_team/views.py",
-    "app/campaign_ops/cross_team/formatting.py",
     "app/campaign_ops/ui/components.py",
     "app/campaign_ops/ui/formatting.py",
     "app/campaign_ops/ui/badges.py",
     "app/campaign_ops/ui/navigation.py",
     "app/campaign_ops/ui/styles.py",
-    "app/campaign_ops/reporting_requests/views.py",
     "app/campaign_ops/insights/views.py",
     "app/campaign_ops/retail_media/views.py",
     "app/campaign_ops/content_management/views.py",
@@ -72,8 +69,6 @@ REQUIRED_UI_MODULES = (
     "core.campaign_ops.repository",
     "core.campaign_ops.service",
     "app.campaign_ops.ui.components",
-    "app.campaign_ops.cross_team.views",
-    "app.campaign_ops.reporting_requests.views",
     "app.campaign_ops.insights.views",
     "app.campaign_ops.retail_media.views",
     "app.campaign_ops.content_management.views",

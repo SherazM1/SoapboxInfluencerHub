@@ -1,36 +1,18 @@
 from __future__ import annotations
 
-from html import escape
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 import streamlit as st
 
 from app.campaign_ops.formatting import format_date, format_datetime, safe_text, title_label
-from app.campaign_ops.influencer.recap_baseline import (
-    closeout_status_items,
-    compact_date,
-    group_recap_launch_items,
-    ready_to_close_blockers,
-    recap_quick_links,
-    select_recap_campaign_for_open,
-)
-from app.campaign_ops.influencer.recap_formatting import RECAP_COLUMNS, recap_rows
+from app.campaign_ops.influencer.recap_baseline import ready_to_close_blockers, select_recap_campaign_for_open
 from app.campaign_ops.note_views import render_notes
-from app.campaign_ops.resource_views import render_resource_actions, resource_table_rows
 from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.enums import TaskStatus
 from core.campaign_ops.exceptions import CampaignOpsError
-from core.campaign_ops.influencer import (
-    RECAP_LAUNCH_STATUSES,
-    RECAP_REQUIREMENT_TYPES,
-    RECAP_RESOURCE_TYPES,
-    RECAP_STATUSES,
-    RESPONSIBLE_PARTIES,
-)
+from core.campaign_ops.influencer import RECAP_REQUIREMENT_STATUSES, RECAP_STATUSES
 from core.campaign_ops.models import CampaignOpsUser
-from core.campaign_ops.reporting_requests import REQUEST_CATEGORY_REPORT, REQUEST_CATEGORY_SURVEY
 from core.campaign_ops.service import CampaignOpsService
 
 SORT_OPTIONS = {
@@ -114,25 +96,8 @@ def render_recap_portfolio(actor: CampaignOpsUser, service: CampaignOpsService, 
     if not filtered:
         st.info("No recapping influencer campaigns match these filters.")
         return
-    board_data = service.get_influencer_recap_manager_board_data(actor, filtered)
-    resources_by_program = board_data.get("resources", {})
-    launches_by_campaign = board_data.get("launch_items", {})
     for campaign in filtered:
-        render_recap_block(
-            campaign,
-            resources_by_program.get(campaign.program_id, []),
-            launches_by_campaign.get(campaign.id, []),
-            compact=current_view == "All Recapping",
-        )
-    with st.expander("Recapping Portfolio Summary", expanded=False):
-        st.dataframe(recap_rows(filtered), column_order=RECAP_COLUMNS, hide_index=True, use_container_width=True)
-    if filtered:
-        labels = {f"{c.campaign_title} | {safe_text(c.client_name)}": c.id for c in filtered}
-        cols = st.columns(2)
-        chosen = cols[0].selectbox("Open Recapping Campaign", list(labels), key="campaign_ops_influencer_recap_campaign_select")
-        if cols[1].button("Open Recapping Workspace", key="campaign_ops_influencer_recap_open"):
-            st.session_state["campaign_ops_selected_influencer_recap_campaign_id"] = labels[chosen]
-            st.rerun()
+        render_recap_block(campaign, compact=current_view == "All Recapping")
 
 
 def render_filters(campaigns: list[Any], *, show_manager_filter: bool = True) -> dict[str, object]:
@@ -208,72 +173,23 @@ def sort_rows(campaigns: list[Any], sort_by: str) -> list[Any]:
     return sorted(campaigns, key=lambda c: (getattr(c, sort_by, None) is None, getattr(c, sort_by, None) or "", c.campaign_title))
 
 
-def render_recap_block(campaign: Any, resources: list[Any] | None = None, launch_items: list[Any] | None = None, *, compact: bool = False) -> None:
-    hold_badge = "<span class='campaign-ops-recap-hold'>ON HOLD</span>" if getattr(campaign, "is_on_hold", False) else "<span>ACTIVE</span>"
-    hold_reason = f"<div class='campaign-ops-recap-hold-reason'>Hold reason: {escape(safe_text(getattr(campaign, 'hold_reason', None)))}</div>" if getattr(campaign, "is_on_hold", False) and getattr(campaign, "hold_reason", None) else ""
-    links = recap_quick_links(campaign, resources, launch_items)
-    html = f"""
-    <div class='campaign-ops-recap-block'>
-      <div class='campaign-ops-recap-header'>
-        <div class='campaign-ops-recap-header-main'>
-          <div>{escape(campaign.campaign_title)}</div>
-          <div>{hold_badge}</div>
-        </div>
-        <div class='campaign-ops-recap-meta'>{escape(safe_text(campaign.manager_display_name))} &middot; {escape(title_label(campaign.recap_status))}</div>
-        {hold_reason}
-      </div>
-    """
-    if links:
-        html += "<div class='campaign-ops-recap-links'><strong>LINKED SHEETS</strong> &nbsp; " + " &nbsp; ".join(f"<a href='{escape(sanitize_link(link.url), quote=True)}' target='_blank'>{escape(link.label)}</a>" for link in links) + "</div>"
-    html += "<div class='campaign-ops-recap-section-title'>Closeout Status</div><div class='campaign-ops-recap-status-grid'>"
-    for label, value, group in closeout_status_items(campaign):
-        html += (
-            "<div class='campaign-ops-recap-status-item'>"
-            f"<div class='campaign-ops-recap-status-label'>{escape(label)}</div>"
-            f"<div class='campaign-ops-recap-status-value'>{escape(value or '-')}</div>"
-            f"<div class='campaign-ops-recap-subtext'>{escape(group)}</div>"
-            "</div>"
-        )
-    html += "</div>"
-    launch_groups = group_recap_launch_items(launch_items or [])
-    if launch_groups:
-        html += "<div class='campaign-ops-recap-section-title'>Product / Retailer Launches</div>"
-        for group in launch_groups:
-            html += "<div class='campaign-ops-recap-launch-row'>"
-            if group.group_name:
-                html += f"<div class='campaign-ops-recap-launch-group'>{escape(group.group_name)}</div>"
-            for item in group.items:
-                online = compact_date(getattr(item, "online_launch_date", None))
-                store = compact_date(getattr(item, "in_store_launch_date", None))
-                retailer = getattr(item, "retailer_name", None)
-                parts = [str(retailer).strip()] if retailer else []
-                if online:
-                    parts.append(f"Online {online}")
-                if store:
-                    parts.append(f"Stores {store}")
-                parts.append(title_label(getattr(item, "launch_status", None)))
-                links_html = []
-                if getattr(item, "product_url", None):
-                    links_html.append(f"<a href='{escape(sanitize_link(item.product_url), quote=True)}' target='_blank'>Product</a>")
-                if getattr(item, "retailer_url", None):
-                    links_html.append(f"<a href='{escape(sanitize_link(item.retailer_url), quote=True)}' target='_blank'>Retailer</a>")
-                html += f"<div>{escape(item.product_name)} &middot; {escape(' - '.join(part for part in parts if part))}"
-                if links_html:
-                    html += " &nbsp; " + " &nbsp; ".join(links_html)
-                html += "</div>"
-            html += "</div>"
-    html += "<div class='campaign-ops-recap-section-title'>Latest Update / Waiting On</div><div class='campaign-ops-recap-update-grid'>"
-    html += f"<div class='campaign-ops-recap-status-item'><div class='campaign-ops-recap-status-label'>Latest Update</div><div class='campaign-ops-recap-status-value'>{escape(safe_text(campaign.latest_update) or '-')}</div></div>"
-    html += f"<div class='campaign-ops-recap-status-item'><div class='campaign-ops-recap-status-label'>Waiting On</div><div class='campaign-ops-recap-status-value'>{escape(safe_text(campaign.waiting_on) or '-')}</div></div></div>"
+def render_recap_block(campaign: Any, *, compact: bool = False) -> None:
+    hold = "ON HOLD" if campaign.is_on_hold else ("Active" if campaign.is_active else "Inactive")
+    st.markdown(f"### {campaign.campaign_title}")
+    st.caption(f"{safe_text(campaign.manager_display_name)} | {title_label(campaign.recap_status)} | {hold}")
+    if campaign.is_on_hold and campaign.hold_reason:
+        st.warning(campaign.hold_reason)
+    st.write(f"Recap due: {format_date(campaign.reporting_due_date)} | Next: {safe_text(campaign.next_checkpoint)} | Due: {format_date(campaign.next_checkpoint_due_date)}")
+    st.write(f"Ready to close: {campaign.ready_to_close_state}")
     blockers = ready_to_close_blockers(campaign)
-    html += "<div class='campaign-ops-recap-section-title'>Ready to Close</div>"
-    html += f"<div class='campaign-ops-recap-ready'><div class='campaign-ops-recap-ready-state'>{escape(campaign.ready_to_close_state)}</div>"
     if blockers:
-        html += f"<div class='campaign-ops-recap-subtext'>{escape(' - '.join(blockers))}</div>"
-    html += "</div></div>"
-    st.markdown(html, unsafe_allow_html=True)
-    cols = st.columns([1, 5])
-    if cols[0].button("Open Recap Campaign", key=f"campaign_ops_influencer_recap_open_{campaign.id}"):
+        st.warning(" | ".join(blockers))
+    if campaign.latest_update:
+        st.write(campaign.latest_update)
+    if campaign.waiting_on:
+        st.write(f"Waiting on: {campaign.waiting_on}")
+    st.caption(f"Invoice: {safe_text(campaign.invoice_status)} | Financial close: {safe_text(campaign.financial_close_status)}")
+    if st.button("Open Recapping Campaign", key=f"campaign_ops_influencer_recap_open_{campaign.id}"):
         select_recap_campaign_for_open(st.session_state, campaign.id)
         st.rerun()
 
@@ -304,28 +220,25 @@ def render_recap_workspace(actor: CampaignOpsUser, service: CampaignOpsService, 
         st.rerun()
     st.markdown(f"### {campaign.campaign_title}")
     st.caption(f"{safe_text(campaign.client_name)} | {campaign.program_name} | Manager: {safe_text(campaign.manager_display_name)} | Stage: {title_label(campaign.influencer_stage)} | Ready to close: {summary.ready_to_close_state}")
-    st.info(f"Creators {summary.creator_closeout.live_creators}/{summary.creator_closeout.total_creators} live | Completed {summary.creator_closeout.completed_creators} | Missing links {summary.creator_closeout.missing_final_links} | Missing impressions {summary.creator_closeout.missing_final_impressions} | Open exceptions {summary.creator_closeout.open_creator_exceptions}")
-    tabs = st.tabs(["Overview", "Recap Checklist", "Reporting & Analysis", "Product / Retailer Launches", "Creator Closeout", "Invoice & Financial Close", "Timeline", "Resources", "Program Notes", "Activity"])
+    st.caption(f"Creators {summary.creator_closeout.live_creators}/{summary.creator_closeout.total_creators} live | Completed {summary.creator_closeout.completed_creators} | Missing links {summary.creator_closeout.missing_final_links} | Missing impressions {summary.creator_closeout.missing_final_impressions} | Open exceptions {summary.creator_closeout.open_creator_exceptions}")
+    tabs = st.tabs(['Overview', 'Recap Checklist', 'Timeline', 'Program Notes', 'Activity'])
     with tabs[0]:
         render_overview(actor, service, users, summary)
     with tabs[1]:
         render_checklist(actor, service, users, campaign)
     with tabs[2]:
-        render_requirements(actor, service, campaign)
-    with tabs[3]:
-        render_launch_items(actor, service, campaign)
-    with tabs[4]:
-        render_creator_closeout(summary)
-    with tabs[5]:
-        render_financial(actor, service, summary)
-    with tabs[6]:
         render_timeline(actor, service, campaign)
-    with tabs[7]:
-        render_resources(actor, service, campaign)
-    with tabs[8]:
-        render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
-    with tabs[9]:
-        render_activity(actor, service, campaign)
+    with tabs[3]:
+        with st.expander("Program Notes", expanded=False):
+            render_notes(actor, service, service.get_program_workspace_summary(actor, campaign.program_id))
+    with tabs[4]:
+        with st.expander("Activity", expanded=False):
+            render_activity(actor, service, campaign)
+
+    render_requirement_blocker_editor(actor, service, campaign)
+    render_live_blocker_return(actor, service, summary)
+    with st.expander("Financial status", expanded=False):
+        render_financial(actor, service, summary)
 
 
 def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], summary: Any) -> None:
@@ -333,11 +246,10 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
     record = summary.recap_record
     user_options = {u.display_name: u.id for u in users if u.is_active}
     with st.form(f"campaign_ops_influencer_recap_overview_{campaign.id}"):
-        cols = st.columns(4)
+        cols = st.columns(3)
         manager = cols[0].selectbox("Manager", list(user_options), index=list(user_options.values()).index(campaign.manager_user_id) if campaign.manager_user_id in user_options.values() else 0)
         recap_status = cols[1].selectbox("Recap Status", RECAP_STATUSES, index=RECAP_STATUSES.index(campaign.recap_status) if campaign.recap_status in RECAP_STATUSES else 0, format_func=title_label)
         waiting = cols[2].text_input("Waiting On", value=safe_text(record.waiting_on if record else campaign.waiting_on))
-        sales_required = cols[3].checkbox("Sales Lift Analysis Required", value=bool(record.sales_lift_analysis_required if record else campaign.sales_lift_analysis_required))
         latest = st.text_area("Latest Update", value=safe_text(record.latest_update if record else campaign.latest_update))
         cols = st.columns(5)
         reporting_due = cols[0].date_input("Reporting Due Date", value=record.reporting_due_date if record else None)
@@ -345,24 +257,14 @@ def render_overview(actor: CampaignOpsUser, service: CampaignOpsService, users: 
         internal_review = cols[2].date_input("Internal Review Date", value=record.internal_review_date if record else None)
         client_review = cols[3].date_input("Client Review Date", value=record.client_review_date if record else None)
         client_recap = cols[4].date_input("Client Recap Date", value=record.client_recap_date if record else None)
-        cols = st.columns(5)
+        cols = st.columns(2)
         delivered = cols[0].date_input("Recap Delivered Date", value=record.recap_delivered_date if record else None)
         final_close = cols[1].date_input("Final Close Date", value=record.final_close_date if record else None)
-        sales_status = cols[2].text_input("Sales Lift Analysis Status", value=safe_text(record.sales_lift_analysis_status if record else ""))
-        performance_status = cols[3].text_input("Final Performance Data Status", value=safe_text(record.final_performance_data_status if record else ""))
-        closeout_status = cols[4].text_input("Creator Closeout Status", value=safe_text(record.creator_closeout_status if record else ""))
-        cols = st.columns(3)
-        eop_status = cols[0].text_input("EOP Survey Status", value=safe_text(record.eop_survey_status if record else ""))
-        invoice_status = cols[1].text_input("Invoice Status", value=safe_text(record.invoice_status if record else campaign.invoice_status))
-        financial_status = cols[2].text_input("Financial Close Status", value=safe_text(record.financial_close_status if record else ""))
-        lessons = st.text_area("Lessons Learned", value=safe_text(record.lessons_learned if record else ""))
         submitted = st.form_submit_button("Save Recap Overview", type="primary")
     if submitted:
         service.update_influencer_campaign(actor, campaign.id, manager_user_id=user_options[manager], influencer_stage="recapping", planning_status=recap_status)
-        service.create_or_update_influencer_recap_record(actor, campaign.id, recap_status=recap_status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), reporting_due_date=reporting_due, draft_recap_due_date=draft_due, internal_review_date=internal_review, client_review_date=client_review, client_recap_date=client_recap, recap_delivered_date=delivered, final_close_date=final_close, sales_lift_analysis_required=sales_required, sales_lift_analysis_status=trim_or_none(sales_status), final_performance_data_status=trim_or_none(performance_status), creator_closeout_status=trim_or_none(closeout_status), eop_survey_status=trim_or_none(eop_status), invoice_status=trim_or_none(invoice_status), financial_close_status=trim_or_none(financial_status), lessons_learned=trim_or_none(lessons))
+        service.create_or_update_influencer_recap_record(actor, campaign.id, recap_status=recap_status, latest_update=trim_or_none(latest), waiting_on=trim_or_none(waiting), reporting_due_date=reporting_due, draft_recap_due_date=draft_due, internal_review_date=internal_review, client_review_date=client_review, client_recap_date=client_recap, recap_delivered_date=delivered, final_close_date=final_close)
         st.rerun()
-    st.write(f"Planning history preserved: {len(summary.planning_steps)} planning steps, {len(summary.approval_rounds)} approvals, {len(summary.content_rounds)} content rounds.")
-    st.write(f"Live history preserved: {len(summary.live_checkpoints)} checkpoints, {len(summary.waves)} waves, {len(summary.creators)} creators, {len(summary.exceptions)} exceptions.")
     override_close = st.checkbox("Administrator override close readiness", key=f"campaign_ops_influencer_recap_complete_override_{campaign.id}")
     cols = st.columns(3)
     if cols[0].button("Complete Influencer Campaign", key=f"campaign_ops_influencer_recap_complete_{campaign.id}"):
@@ -404,92 +306,62 @@ def render_checklist(actor: CampaignOpsUser, service: CampaignOpsService, users:
             service.reactivate_influencer_recap_checkpoint(actor, campaign.id, c.id); st.rerun()
 
 
-def render_requirements(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    resources = service.list_program_resources(actor, campaign.program_id, include_inactive=True)
-    requests = service.list_reporting_requests(actor, include_inactive=True, program_id=campaign.program_id)
-    resource_options = {"": None, **{f"{r.resource_type}: {r.title}": r.id for r in resources}}
-    request_options = {"": None, **{f"{r.request_type} ({title_label(r.request_category)})": r.id for r in requests}}
-    with st.form(f"campaign_ops_influencer_recap_requirement_add_{campaign.id}"):
-        cols = st.columns(4)
-        rtype = cols[0].selectbox("Requirement Type", RECAP_REQUIREMENT_TYPES)
-        title = cols[1].text_input("Requirement Title")
-        required = cols[2].checkbox("Required", value=True)
-        due = cols[3].date_input("Due Date", value=None)
-        cols = st.columns(2)
-        resource = cols[0].selectbox("Linked Resource", list(resource_options))
-        request = cols[1].selectbox("Linked Survey / Reporting Request", list(request_options))
-        notes = st.text_area("Notes")
-        submitted = st.form_submit_button("Add Requirement", type="primary")
-    if submitted:
-        service.create_influencer_recap_requirement(actor, campaign.id, rtype, title, required=required, due_date=due, resource_id=resource_options[resource], reporting_request_id=request_options[request], notes=trim_or_none(notes), status="not_started")
-        st.rerun()
-    reqs = service.list_influencer_recap_requirements(actor, campaign.id, include_inactive=True)
-    st.dataframe([{"Requirement Type": r.requirement_type, "Requirement Title": r.requirement_title, "Required": "TRUE" if r.required else "FALSE", "Status": title_label(r.status), "Due Date": format_date(r.due_date), "Received Date": format_date(r.received_date), "Completed Date": format_date(r.completed_date), "Waiting On": safe_text(r.waiting_on), "Linked Resource": safe_text(r.resource_id), "Linked Request": safe_text(r.reporting_request_id), "Notes": safe_text(r.notes), "Active State": "Active" if r.is_active else "Inactive"} for r in reqs], hide_index=True, use_container_width=True)
-    for r in reqs:
-        cols = st.columns(5)
-        if cols[0].button("Received", key=f"campaign_ops_influencer_recap_req_received_{r.id}"):
-            service.mark_influencer_recap_requirement_received(actor, campaign.id, r.id); st.rerun()
-        if cols[1].button("Complete", key=f"campaign_ops_influencer_recap_req_complete_{r.id}"):
-            service.complete_influencer_recap_requirement(actor, campaign.id, r.id); st.rerun()
-        if cols[2].button("Reopen", key=f"campaign_ops_influencer_recap_req_reopen_{r.id}"):
-            service.reopen_influencer_recap_requirement(actor, campaign.id, r.id); st.rerun()
-        if r.is_active and cols[3].button("Deactivate", key=f"campaign_ops_influencer_recap_req_deactivate_{r.id}"):
-            service.deactivate_influencer_recap_requirement(actor, campaign.id, r.id); st.rerun()
-        if not r.is_active and cols[4].button("Reactivate", key=f"campaign_ops_influencer_recap_req_reactivate_{r.id}"):
-            service.reactivate_influencer_recap_requirement(actor, campaign.id, r.id); st.rerun()
+def render_requirement_blocker_editor(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
+    with st.expander("Advanced / Resolve recap requirement", expanded=False):
+        requirements = service.list_influencer_recap_requirements(actor, campaign.id)
+        if not requirements:
+            st.caption("No active recap requirements.")
+            return
+        by_id = {item.id: item for item in requirements}
+        selected = st.selectbox("Requirement to resolve", list(by_id), format_func=lambda key: by_id[key].requirement_title, key=f"campaign_ops_requirement_resolve_select_{campaign.id}")
+        item = by_id[selected]
+        st.caption(f"{item.requirement_type} | Due: {format_date(item.due_date)} | {'Required' if item.required else 'Optional'}")
+        with st.form(f"campaign_ops_requirement_resolve_{item.id}"):
+            statuses = [None, *RECAP_REQUIREMENT_STATUSES]
+            status = st.selectbox("Requirement status", statuses, index=statuses.index(item.status) if item.status in statuses else 0, format_func=lambda value: title_label(value) if value else "Not set")
+            due = st.date_input("Due date", value=item.due_date)
+            notes = st.text_area("Notes", value=item.notes or "")
+            submitted = st.form_submit_button("Save requirement")
+        if submitted:
+            try:
+                service.update_influencer_recap_requirement(actor, campaign.id, item.id, status=status, due_date=due, notes=trim_or_none(notes))
+            except CampaignOpsError as exc:
+                st.error(f"Requirement was not updated: {exc}")
+                return
+            st.rerun()
 
 
-def render_launch_items(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    with st.form(f"campaign_ops_influencer_recap_launch_add_{campaign.id}"):
-        cols = st.columns(5)
-        group = cols[0].text_input("Group")
-        product = cols[1].text_input("Product")
-        retailer = cols[2].text_input("Retailer")
-        online = cols[3].date_input("Online Launch Date", value=None)
-        in_store = cols[4].date_input("In-Store Launch Date", value=None)
-        cols = st.columns(3)
-        status = cols[0].selectbox("Launch Status", ["", *RECAP_LAUNCH_STATUSES], format_func=title_label)
-        product_url = cols[1].text_input("Product URL")
-        retailer_url = cols[2].text_input("Retailer URL")
-        notes = st.text_area("Notes")
-        submitted = st.form_submit_button("Add Launch Item", type="primary")
-    if submitted:
-        service.create_influencer_recap_launch_item(actor, campaign.id, product, group_name=trim_or_none(group), retailer_name=trim_or_none(retailer), online_launch_date=online, in_store_launch_date=in_store, launch_status=trim_or_none(status), product_url=trim_or_none(product_url), retailer_url=trim_or_none(retailer_url), notes=trim_or_none(notes))
-        st.rerun()
-    items = service.list_influencer_recap_launch_items(actor, campaign.id, include_inactive=True)
-    st.dataframe([{"Group": safe_text(i.group_name), "Product": i.product_name, "Retailer": safe_text(i.retailer_name), "Online Launch Date": format_date(i.online_launch_date), "In-Store Launch Date": format_date(i.in_store_launch_date), "Launch Status": title_label(i.launch_status), "Product URL": "Available" if i.product_url else "No Link", "Retailer URL": "Available" if i.retailer_url else "No Link", "Notes": safe_text(i.notes), "Sort Order": i.sort_order, "Active State": "Active" if i.is_active else "Inactive"} for i in items], hide_index=True, use_container_width=True)
-    for item in items:
-        cols = st.columns(4)
-        if cols[0].button("Online Live", key=f"campaign_ops_influencer_recap_launch_online_{item.id}"):
-            service.mark_influencer_recap_launch_online(actor, campaign.id, item.id); st.rerun()
-        if cols[1].button("In-Store Live", key=f"campaign_ops_influencer_recap_launch_store_{item.id}"):
-            service.mark_influencer_recap_launch_in_store(actor, campaign.id, item.id); st.rerun()
-        if item.is_active and cols[2].button("Deactivate", key=f"campaign_ops_influencer_recap_launch_deactivate_{item.id}"):
-            service.deactivate_influencer_recap_launch_item(actor, campaign.id, item.id); st.rerun()
-        if not item.is_active and cols[3].button("Reactivate", key=f"campaign_ops_influencer_recap_launch_reactivate_{item.id}"):
-            service.reactivate_influencer_recap_launch_item(actor, campaign.id, item.id); st.rerun()
-
-
-def render_creator_closeout(summary: Any) -> None:
-    c = summary.creator_closeout
-    st.dataframe([{"Total Creators": c.total_creators, "Live Creators": c.live_creators, "Completed Creators": c.completed_creators, "Missing Final Links": c.missing_final_links, "Missing Final Impressions": c.missing_final_impressions, "Open Creator Exceptions": c.open_creator_exceptions, "Paid-Live Periods Incomplete": c.paid_live_incomplete, "Creator Closeout Status": safe_text(c.creator_closeout_status)}], hide_index=True, use_container_width=True)
-    st.dataframe([{"Creator": creator.creator_name, "Status": title_label(creator.live_status), "Content URL": "Available" if creator.content_url else "Missing", "Impressions Required": "TRUE" if creator.impressions_reporting_required else "FALSE", "Latest Impressions": safe_text(creator.latest_impressions), "Paid Live End": format_date(creator.paid_live_end_date), "Active State": "Active" if creator.is_active else "Inactive"} for creator in summary.creators], hide_index=True, use_container_width=True)
+def render_live_blocker_return(actor: CampaignOpsUser, service: CampaignOpsService, summary: Any) -> None:
+    closeout = summary.creator_closeout
+    if not (closeout.paid_live_incomplete or closeout.missing_final_links or closeout.missing_final_impressions or closeout.open_creator_exceptions):
+        return
+    with st.expander("Advanced / Resolve live closeout blockers", expanded=False):
+        st.caption("Return this campaign to Live to update creator records or resolve exceptions, then move it back to Recapping. Existing recap records are retained.")
+        if st.button("Return to Live to resolve blockers", key=f"campaign_ops_recap_resolve_live_{summary.campaign.id}"):
+            try:
+                service.update_influencer_campaign(actor, summary.campaign.id, influencer_stage="live", planning_status="live")
+            except CampaignOpsError as exc:
+                st.error(f"Campaign was not returned to Live: {exc}")
+                return
+            st.session_state.pop("campaign_ops_selected_influencer_recap_campaign_id", None)
+            st.session_state["campaign_ops_selected_influencer_live_campaign_id"] = summary.campaign.id
+            st.session_state["campaign_ops_influencer_view"] = "Live"
+            st.rerun()
 
 
 def render_financial(actor: CampaignOpsUser, service: CampaignOpsService, summary: Any) -> None:
     campaign = summary.campaign
     record = summary.recap_record
     with st.form(f"campaign_ops_influencer_recap_financial_{campaign.id}"):
-        cols = st.columns(4)
+        cols = st.columns(3)
         invoice_date = cols[0].date_input("Invoice Date", value=campaign.invoice_date)
         invoice_status = cols[1].text_input("Invoice Status", value=safe_text(campaign.invoice_status))
-        invoice_amount = cols[2].number_input("Invoice Amount", min_value=0.0, value=float(campaign.invoice_amount or 0))
-        final_invoice = cols[3].date_input("Final Invoice Sent Date", value=record.final_invoice_sent_date if record else None)
+        final_invoice = cols[2].date_input("Final Invoice Sent Date", value=record.final_invoice_sent_date if record else None)
         financial_close = st.text_input("Payment / Financial Close Status", value=safe_text(record.financial_close_status if record else ""))
         notes = st.text_area("Invoice Notes", value=safe_text(record.lessons_learned if record else ""))
         submitted = st.form_submit_button("Save Financial Closeout", type="primary")
     if submitted:
-        service.update_influencer_campaign(actor, campaign.id, influencer_stage="recapping", planning_status=campaign.recap_status, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status), invoice_amount=invoice_amount)
+        service.update_influencer_campaign(actor, campaign.id, influencer_stage="recapping", planning_status=campaign.recap_status, invoice_date=invoice_date, invoice_status=trim_or_none(invoice_status))
         service.create_or_update_influencer_recap_record(actor, campaign.id, final_invoice_sent_date=final_invoice, invoice_status=trim_or_none(invoice_status), financial_close_status=trim_or_none(financial_close), lessons_learned=trim_or_none(notes))
         st.rerun()
 
@@ -515,40 +387,7 @@ def render_timeline(actor: CampaignOpsUser, service: CampaignOpsService, campaig
             service.reopen_milestone(actor, m.id); st.rerun()
 
 
-def render_resources(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
-    quick = [("Track Sheet", campaign.track_sheet_url), ("Influencer Brief", campaign.influencer_brief_url), ("Click2Cart Link", campaign.click2cart_link_url), ("Bitly Link", campaign.bitly_link_url), ("Invoice", campaign.invoice_url), ("EOP Survey", campaign.eop_survey_url), ("Live Content Tracker", campaign.live_content_tracker_url), ("Recap Deck", campaign.recap_deck_url), ("Final Performance Data", campaign.final_performance_data_url), ("Sales Lift Analysis", campaign.sales_lift_analysis_url)]
-    st.markdown("<div class='campaign-ops-influencer-bar'>Recapping Quick Links</div>", unsafe_allow_html=True)
-    cols = st.columns(4)
-    for index, (label, url) in enumerate(quick):
-        if url:
-            cols[index % 4].link_button(label, sanitize_link(url))
-        else:
-            cols[index % 4].metric(label, "No Link")
-    summary = service.get_program_workspace_summary(actor, campaign.program_id)
-    resources = [r for r in service.list_program_resources(actor, campaign.program_id, include_inactive=True) if r.resource_type in RECAP_RESOURCE_TYPES or r.workstream_id == campaign.workstream_id]
-    st.dataframe(resource_table_rows(resources), hide_index=True, use_container_width=True)
-    with st.form(f"campaign_ops_influencer_recap_resource_add_{campaign.id}"):
-        cols = st.columns(3)
-        title = cols[0].text_input("Title")
-        resource_type = cols[1].selectbox("Resource type", RECAP_RESOURCE_TYPES)
-        url = cols[2].text_input("URL")
-        submitted = st.form_submit_button("Add Resource", type="primary")
-    if submitted:
-        service.create_resource(actor, campaign.program_id, title=title, resource_type=resource_type, workstream_id=campaign.workstream_id, url=trim_or_none(url))
-        st.rerun()
-    for resource in resources:
-        render_resource_actions(actor, service, summary, resource)
-
-
 def render_activity(actor: CampaignOpsUser, service: CampaignOpsService, campaign: Any) -> None:
     summary = service.get_program_workspace_summary(actor, campaign.program_id)
     rows = [{"Timestamp": format_datetime(e.created_at), "Event": title_label(e.event_type), "Message": safe_text(e.message)} for e in summary.activity if e.event_type.startswith("influencer_recap_") or e.event_type == "influencer_stage_moved_to_recapping" or e.event_type == "influencer_stage_completed" or e.event_type.startswith("influencer_")]
     st.dataframe(rows, hide_index=True, use_container_width=True)
-
-
-def sanitize_link(url: str) -> str:
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))

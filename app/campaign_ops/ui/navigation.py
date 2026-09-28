@@ -13,11 +13,10 @@ SPECIALIZED_SELECTION_KEYS = {
     "Retail Media": {"campaign_ops_selected_retail_media_campaign_id"},
     "eCommerce / Content": {"campaign_ops_selected_content_program_id"},
     "Insights": {"campaign_ops_selected_insights_project_id"},
-    "Requests": {"campaign_ops_selected_request_id"},
 }
 
+# Include legacy editor keys so switching workflows clears older browser sessions.
 EDITOR_KEYS = {
-    "campaign_ops_request_edit_id",
     "campaign_ops_insights_timeline_edit_id",
     "campaign_ops_insights_objective_edit_id",
     "campaign_ops_retail_media_channel_edit_id",
@@ -76,10 +75,11 @@ def route_to_specialized_workspace(
     program_id: str,
     record_id: str | None = None,
 ) -> None:
+    if section not in SPECIALIZED_SELECTION_KEYS:
+        raise ValueError("Unknown workflow section.")
     clear_incompatible_specialized_state(session_state, section)
     session_state.pop("campaign_ops_selected_program_id", None)
     session_state["campaign_ops_section"] = section
-    session_state["campaign_ops_cross_team_selected_program_id"] = program_id
     if not record_id:
         return
     if section == "Influencer":
@@ -92,12 +92,11 @@ def route_to_specialized_workspace(
         session_state["campaign_ops_selected_content_program_id"] = record_id
     elif section == "Insights":
         session_state["campaign_ops_selected_insights_project_id"] = record_id
-    elif section == "Requests":
-        session_state["campaign_ops_selected_request_id"] = record_id
 
 
 def return_to_portfolio(session_state: MutableMapping[str, Any], section: str) -> None:
+    if section not in SPECIALIZED_SELECTION_KEYS:
+        raise ValueError("Unknown workflow section.")
     clear_incompatible_specialized_state(session_state, section)
     session_state.pop("campaign_ops_selected_program_id", None)
     session_state["campaign_ops_section"] = section
-
