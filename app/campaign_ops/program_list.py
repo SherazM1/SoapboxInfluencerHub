@@ -21,6 +21,7 @@ from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.models import CampaignOpsUser, Client, ProgramPortfolioRow
 from core.campaign_ops.permissions import can_access_admin
 from core.campaign_ops.service import CampaignOpsService
+from core.campaign_ops.program_routing import ProgramRoutingService
 
 SORT_OPTIONS = {
     "Recently updated": "recently_updated",
@@ -220,31 +221,29 @@ def render_all_programs(
     clients: list[Client],
 ) -> None:
     st.subheader("All Programs")
-    actions = st.columns(4)
-    if actions[0].button("Refresh", key="campaign_ops_all_refresh"):
-        st.session_state["campaign_ops_last_refresh"] = datetime.now(UTC).isoformat()
-        st.rerun()
-    if actions[1].button("Clear filters", key="campaign_ops_all_clear_filters"):
-        st.session_state["campaign_ops_program_filters"] = blank_filter_state()
-        st.rerun()
-    if can_access_admin(actor) and actions[2].button("New Program", type="primary"):
+    if can_access_admin(actor) and st.button("New Program", type="primary"):
         st.session_state["campaign_ops_create_program_open"] = True
         set_section(st.session_state, "New Program")
         st.rerun()
-    filters = render_portfolio_filters(
-        "campaign_ops_program_filters",
-        clients,
-        users,
-        include_text_filters=True,
-        include_people_filters=True,
-    )
     try:
-        rows = service.list_program_portfolio(actor, filters)
+        rows = ProgramRoutingService(service.repository).list_registry(actor)
     except CampaignOpsError as exc:
         st.error(f"Unable to load programs: {exc}")
         return
-    render_program_rows(rows)
-    render_open_program_control(rows, "campaign_ops_all_open_program")
+    columns = st.columns([2, 3, 2, 2, 2, 1])
+    for column, label in zip(columns, ("Client", "Program", "Workflow", "Lead Owner", "Manager", "Open")):
+        column.markdown(f"**{label}**")
+    if not rows:
+        st.info("No active programs are available.")
+    for row in rows:
+        columns = st.columns([2, 3, 2, 2, 2, 1])
+        for column, value in zip(columns, (
+            row.client_name, row.program_name, WORKFLOW_LABELS.get(row.primary_workstream_type, "-"),
+            row.primary_owner_name, row.manager_name,
+        )):
+            column.write(safe_text(value))
+        columns[5].button("Open", key=f"campaign_ops_registry_open_{row.id}",
+                          on_click=set_selected_program, args=(st.session_state, row.id))
 
 
 def render_my_programs(

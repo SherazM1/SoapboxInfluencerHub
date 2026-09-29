@@ -1904,6 +1904,41 @@ class FakePrompt4ARepository:
         self.events.append(kwargs)
         return SimpleNamespace(id=f"event-{len(self.events)}")
 
+    def list_program_registry(self, permitted_user_id=None):
+        from core.campaign_ops.models import ProgramRegistryRow
+        rows = []
+        for program in self.programs:
+            assignments = self.list_assignments_by_program(program.id)
+            if not program.is_active or (permitted_user_id and not any(
+                a.user_id == permitted_user_id and a.is_active for a in assignments
+            )):
+                continue
+            lead = next((a for a in assignments if a.is_active and a.is_primary
+                         and a.assignment_role == "program_owner"), None)
+            ws = next((w for w in self.workstreams if w.is_active and w.program_id == program.id
+                       and w.workstream_type == program.primary_workstream_type), None)
+            owner = self.get_user_by_id(lead.user_id) if lead else None
+            manager = self.get_user_by_id(ws.owner_user_id) if ws else None
+            client = self.get_client(program.client_id)
+            rows.append(ProgramRegistryRow(program.id, program.program_name, client.name if client else None,
+                program.primary_workstream_type, owner.id if owner else None, owner.display_name if owner else None,
+                manager.id if manager else None, manager.display_name if manager else None))
+        return rows
+
+    def list_program_workflow_records(self, program_id, workflow):
+        records = {"influencer": self.influencer_campaigns, "retail_media": self.retail_media_campaigns,
+                   "ecommerce": self.content_programs, "insights": self.insights_projects}.get(workflow, [])
+        return [record for record in records if record.program_id == program_id]
+
+    def lock_influencer_timeline_program(self, program_id):
+        return self.get_program(program_id)
+
+    def get_influencer_campaign_for_update(self, campaign_id):
+        return self.get_influencer_campaign(campaign_id)
+
+    def list_influencer_timeline_campaigns(self, stage):
+        return [c for c in self.influencer_campaigns if c.is_active and c.influencer_stage == stage]
+
     def list_program_portfolio(self, **kwargs: object) -> list[object]:
         self.last_portfolio_filters = kwargs
         rows = []

@@ -295,6 +295,18 @@ class ActivityEvent:
 
 
 @dataclass(slots=True)
+class ProgramRegistryRow:
+    id: str
+    program_name: str
+    client_name: str | None
+    primary_workstream_type: str | None
+    primary_owner_user_id: str | None = None
+    primary_owner_name: str | None = None
+    manager_user_id: str | None = None
+    manager_name: str | None = None
+
+
+@dataclass(slots=True)
 class ProgramPortfolioRow:
     id: str
     program_name: str

@@ -20,7 +20,7 @@ from app.campaign_ops.ui.components import render_page_header
 from app.campaign_ops.ui.styles import apply_campaign_ops_styles
 from app.campaign_ops.program_forms import render_new_program_form
 from app.campaign_ops.program_list import render_all_programs, render_my_programs
-from app.campaign_ops.program_workspace import render_program_workspace
+from app.campaign_ops.program_router import open_program
 from app.campaign_ops.content_management.views import render_content_management
 from app.campaign_ops.influencer.views import render_influencer
 from app.campaign_ops.insights.views import render_insights
@@ -176,7 +176,7 @@ def render_active_section(
         set_section(st.session_state, get_default_section(user, viewer))
         st.rerun()
         return
-    clients = service.list_active_clients()
+    clients = service.list_active_clients() if section == "My Programs" else []
     if section == "All Programs":
         render_all_programs(user, service, users, clients)
     elif section == "My Programs":
@@ -191,6 +191,9 @@ def render_active_section(
         render_content_management(user, service, users)
     elif section == "Insights":
         render_insights(user, service, users)
+    elif section == "Social Media Management":
+        st.subheader("Social Media Management")
+        st.info("The Social Media Management operational workspace is not available yet.")
     else:
         set_section(st.session_state, get_default_section(user, viewer))
         st.rerun()
@@ -235,8 +238,15 @@ def main() -> None:
 
     selected_program_id = get_selected_program_id(st.session_state)
     if selected_program_id:
-        render_program_workspace(user, service, selected_program_id)
-        return
+        try:
+            open_program(st.session_state, user, service, selected_program_id)
+        except CampaignOpsError as exc:
+            st.session_state.pop("campaign_ops_selected_program_id", None)
+            set_section(st.session_state, "All Programs")
+            st.error(f"Unable to open Program: {exc}")
+    route_message = st.session_state.pop("campaign_ops_program_route_message", None)
+    if route_message:
+        st.info(route_message)
 
     sections = get_sections_for_user(user, viewer)
     current_section = st.session_state.get(

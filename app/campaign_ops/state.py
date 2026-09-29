@@ -7,7 +7,7 @@ from core.campaign_ops.permissions import can_access_admin
 VIEWER_OPTIONS = ["Bailey"]
 
 PROGRAM_SECTIONS = ["All Programs", "My Programs"]
-WORKFLOW_SECTIONS = ["Influencer", "Retail Media", "eCommerce / Content", "Insights"]
+WORKFLOW_SECTIONS = ["Influencer", "Retail Media", "eCommerce / Content", "Insights", "Social Media Management"]
 BAILEY_SECTIONS = [*PROGRAM_SECTIONS, *WORKFLOW_SECTIONS]
 TEAM_MEMBER_SECTIONS = [*PROGRAM_SECTIONS, *WORKFLOW_SECTIONS]
 

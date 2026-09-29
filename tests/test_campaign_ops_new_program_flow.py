@@ -57,15 +57,16 @@ class NewProgramFlowTests(unittest.TestCase):
         button(app, "Create Program").click().run()
         self.assertEqual([], list(app.exception))
         self.assertEqual(1, len(repo.programs))
-        self.assertEqual(repo.programs[0].id, app.session_state["campaign_ops_selected_program_id"])
+        self.assertEqual(repo.influencer_campaigns[0].id, app.session_state["campaign_ops_selected_influencer_campaign_id"])
+        self.assertEqual("Influencer", app.session_state["campaign_ops_section"])
         self.assertTrue(any(w.value == "Program created." for w in app.success))
         app._run(None)  # Fresh render: AppTest retains stale nodes across st.rerun().
         self.assertFalse(any(w.label == "Create Program" for w in app.button))
         self.assertFalse(any(k.startswith("campaign_ops_new_program_")
                              for k in app.session_state.filtered_state))
-        button(app, "Back to Programs").click().run()
+        button(app, "All Programs").click().run()
         self.assertEqual([], list(app.exception))
-        self.assertIn("Test Influencer Program", app.dataframe[0].value["Program name"].tolist())
+        self.assertTrue(any(w.value == "Test Influencer Program" for w in app.markdown))
 
     def test_rosters_change_and_insights_can_be_canceled(self):
         from app.campaign_ops.formatting import WORKFLOW_LABELS

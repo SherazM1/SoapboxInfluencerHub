@@ -10,6 +10,7 @@ from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.models import CampaignOpsUser, Client
 from core.campaign_ops.permissions import can_access_admin
 from core.campaign_ops.service import CampaignOpsService
+from core.campaign_ops.program_routing import ProgramRoutingService
 
 
 def render_new_program_form(
@@ -75,7 +76,7 @@ def render_new_program_form(
         st.error("Choose a Manager.")
         return
     try:
-        program_id = service.create_program_with_workstreams_and_assignments(
+        program_id = ProgramRoutingService(service.repository).create_registry_program(
             actor=actor,
             program_name=program_name,
             new_client_name=trim_or_none(client_name),

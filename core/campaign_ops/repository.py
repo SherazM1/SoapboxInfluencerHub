@@ -63,6 +63,7 @@ from core.campaign_ops.models import (
     Program,
     ProgramAssignment,
     ProgramPortfolioRow,
+    ProgramRegistryRow,
     ProgramNote,
     ReportingRequestListRow,
     ReportingRequestRecord,
@@ -551,6 +552,53 @@ class CampaignOpsRepository:
             """,
             (program_id,),
             Client,
+        )
+
+    def list_program_registry(self, permitted_user_id: str | None = None) -> list[ProgramRegistryRow]:
+        """One registry query; no task, timeline, activity or connected-workstream aggregates."""
+        return self._fetch_all(
+            """
+            select p.id, p.program_name, c.name as client_name, p.primary_workstream_type,
+                   po.user_id as primary_owner_user_id, lead.display_name as primary_owner_name,
+                   ws.owner_user_id as manager_user_id, manager.display_name as manager_name
+            from campaign_ops_programs p
+            left join campaign_ops_clients c on c.id = p.client_id
+            left join lateral (
+                select a.user_id from campaign_ops_assignments a
+                where a.program_id = p.id and a.is_active = true
+                  and a.assignment_role = 'program_owner' and a.is_primary = true
+                  and a.workstream_id is null
+                order by a.updated_at desc, a.id limit 1
+            ) po on true
+            left join campaign_ops_users lead on lead.id = po.user_id
+            left join campaign_ops_workstreams ws on ws.program_id = p.id
+                and ws.workstream_type = p.primary_workstream_type and ws.is_active = true
+            left join campaign_ops_users manager on manager.id = ws.owner_user_id
+            where p.is_active = true and (%s::uuid is null or exists (
+                select 1 from campaign_ops_assignments access_assignment
+                join campaign_ops_users access_user on access_user.id = access_assignment.user_id
+                where access_assignment.program_id = p.id and access_assignment.is_active = true
+                  and access_user.is_active = true and access_assignment.user_id = %s::uuid
+            ))
+            order by p.updated_at desc, p.program_name, p.id
+            """,
+            (permitted_user_id, permitted_user_id), ProgramRegistryRow,
+        )
+
+    def list_program_workflow_records(self, program_id: str, workflow: str) -> list[Any]:
+        # Identifiers are exclusively selected from this fixed internal mapping.
+        tables = {
+            "influencer": ("campaign_ops_influencer_campaigns", InfluencerCampaignRecord),
+            "retail_media": ("campaign_ops_retail_media_campaigns", RetailMediaCampaignRecord),
+            "ecommerce": ("campaign_ops_content_programs", ContentProgramRecord),
+            "insights": ("campaign_ops_insights_projects", InsightsProjectRecord),
+        }
+        if workflow not in tables:
+            return []
+        table, model = tables[workflow]
+        return self._fetch_all(
+            f"select * from {table} where program_id = %s order by id",
+            (program_id,), model,
         )
 
     def list_program_portfolio(
