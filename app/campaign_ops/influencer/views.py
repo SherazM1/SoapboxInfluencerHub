@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from uuid import uuid4
+
+import pandas as pd
 import streamlit as st
 
 from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.influencer_timeline import (
-    ACTION_LIBRARY, FORWARD_STAGES, STAGE_LABELS, InfluencerTimelineService, sort_timeline,
+    ACTION_LIBRARY, EDITOR_COLUMNS, FORWARD_STAGES, STAGE_LABELS, InfluencerTimelineService, editor_record, sort_timeline,
 )
 
 SELECTED = "campaign_ops_selected_influencer_campaign_id"
@@ -12,16 +16,24 @@ PENDING = "campaign_ops_influencer_timeline_navigation"
 FLASH = "campaign_ops_influencer_timeline_message"
 
 
-def _saved(message):
-    st.session_state[FLASH] = message
+def _saved(message, *, error=False):
+    st.session_state[FLASH + ("_error" if error else "")] = message
     st.rerun()
 
 
+def _discard_drafts():
+    for key in list(st.session_state):
+        if key.startswith("campaign_ops_influencer_draft_"):
+            st.session_state.pop(key, None)
+
+
 def _open_campaign(campaign_id):
+    _discard_drafts()
     st.session_state[SELECTED] = campaign_id
 
 
 def _back_to_campaigns():
+    _discard_drafts()
     st.session_state.pop(SELECTED, None)
 
 
@@ -43,7 +55,13 @@ def render_influencer(actor, service, users):
     selected = st.session_state.get(SELECTED)
     try:
         if selected:
-            campaign, rows = service.workspace(actor, str(selected))
+            snapshot = st.session_state.get(f"campaign_ops_influencer_draft_{actor.id}_{selected}")
+            if snapshot:
+                # A form submission already has a displayed snapshot. The save
+                # transaction rechecks authorization and current database values.
+                campaign, rows = snapshot["campaign"], snapshot["rows"]
+            else:
+                campaign, rows = service.workspace(actor, str(selected))
             if campaign.influencer_stage == stage and campaign.is_active:
                 render_workspace(actor, service, users, campaign, rows)
                 return
@@ -51,9 +69,58 @@ def render_influencer(actor, service, users):
         render_portfolio(actor, service, users, stage)
     except CampaignOpsError as exc:
         st.error(str(exc))
-        if selected and st.button("Back to campaigns"):
-            st.session_state.pop(SELECTED, None)
-            st.rerun()
+        if selected:
+            st.button("Back to campaigns", on_click=_back_to_campaigns)
+
+def _editor_display_records(records):
+    """Show saved custom text in the single visible Action column."""
+    display_records = []
+    custom_options = []
+
+    for source in records:
+        record = dict(source)
+
+        if record.get("Action") == "Custom":
+            custom_text = (record.get("Custom Action") or "").strip()
+
+            if custom_text:
+                record["Action"] = custom_text
+
+                if (
+                    custom_text not in ACTION_LIBRARY
+                    and custom_text not in custom_options
+                ):
+                    custom_options.append(custom_text)
+
+        display_records.append(record)
+
+    return display_records, custom_options
+
+
+def _normalize_editor_action(record, saved_custom_values):
+    """
+    Convert the single visible Action column back into the persisted
+    standard/custom representation.
+    """
+    token = record["_draft_id"]
+    selected_action = record.get("Action")
+    prior_custom = (saved_custom_values.get(token) or "").strip()
+
+    # Existing saved custom rows are displayed using their custom text.
+    # If the user leaves that value unchanged, preserve it internally as Custom.
+    if prior_custom and selected_action == prior_custom:
+        record["Action"] = "Custom"
+        record["Custom Action"] = prior_custom
+        return True
+
+    # User explicitly selected Custom from the dropdown.
+    if selected_action == "Custom":
+        record["Custom Action"] = prior_custom
+        return True
+
+    # Standard dropdown action.
+    record["Custom Action"] = ""
+    return False
 
 
 def render_portfolio(actor, service, users, stage):
@@ -83,19 +150,22 @@ def render_portfolio(actor, service, users, stage):
                           on_click=_open_campaign, args=(campaign.id,))
 
 
-def _owners(users):
-    return {user.display_name: user.id for user in users if user.is_active and user.display_name in ("T", "L")}
+def _owners(service):
+    return {
+        user.display_name: user.id
+        for user in service.list_workflow_role_users("influencer", "lead_owner")
+    }
 
 
 def render_new_campaign(actor, service, users):
-    owners = _owners(users)
+    owners = _owners(service)
     programs = service.list_program_portfolio(actor, {"active_state": "active"})
     by_id = {program.id: program for program in programs}
     if not owners or not by_id:
-        st.info("An accessible active program and an active T or L owner are required.")
+        st.info("An accessible active program and an active Influencer Lead Owner are required.")
         return
     with st.form("influencer_timeline_create"):
-        owner = st.selectbox("Owner", list(owners), index=None, placeholder="Choose T or L")
+        owner = st.selectbox("Owner", list(owners), index=None, placeholder="Choose a Lead Owner")
         title = st.text_input("Campaign")
         program_id = st.selectbox("Program", list(by_id), format_func=lambda key: by_id[key].program_name)
         submitted = st.form_submit_button("Create Campaign", type="primary")
@@ -112,98 +182,113 @@ def render_new_campaign(actor, service, users):
         _saved("Campaign created.")
 
 
+def timeline_frame(rows, records=None):
+    records = records if records is not None else [dict(editor_record(row), _draft_id=row.id) for row in rows]
+    frame = pd.DataFrame(records, columns=["_row_id", "_draft_id", *EDITOR_COLUMNS])
+    # Explicit nullable types keep the empty/all-undated editor editable too.
+    frame["Date"] = pd.to_datetime(frame["Date"])
+    for column in ("_row_id", "_draft_id", "Action", "Program Notes"):
+        frame[column] = frame[column].astype("string")
+    return frame
+
+
+def frame_records(frame):
+    return [{key: None if pd.isna(value) else value for key, value in row.items()}
+            for row in frame.to_dict("records")]
+
+
 def render_workspace(actor, service, users, campaign, rows):
     st.markdown(f"### {campaign.campaign_title}")
-    owners = _owners(users)
-    current = next((label for label, key in owners.items() if key == campaign.manager_user_id), None)
-    with st.form(f"influencer_timeline_owner_{campaign.id}"):
-        owner = st.selectbox("Owner", list(owners), index=list(owners).index(current) if current else None,
-                             placeholder="Choose T or L")
-        submitted = st.form_submit_button("Save Owner")
-    if submitted:
-        if owner is None:
-            st.error("Choose T or L.")
-        else:
-            try:
-                service.change_owner(actor, campaign.id, owners[owner])
-            except CampaignOpsError as exc:
-                st.error(str(exc))
-            else:
-                _saved("Owner saved.")
+    owners = _owners(service)
+    snapshot_key = f"campaign_ops_influencer_draft_{actor.id}_{campaign.id}"
+    version_key = f"campaign_ops_influencer_editor_version_{campaign.id}"
+    if snapshot_key not in st.session_state:
+        st.session_state[snapshot_key] = {
+            "campaign": deepcopy(campaign), "rows": deepcopy(rows),
+            "owner": campaign.manager_user_id, "stage": campaign.influencer_stage,
+            "editor_records": [dict(editor_record(row), _draft_id=row.id) for row in rows],
+            "editor_owner": campaign.manager_user_id,
+        }
+    snapshot = st.session_state[snapshot_key]
+    version = st.session_state.get(version_key, 0)
+    current = next((label for label, key in owners.items() if key == snapshot["editor_owner"]), None)
+    custom_values = {
+        row["_draft_id"]: row.get("Custom Action", "")
+        for row in snapshot["editor_records"]
+        if row.get("_draft_id")
+    }
+    owner = st.selectbox("Owner", list(owners), index=list(owners).index(current) if current else None,
+                         placeholder="Choose T or L")
     st.markdown("#### Timeline")
-    st.dataframe(
-        [{"Date": row.due_date, "Action": row.step_title, "Program Notes": row.notes or ""} for row in rows]
-        or {"Date": [], "Action": [], "Program Notes": []},
-        column_config={"Date": st.column_config.DateColumn("Date", format="MM/DD/YYYY")},
-        column_order=["Date", "Action", "Program Notes"], hide_index=True, width="stretch",
+    edited = st.data_editor(
+        timeline_frame([], snapshot["editor_records"]),
+        key=f"influencer_timeline_table_{campaign.id}_{version}",
+        num_rows="dynamic", hide_index=True, width="stretch",
+        column_order=list(EDITOR_COLUMNS), disabled=["_row_id", "_draft_id"],
+        column_config={
+            "_row_id": None,
+            "_draft_id": None,
+            "Date": st.column_config.DateColumn("Date", format="MM/DD/YYYY", required=False),
+            "Action": st.column_config.SelectboxColumn("Action", options=list(ACTION_LIBRARY), required=True, width="large"),
+            "Program Notes": st.column_config.TextColumn("Program Notes", width="large"),
+        },
     )
-    editor_key = f"influencer_timeline_editor_{campaign.id}"
-    if st.button("+ Add Row", key=f"influencer_timeline_add_{campaign.id}"):
-        st.session_state[editor_key] = "new"
-    if rows:
-        with st.expander("Edit / Remove Row", expanded=False):
-            by_id = {row.id: row for row in rows}
-            row_id = st.selectbox("Row", list(by_id),
-                format_func=lambda key: f"{by_id[key].due_date or 'Undated'} ? {by_id[key].step_title}",
-                key=f"influencer_timeline_row_select_{campaign.id}")
-            if st.button("Edit Row", key=f"influencer_timeline_edit_{campaign.id}"):
-                st.session_state[editor_key] = row_id
-    editing = st.session_state.get(editor_key)
-    if editing:
-        row = next((item for item in rows if item.id == editing), None)
-        if editing == "new" or row is not None:
-            render_row_editor(actor, service, campaign.id, row, editor_key)
+    records = frame_records(edited)
+    custom_heading = False
+    for index, record in enumerate(records, 1):
+        # Draft tokens survive validation/rebasing and row deletion. They are
+        # UI-only; the save service uses the separate persisted row ID.
+        token = record.get("_draft_id") or str(uuid4())
+        record["_draft_id"] = token
+        record["Custom Action"] = custom_values.get(token, "") if record.get("Action") == "Custom" else ""
+        if record.get("Action") == "Custom":
+            if not custom_heading:
+                st.markdown("#### Custom Actions")
+                custom_heading = True
+            context = record["Date"].strftime("%m/%d/%Y") if record["Date"] is not None else "No date"
+            st.caption(f"Row {index} · {context}")
+            record["Custom Action"] = st.text_input(
+                "Custom action",
+                value=record["Custom Action"],
+                key=f"campaign_ops_influencer_draft_custom_{campaign.id}_{version}_{token}",
+            )
+
+    snapshot["editor_records"] = records
+    snapshot["editor_owner"] = owners.get(owner)
+    submitted = st.button("Save Changes", type="primary", key=f"influencer_save_{campaign.id}")
+    st.caption("Edits stay unsaved until Save Changes. Save before leaving or moving stages.")
+    if any(row.start_date for row in snapshot["rows"]):
+        st.caption("Existing row start dates still apply: a date cannot precede that row's start date.")
+    if submitted:
+        try:
+            if owner is None:
+                raise CampaignOpsError("Choose T or L.")
+            for record in records:
+                if record.get("Action") == "Custom":
+                    custom_text = (record.get("Custom Action") or "").strip()
+                    if not custom_text:
+                        raise CampaignOpsError("Enter text for every Custom action.")
+                    record["Custom Action"] = custom_text
+            changes = service.save_changes(actor, campaign.id, owners[owner], records,
+                    snapshot["rows"], snapshot["owner"], snapshot["stage"])
+        except CampaignOpsError as exc:
+            # Rebase the buffered editor after validation, never the original
+            # database snapshot used for concurrency checks. New rows now have
+            # stable helper tokens even when another new row is removed.
+            snapshot["editor_records"] = records
+            snapshot["editor_owner"] = owners.get(owner)
+            st.session_state[version_key] = version + 1
+            _saved(f"{exc} Nothing saved; complete the form below.", error=True)
         else:
-            st.session_state.pop(editor_key, None)
+            st.session_state.pop(snapshot_key, None)
+            st.session_state[version_key] = version + 1
+            _saved("Changes saved." if any(changes[key] for key in ("updated", "added", "removed", "owner_changed")) else "No changes to save.")
     render_stage_action(actor, service, campaign)
     st.button("Back to campaigns", key=f"influencer_timeline_back_{campaign.id}", on_click=_back_to_campaigns)
 
 
-def _save_row(actor, service, campaign_id, row_id, token, editor_key):
-    try:
-        service.save_row(actor, campaign_id, st.session_state[f"action_{token}"],
-            st.session_state.get(f"custom_{token}", ""), st.session_state[f"date_{token}"],
-            st.session_state[f"notes_{token}"], row_id)
-    except CampaignOpsError as exc:
-        st.session_state[FLASH + "_error"] = str(exc)
-    else:
-        st.session_state.pop(editor_key, None)
-        st.session_state[FLASH] = "Timeline row saved."
-
-
-def _remove_row(actor, service, campaign_id, row_id, editor_key):
-    try:
-        service.remove_row(actor, campaign_id, row_id)
-    except CampaignOpsError as exc:
-        st.session_state[FLASH + "_error"] = str(exc)
-    else:
-        st.session_state.pop(editor_key, None)
-        st.session_state[FLASH] = "Timeline row removed."
-
-
-def _cancel_edit(editor_key):
-    st.session_state.pop(editor_key, None)
-
-
-def render_row_editor(actor, service, campaign_id, row, editor_key):
-    token = f"{campaign_id}_{row.id if row else 'new'}"
-    selected = row.step_title if row and row.step_title in ACTION_LIBRARY else "Custom" if row else ACTION_LIBRARY[0]
-    with st.container(border=True):
-        st.caption("Edit row" if row else "Add row")
-        action = st.selectbox("Action", ACTION_LIBRARY, index=ACTION_LIBRARY.index(selected), key=f"action_{token}")
-        if row and row.start_date:
-            st.caption(f"Date must be on or after {row.start_date:%m/%d/%Y}, or left blank.")
-        with st.form(f"influencer_timeline_row_form_{token}"):
-            if action == "Custom":
-                st.text_input("Custom action", value=row.step_title if row and selected == "Custom" else "", key=f"custom_{token}")
-            st.date_input("Date", value=row.due_date if row else None, key=f"date_{token}")
-            st.text_area("Program Notes", value=row.notes or "" if row else "", key=f"notes_{token}")
-            st.form_submit_button("Save Row", type="primary", on_click=_save_row,
-                args=(actor, service, campaign_id, row.id if row else None, token, editor_key))
-        if row:
-            st.button("Remove Row", key=f"remove_{token}", on_click=_remove_row,
-                      args=(actor, service, campaign_id, row.id, editor_key))
-        st.button("Cancel edit", key=f"cancel_{token}", on_click=_cancel_edit, args=(editor_key,))
+def _cancel_stage(confirm_key):
+    st.session_state.pop(confirm_key, None)
 
 
 def render_stage_action(actor, service, campaign):
@@ -224,12 +309,12 @@ def render_stage_action(actor, service, campaign):
                 st.error(str(exc))
             else:
                 st.session_state.pop(confirm_key, None)
+                _discard_drafts()
                 target = updated.influencer_stage
                 if target == "complete":
                     st.session_state.pop(SELECTED, None)
                 else:
                     st.session_state[PENDING] = STAGE_LABELS[target]
                 _saved("Campaign marked Complete." if target == "complete" else f"Campaign moved to {STAGE_LABELS[target]}.")
-        if cancel.button("Cancel", key=f"cancel_stage_{campaign.id}_{stage}"):
-            st.session_state.pop(confirm_key, None)
-            st.rerun()
+        cancel.button("Cancel", key=f"cancel_stage_{campaign.id}_{stage}",
+                      on_click=_cancel_stage, args=(confirm_key,))

@@ -13,7 +13,7 @@ L_USER_ID = "33333333-3333-4333-8333-333333333333"
 class SeedUser:
     """Idempotent Campaign Operations user seed definition."""
 
-    id: str
+    id: str | None
     display_name: str
     role: UserRole
     email: str | None = None
@@ -21,11 +21,19 @@ class SeedUser:
 
 SEED_USERS = [
     SeedUser(id=BAILEY_USER_ID, display_name="Bailey", role=UserRole.ADMINISTRATOR),
-    SeedUser(id=T_USER_ID, display_name="T", role=UserRole.TEAM_MEMBER),
-    SeedUser(id=L_USER_ID, display_name="L", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=None, display_name="Jordon", role=UserRole.ADMINISTRATOR),
+    SeedUser(id=T_USER_ID, display_name="Taylor", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=L_USER_ID, display_name="Lauren", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=None, display_name="Ava", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=None, display_name="Allyn", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=None, display_name="Maren", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=None, display_name="Carly", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=None, display_name="Emma", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=None, display_name="Kate", role=UserRole.TEAM_MEMBER),
+    SeedUser(id=None, display_name="Chloe", role=UserRole.TEAM_MEMBER),
 ]
 
 
 def get_seed_users() -> list[SeedUser]:
-    """Return initial internal users without invented names or emails."""
+    """Return expected current users for database initialization verification."""
     return list(SEED_USERS)

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from streamlit.testing.v1 import AppTest
 
 from core.campaign_ops.exceptions import CampaignOpsError
-from core.campaign_ops.influencer_timeline import ACTION_LIBRARY, DEFAULT_ACTIONS, InfluencerTimelineService, action_title, sort_timeline
+from core.campaign_ops.influencer_timeline import ACTION_LIBRARY, DEFAULT_ACTIONS, EDITOR_COLUMNS, InfluencerTimelineService, action_title, sort_timeline
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.repository import CampaignOpsRepository
 from tests import test_campaign_ops_foundation as foundation
@@ -157,18 +157,18 @@ class TimelineTests(unittest.TestCase):
             self.assertIn('for update', fetch.call_args.args[0])
             self.assertEqual(('program-id',), fetch.call_args.args[1])
 
-    def test_ui_owner_and_three_columns_all_stages_confirmation(self):
+    def test_ui_owner_and_direct_columns_all_stages_confirmation(self):
         app = AppTest.from_function(timeline_app, default_timeout=20).run()
         self.assertEqual([], list(app.exception))
         self.assertEqual(['Planning', 'Live', 'Recapping'], app.radio[0].options)
         self.assertEqual('Owner', app.selectbox[0].label)
         select(app, 'Owner').select('L')
-        button(app, 'Save Owner').click().run()
+        button(app, 'Save Changes').click().run()
         repo, service, actor, t, l, _ = app.session_state.fixture
         campaign = repo.influencer_campaigns[0]
         self.assertEqual(l.id, campaign.manager_user_id)
         for stage, label, target in [('planning', 'Move to Live', 'live'), ('live', 'Move to Recapping', 'recapping'), ('recapping', 'Mark Complete', 'complete')]:
-            self.assertEqual(['Date', 'Action', 'Program Notes'], list(app.dataframe[0].value.columns))
+            self.assertEqual(['_row_id', '_draft_id', *EDITOR_COLUMNS], list(app.dataframe[0].value.columns))
             self.assertEqual(9, len(app.dataframe[0].value))
             button(app, label).click().run()
             self.assertEqual(stage, campaign.influencer_stage)
@@ -200,28 +200,25 @@ class TimelineTests(unittest.TestCase):
 
     def test_ui_add_custom_edit_notes_date_and_remove(self):
         app = AppTest.from_function(timeline_app, default_timeout=20).run()
-        button(app, '+ Add Row').click().run()
-        select(app, 'Action').select('Custom').run()
-        next(item for item in app.text_input if item.label == 'Custom action').set_value('Manual action')
-        app.date_input[0].set_value(date(2026, 5, 10))
-        app.text_area[0].set_value('First note')
-        button(app, 'Save Row').click().run()
-        self.assertEqual([], list(app.exception))
         repo, service, actor, *_ = app.session_state.fixture
-        rows = service.workspace(actor, repo.influencer_campaigns[0].id)[1]
+        campaign_id = repo.influencer_campaigns[0].id
+        def submit(delta):
+            version = app.session_state.filtered_state.get(f'campaign_ops_influencer_editor_version_{campaign_id}', 0)
+            app.session_state[f'influencer_timeline_table_{campaign_id}_{version}'] = delta
+            button(app, 'Save Changes').click().run()
+            self.assertEqual([], list(app.exception))
+        submit({'edited_rows': {}, 'deleted_rows': [], 'added_rows': [
+            {'Date': '2026-05-10', 'Action': 'Custom', 'Program Notes': 'First note'}]})
+        self.assertEqual(9, len(repo.influencer_planning_steps))
+        app.text_input[0].set_value('Manual action')
+        button(app, 'Save Changes').click().run()
+        rows = service.workspace(actor, campaign_id)[1]
         self.assertEqual('Manual action', rows[0].step_title)
-        select(app, 'Row').select(rows[0].id)
-        button(app, 'Edit Row').click().run()
-        app.text_area[0].set_value('Changed note')
-        app.date_input[0].set_value(date(2026, 5, 2))
-        button(app, 'Save Row').click().run()
-        self.assertEqual([], list(app.exception))
+        submit({'edited_rows': {0: {'Date': '2026-05-02', 'Program Notes': 'Changed note'}}, 'deleted_rows': [], 'added_rows': []})
         self.assertEqual('Changed note', rows[0].notes)
         self.assertEqual(date(2026, 5, 2), rows[0].due_date)
         self.assertEqual(10, len(repo.influencer_planning_steps))
-        button(app, 'Edit Row').click().run()
-        button(app, 'Remove Row').click().run()
-        self.assertEqual([], list(app.exception))
+        submit({'edited_rows': {}, 'deleted_rows': [0], 'added_rows': []})
         self.assertFalse(rows[0].is_active)
         self.assertEqual(9, len(app.dataframe[0].value))
 
@@ -289,12 +286,13 @@ class TimelineTests(unittest.TestCase):
 
     def test_empty_custom_action_does_not_persist_partial_row(self):
         app = AppTest.from_function(timeline_app, default_timeout=20).run()
-        button(app, '+ Add Row').click().run()
-        select(app, 'Action').select('Custom').run()
-        app.text_area[0].set_value('Unsaved notes')
-        button(app, 'Save Row').click().run()
-        self.assertEqual([], list(app.exception))
-        self.assertTrue(any('custom action' in error.value for error in app.error))
         repo, *_ = app.session_state.fixture
+        campaign_id = repo.influencer_campaigns[0].id
+        app.session_state[f'influencer_timeline_table_{campaign_id}_0'] = {
+            'edited_rows': {}, 'deleted_rows': [],
+            'added_rows': [{'Action': 'Custom', 'Program Notes': 'Unsaved notes'}]}
+        button(app, 'Save Changes').click().run()
+        self.assertEqual([], list(app.exception))
+        self.assertTrue(any('Enter text for every Custom action.' in error.value for error in app.error))
         self.assertEqual(9, len(repo.influencer_planning_steps))
         self.assertTrue(all(row.notes is None for row in repo.influencer_planning_steps))

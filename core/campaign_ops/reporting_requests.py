@@ -26,10 +26,10 @@ REQUEST_STATUSES = {
 
 AM_NAME_ALIASES = {
     "bailey": "Bailey",
-    "taylor": "T",
-    "t": "T",
-    "lauren": "L",
-    "l": "L",
+    "taylor": "Taylor",
+    "t": "Taylor",
+    "lauren": "Lauren",
+    "l": "Lauren",
 }
 
 
@@ -39,7 +39,7 @@ def normalize_am_name(value: str | None) -> str:
         raise CampaignOpsValidationError("AM is required.")
     display_name = AM_NAME_ALIASES.get(cleaned)
     if display_name is None:
-        raise CampaignOpsValidationError("AM must resolve to Bailey, T, or L.")
+        raise CampaignOpsValidationError("AM must resolve to Bailey, Taylor, or Lauren.")
     return display_name
 
 

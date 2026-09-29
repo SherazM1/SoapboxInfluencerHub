@@ -16,6 +16,7 @@ from core.campaign_ops.enums import (
     RiskLevel,
     TaskStatus,
     WaitingOn,
+    WorkflowRole,
     WorkstreamType,
 )
 from core.campaign_ops.db import is_undefined_table_error
@@ -76,6 +77,7 @@ from core.campaign_ops.models import (
     Task,
     TaskListRow,
     Workstream,
+    UserWorkflowRole,
     enum_value,
     require_text,
 )
@@ -301,6 +303,120 @@ class CampaignOpsRepository:
             """,
             (display_name,),
             CampaignOpsUser,
+        )
+
+    def list_workflow_role_users(
+        self,
+        workflow_key: str,
+        workflow_role: str,
+    ) -> list[CampaignOpsUser]:
+        workflow = enum_value(WorkstreamType, workflow_key, "workflow_key")
+        role = enum_value(WorkflowRole, workflow_role, "workflow_role")
+        return self._fetch_all(
+            """
+            select u.*
+            from campaign_ops_user_workflow_roles r
+            join campaign_ops_users u on u.id = r.user_id
+            where r.workflow_key = %s
+              and r.workflow_role = %s
+              and r.is_active = true
+              and u.is_active = true
+            order by lower(u.display_name), u.display_name
+            """,
+            (workflow, role),
+            CampaignOpsUser,
+        )
+
+    def list_workflow_roles(
+        self,
+        workflow_key: str | None = None,
+        workflow_role: str | None = None,
+        include_inactive: bool = False,
+    ) -> list[UserWorkflowRole]:
+        clauses = []
+        params: list[Any] = []
+        if workflow_key:
+            clauses.append("workflow_key = %s")
+            params.append(enum_value(WorkstreamType, workflow_key, "workflow_key"))
+        if workflow_role:
+            clauses.append("workflow_role = %s")
+            params.append(enum_value(WorkflowRole, workflow_role, "workflow_role"))
+        if not include_inactive:
+            clauses.append("is_active = true")
+        where_clause = "where " + " and ".join(clauses) if clauses else ""
+        return self._fetch_all(
+            f"""select * from campaign_ops_user_workflow_roles {where_clause}
+                order by workflow_key, workflow_role, user_id""",
+            tuple(params),
+            UserWorkflowRole,
+        )
+
+    def create_workflow_role(
+        self,
+        user_id: str,
+        workflow_key: str,
+        workflow_role: str,
+        actor_user_id: str | None = None,
+    ) -> UserWorkflowRole:
+        return self._write_returning(
+            """
+            insert into campaign_ops_user_workflow_roles (
+                user_id, workflow_key, workflow_role, created_by, updated_by
+            ) values (%s, %s, %s, %s, %s) returning *
+            """,
+            (
+                user_id,
+                enum_value(WorkstreamType, workflow_key, "workflow_key"),
+                enum_value(WorkflowRole, workflow_role, "workflow_role"),
+                actor_user_id,
+                actor_user_id,
+            ),
+            UserWorkflowRole,
+        )
+
+    def update_workflow_role(
+        self,
+        role_id: str,
+        user_id: str,
+        workflow_key: str,
+        workflow_role: str,
+        actor_user_id: str | None = None,
+    ) -> UserWorkflowRole:
+        return self._write_returning(
+            """
+            update campaign_ops_user_workflow_roles
+            set user_id = %s, workflow_key = %s, workflow_role = %s, updated_by = %s
+            where id = %s and is_active = true returning *
+            """,
+            (
+                user_id,
+                enum_value(WorkstreamType, workflow_key, "workflow_key"),
+                enum_value(WorkflowRole, workflow_role, "workflow_role"),
+                actor_user_id,
+                role_id,
+            ),
+            UserWorkflowRole,
+        )
+
+    def deactivate_workflow_role(self, role_id: str, actor_user_id: str | None = None) -> None:
+        self._execute(
+            """
+            update campaign_ops_user_workflow_roles
+            set is_active = false, updated_by = %s
+            where id = %s and is_active = true
+            """,
+            (actor_user_id, role_id),
+        )
+
+    def reactivate_workflow_role(self, role_id: str, actor_user_id: str | None = None) -> UserWorkflowRole:
+        return self._write_returning(
+            """
+            update campaign_ops_user_workflow_roles
+            set is_active = true, updated_by = %s
+            where id = %s and is_active = false returning *
+            """,
+            (actor_user_id, role_id),
+            UserWorkflowRole,
         )
 
     def create_client(self, name: str, actor_user_id: str | None = None) -> Client:

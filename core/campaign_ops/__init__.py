@@ -8,6 +8,7 @@ from core.campaign_ops.enums import (
     TaskStatus,
     UserRole,
     WaitingOn,
+    WorkflowRole,
     WorkstreamType,
 )
 from core.campaign_ops.exceptions import (
@@ -33,5 +34,6 @@ __all__ = [
     "TaskStatus",
     "UserRole",
     "WaitingOn",
+    "WorkflowRole",
     "WorkstreamType",
 ]

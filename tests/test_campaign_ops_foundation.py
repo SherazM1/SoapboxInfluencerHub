@@ -181,8 +181,16 @@ class FakeConnection:
         self.transaction_count = 0
         self.users: list[dict[str, str | bool]] = [
             {"display_name": "Bailey", "role": "administrator", "is_active": True},
-            {"display_name": "T", "role": "team_member", "is_active": True},
-            {"display_name": "L", "role": "team_member", "is_active": True},
+            {"display_name": "Jordon", "role": "administrator", "is_active": True},
+            {"display_name": "Taylor", "role": "team_member", "is_active": True},
+            {"display_name": "Lauren", "role": "team_member", "is_active": True},
+            {"display_name": "Ava", "role": "team_member", "is_active": True},
+            {"display_name": "Allyn", "role": "team_member", "is_active": True},
+            {"display_name": "Maren", "role": "team_member", "is_active": True},
+            {"display_name": "Carly", "role": "team_member", "is_active": True},
+            {"display_name": "Emma", "role": "team_member", "is_active": True},
+            {"display_name": "Kate", "role": "team_member", "is_active": True},
+            {"display_name": "Chloe", "role": "team_member", "is_active": True},
         ]
 
     def cursor(self) -> FakeCursor:
@@ -283,6 +291,12 @@ class FakePrompt4ARepository:
     def list_active_users(self) -> list[CampaignOpsUser]:
         return [user for user in self.users if user.is_active]
 
+    def list_workflow_role_users(self, workflow_key: str, workflow_role: str) -> list[CampaignOpsUser]:
+        if workflow_key == WorkstreamType.INFLUENCER.value and workflow_role == "lead_owner":
+            eligible_ids = {"22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"}
+            return [user for user in self.list_active_users() if user.id in eligible_ids]
+        return []
+
     def list_active_clients(self) -> list[Client]:
         return [client for client in self.clients if client.is_active]
 
@@ -290,7 +304,12 @@ class FakePrompt4ARepository:
         return next((user for user in self.users if user.id == user_id), None)
 
     def get_user_by_display_name(self, display_name: str) -> CampaignOpsUser | None:
-        return next((user for user in self.users if user.is_active and user.display_name.lower() == display_name.lower()), None)
+        canonical = {"t": "taylor", "l": "lauren"}.get(display_name.casefold(), display_name.casefold())
+        return next((
+            user for user in self.users
+            if user.is_active
+            and {"t": "taylor", "l": "lauren"}.get(user.display_name.casefold(), user.display_name.casefold()) == canonical
+        ), None)
 
     def get_client(self, client_id: str) -> Client | None:
         return next((client for client in self.clients if client.id == client_id), None)
@@ -2016,10 +2035,18 @@ class CampaignOpsFoundationTests(unittest.TestCase):
 
     def test_seed_users_are_exact_and_idempotent_definitions(self) -> None:
         users = get_seed_users()
-        self.assertEqual([user.display_name for user in users], ["Bailey", "T", "L"])
-        self.assertEqual([user.email for user in users], [None, None, None])
-        self.assertEqual([user.role.value for user in users], ["administrator", "team_member", "team_member"])
-        self.assertEqual(len({user.id for user in users}), 3)
+        expected = {
+            "Bailey": "administrator", "Jordon": "administrator",
+            "Taylor": "team_member", "Lauren": "team_member", "Ava": "team_member",
+            "Allyn": "team_member", "Maren": "team_member", "Carly": "team_member",
+            "Emma": "team_member", "Kate": "team_member", "Chloe": "team_member",
+        }
+        self.assertEqual({user.display_name: user.role.value for user in users}, expected)
+        self.assertTrue(all(user.email is None for user in users))
+        self.assertEqual(len(users), 11)
+        self.assertEqual(users[0].id, "11111111-1111-4111-8111-111111111111")
+        self.assertEqual(users[2].id, "22222222-2222-4222-8222-222222222222")
+        self.assertEqual(users[3].id, "33333333-3333-4333-8333-333333333333")
 
     def test_seed_sql_uses_authoritative_enum_values_and_display_names(self) -> None:
         seed_sql = Path("db/migrations/002_campaign_ops_seed_users.sql").read_text(
@@ -2090,8 +2117,24 @@ class CampaignOpsFoundationTests(unittest.TestCase):
 
     def test_temporary_setup_admin_is_bailey_only(self) -> None:
         self.assertTrue(viewer_can_initialize_in_setup("Bailey"))
-        self.assertFalse(viewer_can_initialize_in_setup("T"))
-        self.assertFalse(viewer_can_initialize_in_setup("L"))
+        self.assertFalse(viewer_can_initialize_in_setup("Taylor"))
+        self.assertFalse(viewer_can_initialize_in_setup("Lauren"))
+
+    def test_development_viewer_selector_loads_active_users_and_defaults_to_bailey(self) -> None:
+        users = [
+            CampaignOpsUser(id="u1", display_name="Allyn", role=UserRole.TEAM_MEMBER.value),
+            CampaignOpsUser(id="u2", display_name="Bailey", role=UserRole.ADMINISTRATOR.value),
+            CampaignOpsUser(id="u3", display_name="Jordon", role=UserRole.ADMINISTRATOR.value),
+        ]
+        session_state: dict[str, object] = {}
+        with patch.object(campaigns.st, "session_state", session_state):
+            with patch("app.pages.campaigns.CampaignOpsRepository") as repository_type:
+                repository_type.return_value.list_active_users.return_value = users
+                with patch.object(campaigns.st, "selectbox", return_value="Bailey") as selector:
+                    with patch("app.pages.campaigns.update_viewer_state"):
+                        self.assertEqual("Bailey", campaigns.render_temporary_viewer_selector())
+        self.assertEqual("Bailey", session_state["campaign_ops_viewer"])
+        self.assertEqual(["Viewing as", ["Allyn", "Bailey", "Jordon"]], list(selector.call_args.args))
 
     def test_uninitialized_status_prevents_viewer_repository_lookup(self) -> None:
         status = CampaignOpsSetupStatus(
@@ -2106,7 +2149,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
             with patch("app.pages.campaigns.hide_default_streamlit_sidebar_nav"):
                 with patch("app.pages.campaigns.clear_legacy_workflow_session_state"):
                     with patch("app.pages.campaigns.render_initialization_message"):
-                        with patch("app.pages.campaigns.render_temporary_viewer_selector", return_value=("Bailey", "Cross-Team Dashboard")):
+                        with patch("app.pages.campaigns.render_temporary_viewer_selector", return_value="Bailey"):
                             with patch("app.pages.campaigns.get_campaign_ops_setup_status", return_value=status):
                                 with patch("app.pages.campaigns.render_setup_state", side_effect=StopIteration):
                                     with patch("app.pages.campaigns.resolve_viewer_user") as resolve_viewer:
@@ -2221,9 +2264,10 @@ class CampaignOpsFoundationTests(unittest.TestCase):
             first = verify_campaign_ops_seed_users()
             second = verify_campaign_ops_seed_users()
 
-        self.assertEqual(first.verified_users, ["Bailey", "T", "L"])
-        self.assertEqual(second.verified_users, ["Bailey", "T", "L"])
-        self.assertEqual(len(fake_connection.users), 3)
+        expected_users = [user.display_name for user in get_seed_users()]
+        self.assertEqual(first.verified_users, expected_users)
+        self.assertEqual(second.verified_users, expected_users)
+        self.assertEqual(len(fake_connection.users), 11)
 
     def test_seed_verification_failure_is_wrapped_safely(self) -> None:
         fake_connection = FakeConnection()
@@ -2345,7 +2389,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
             with patch("app.pages.campaigns.hide_default_streamlit_sidebar_nav"):
                 with patch("app.pages.campaigns.clear_legacy_workflow_session_state"):
                     with patch("app.pages.campaigns.render_initialization_message"):
-                        with patch("app.pages.campaigns.render_temporary_viewer_selector", return_value=("Bailey", "All Programs")):
+                        with patch("app.pages.campaigns.render_temporary_viewer_selector", return_value="Bailey"):
                             with patch("app.pages.campaigns.get_campaign_ops_setup_status", return_value=status):
                                 with patch("app.pages.campaigns.render_setup_state") as render_setup:
                                     with patch("app.pages.campaigns.resolve_initialized_viewer", return_value=CampaignOpsUser(id="u1", display_name="Bailey", role=UserRole.ADMINISTRATOR.value)) as resolve_viewer:
@@ -2365,8 +2409,8 @@ class CampaignOpsFoundationTests(unittest.TestCase):
     def test_initialized_seeded_users_resolve_to_expected_roles(self) -> None:
         users = [
             CampaignOpsUser(id="u1", display_name="Bailey", role=UserRole.ADMINISTRATOR.value),
-            CampaignOpsUser(id="u2", display_name="T", role=UserRole.TEAM_MEMBER.value),
-            CampaignOpsUser(id="u3", display_name="L", role=UserRole.TEAM_MEMBER.value),
+            CampaignOpsUser(id="u2", display_name="Taylor", role=UserRole.TEAM_MEMBER.value),
+            CampaignOpsUser(id="u3", display_name="Lauren", role=UserRole.TEAM_MEMBER.value),
         ]
 
         self.assertEqual(
@@ -3206,11 +3250,11 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertIn("internal_note_added", event_types)
 
     def test_prompt5a_am_mapping_is_centralized_and_normalized(self) -> None:
-        self.assertEqual(normalize_am_name("Taylor"), "T")
-        self.assertEqual(normalize_am_name(" Lauren "), "L")
+        self.assertEqual(normalize_am_name("Taylor"), "Taylor")
+        self.assertEqual(normalize_am_name(" Lauren "), "Lauren")
         self.assertEqual(normalize_am_name("bailey"), "Bailey")
-        self.assertEqual(normalize_am_name(" t "), "T")
-        self.assertEqual(normalize_am_name("l"), "L")
+        self.assertEqual(normalize_am_name(" t "), "Taylor")
+        self.assertEqual(normalize_am_name("l"), "Lauren")
         with self.assertRaises(CampaignOpsValidationError):
             normalize_am_name("Unknown")
 

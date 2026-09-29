@@ -12,6 +12,7 @@ from core.campaign_ops.enums import (
     TaskStatus,
     UserRole,
     WaitingOn,
+    WorkflowRole,
     WorkstreamType,
 )
 from core.campaign_ops.exceptions import CampaignOpsValidationError
@@ -50,6 +51,23 @@ class CampaignOpsUser:
     def __post_init__(self) -> None:
         self.display_name = require_text(self.display_name, "display_name")
         self.role = enum_value(UserRole, self.role, "role")
+
+
+@dataclass(slots=True)
+class UserWorkflowRole:
+    id: str
+    user_id: str
+    workflow_key: str
+    workflow_role: str
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
+
+    def __post_init__(self) -> None:
+        self.workflow_key = enum_value(WorkstreamType, self.workflow_key, "workflow_key")
+        self.workflow_role = enum_value(WorkflowRole, self.workflow_role, "workflow_role")
 
 
 @dataclass(slots=True)

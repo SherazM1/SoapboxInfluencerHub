@@ -13,6 +13,7 @@ from core.campaign_ops.enums import (
     RiskLevel,
     TaskStatus,
     WaitingOn,
+    WorkflowRole,
     WorkstreamType,
 )
 from core.campaign_ops.exceptions import (
@@ -90,6 +91,7 @@ from core.campaign_ops.models import (
     WaitingOnRow,
     WorkloadByPersonRow,
     Workstream,
+    UserWorkflowRole,
     enum_value,
     require_text,
 )
@@ -583,6 +585,155 @@ class CampaignOpsService:
     def list_active_clients(self) -> list[Client]:
         repository = self.repository or CampaignOpsRepository()
         return repository.list_active_clients()
+
+    def list_workflow_role_users(
+        self,
+        workflow_key: str,
+        workflow_role: str,
+    ) -> list[CampaignOpsUser]:
+        repository = self.repository or CampaignOpsRepository()
+        workflow = enum_value(WorkstreamType, workflow_key, "workflow_key")
+        role = enum_value(WorkflowRole, workflow_role, "workflow_role")
+        return repository.list_workflow_role_users(workflow, role)
+
+    def list_workflow_roles(
+        self,
+        workflow_key: str | None = None,
+        workflow_role: str | None = None,
+        include_inactive: bool = False,
+    ) -> list[UserWorkflowRole]:
+        repository = self.repository or CampaignOpsRepository()
+        if workflow_key:
+            workflow_key = enum_value(WorkstreamType, workflow_key, "workflow_key")
+        if workflow_role:
+            workflow_role = enum_value(WorkflowRole, workflow_role, "workflow_role")
+        return repository.list_workflow_roles(workflow_key, workflow_role, include_inactive)
+
+    def add_workflow_role(
+        self,
+        actor: CampaignOpsUser | None,
+        user_id: str,
+        workflow_key: str,
+        workflow_role: str,
+    ) -> UserWorkflowRole:
+        def operation(repository: CampaignOpsRepository) -> UserWorkflowRole:
+            self._require_admin(actor)
+            self._require_active_user(repository, user_id, "Roster user")
+            workflow = enum_value(WorkstreamType, workflow_key, "workflow_key")
+            role = enum_value(WorkflowRole, workflow_role, "workflow_role")
+            if any(
+                item.user_id == user_id
+                for item in repository.list_workflow_roles(workflow, role)
+            ):
+                raise CampaignOpsValidationError("This user already has that active workflow role.")
+            item = repository.create_workflow_role(
+                user_id, workflow, role, actor.id if actor else None
+            )
+            repository.append_event(
+                event_type="workflow_role_added",
+                entity_type="user_workflow_role",
+                entity_id=item.id,
+                actor_user_id=actor.id if actor else None,
+                new_value_json={"user_id": user_id, "workflow_key": workflow, "workflow_role": role},
+                message="A workflow roster role was added.",
+            )
+            return item
+
+        return self._transaction(operation)
+
+    def update_workflow_role(
+        self,
+        actor: CampaignOpsUser | None,
+        role_id: str,
+        user_id: str,
+        workflow_key: str,
+        workflow_role: str,
+    ) -> UserWorkflowRole:
+        def operation(repository: CampaignOpsRepository) -> UserWorkflowRole:
+            self._require_admin(actor)
+            before = next(
+                (item for item in repository.list_workflow_roles(include_inactive=True) if item.id == role_id),
+                None,
+            )
+            if before is None or not before.is_active:
+                raise CampaignOpsNotFoundError("Active workflow roster role was not found.")
+            self._require_active_user(repository, user_id, "Roster user")
+            workflow = enum_value(WorkstreamType, workflow_key, "workflow_key")
+            role = enum_value(WorkflowRole, workflow_role, "workflow_role")
+            duplicate = any(
+                item.id != role_id and item.user_id == user_id
+                for item in repository.list_workflow_roles(workflow, role)
+            )
+            if duplicate:
+                raise CampaignOpsValidationError("This user already has that active workflow role.")
+            updated = repository.update_workflow_role(
+                role_id, user_id, workflow, role, actor.id if actor else None
+            )
+            repository.append_event(
+                event_type="workflow_role_updated",
+                entity_type="user_workflow_role",
+                entity_id=role_id,
+                actor_user_id=actor.id if actor else None,
+                old_value_json={"user_id": before.user_id, "workflow_key": before.workflow_key, "workflow_role": before.workflow_role},
+                new_value_json={"user_id": user_id, "workflow_key": workflow, "workflow_role": role},
+                message="A workflow roster role was updated.",
+            )
+            return updated
+
+        return self._transaction(operation)
+
+    def deactivate_workflow_role(self, actor: CampaignOpsUser | None, role_id: str) -> None:
+        def operation(repository: CampaignOpsRepository) -> None:
+            self._require_admin(actor)
+            item = next(
+                (role for role in repository.list_workflow_roles(include_inactive=True) if role.id == role_id),
+                None,
+            )
+            if item is None or not item.is_active:
+                raise CampaignOpsNotFoundError("Active workflow roster role was not found.")
+            repository.deactivate_workflow_role(role_id, actor.id if actor else None)
+            repository.append_event(
+                event_type="workflow_role_deactivated",
+                entity_type="user_workflow_role",
+                entity_id=role_id,
+                actor_user_id=actor.id if actor else None,
+                old_value_json={"user_id": item.user_id, "workflow_key": item.workflow_key, "workflow_role": item.workflow_role},
+                message="A workflow roster role was deactivated.",
+            )
+
+        self._transaction(operation)
+
+    def reactivate_workflow_role(
+        self,
+        actor: CampaignOpsUser | None,
+        role_id: str,
+    ) -> UserWorkflowRole:
+        def operation(repository: CampaignOpsRepository) -> UserWorkflowRole:
+            self._require_admin(actor)
+            item = next(
+                (role for role in repository.list_workflow_roles(include_inactive=True) if role.id == role_id),
+                None,
+            )
+            if item is None or item.is_active:
+                raise CampaignOpsNotFoundError("Inactive workflow roster role was not found.")
+            self._require_active_user(repository, item.user_id, "Roster user")
+            if any(
+                existing.user_id == item.user_id
+                for existing in repository.list_workflow_roles(item.workflow_key, item.workflow_role)
+            ):
+                raise CampaignOpsValidationError("This user already has that active workflow role.")
+            updated = repository.reactivate_workflow_role(role_id, actor.id if actor else None)
+            repository.append_event(
+                event_type="workflow_role_reactivated",
+                entity_type="user_workflow_role",
+                entity_id=role_id,
+                actor_user_id=actor.id if actor else None,
+                new_value_json={"user_id": item.user_id, "workflow_key": item.workflow_key, "workflow_role": item.workflow_role},
+                message="A workflow roster role was reactivated.",
+            )
+            return updated
+
+        return self._transaction(operation)
 
     def create_client(
         self,
@@ -1201,8 +1352,14 @@ class CampaignOpsService:
         primary_owner_user_id: str | None = None,
         workstream_types: list[str] | None = None,
         workstream_lead_user_ids: dict[str, str | None] | None = None,
+        manager_user_id: str | None = None,
     ) -> str:
-        """Create a program, initial workstreams, assignments, and activity."""
+        """Create a program atomically with Lead Owner and workflow Manager assignments.
+
+        The primary program_owner assignment is the Lead Owner. The primary
+        Workstream owner_user_id and matching workstream_lead assignment are
+        the Manager. Legacy multi-workstream arguments remain supported.
+        """
         self._require_admin(actor)
         cleaned_name = require_text(program_name, "Program name")
         if not primary_workstream_type:
@@ -1223,26 +1380,40 @@ class CampaignOpsService:
         if not deduped_workstreams:
             raise CampaignOpsValidationError("At least one workstream is required.")
 
-        lead_map = workstream_lead_user_ids or {}
+        lead_map = dict(workstream_lead_user_ids or {})
+        if manager_user_id:
+            lead_map[primary_workflow] = manager_user_id
 
         def operation(repository: CampaignOpsRepository) -> str:
             self._require_active_user(repository, primary_owner_user_id, "Primary owner")
+            if manager_user_id:
+                lead_roster = repository.list_workflow_role_users(
+                    primary_workflow, WorkflowRole.LEAD_OWNER.value
+                )
+                manager_roster = repository.list_workflow_role_users(
+                    primary_workflow, WorkflowRole.MANAGER.value
+                )
+                if primary_owner_user_id not in {user.id for user in lead_roster}:
+                    raise CampaignOpsValidationError("Lead Owner is not active in this workflow roster.")
+                if manager_user_id not in {user.id for user in manager_roster}:
+                    raise CampaignOpsValidationError("Manager is not active in this workflow roster.")
+                self._require_active_user(repository, manager_user_id, "Manager")
             if new_client_name:
                 cleaned_client_name = require_text(new_client_name, "Client name")
-                if repository.get_client_by_normalized_name(cleaned_client_name) is not None:
-                    raise CampaignOpsValidationError("An active client with this name already exists.")
-                client = repository.create_client(
-                    cleaned_client_name,
-                    actor_user_id=actor.id if actor else None,
-                )
-                repository.append_event(
-                    event_type="client_created",
-                    entity_type="client",
-                    entity_id=client.id,
-                    actor_user_id=actor.id if actor else None,
-                    new_value_json={"name": client.name},
-                    message=f"Client created: {client.name}",
-                )
+                client = repository.get_client_by_normalized_name(cleaned_client_name)
+                if client is None:
+                    client = repository.create_client(
+                        cleaned_client_name,
+                        actor_user_id=actor.id if actor else None,
+                    )
+                    repository.append_event(
+                        event_type="client_created",
+                        entity_type="client",
+                        entity_id=client.id,
+                        actor_user_id=actor.id if actor else None,
+                        new_value_json={"name": client.name},
+                        message=f"Client created: {client.name}",
+                    )
                 resolved_client_id = client.id
             elif client_id:
                 client = self._require_active_client(repository, client_id)

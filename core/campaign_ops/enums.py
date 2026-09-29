@@ -72,6 +72,11 @@ class AssignmentRole(StrEnum):
     ADMIN_OVERSIGHT = "admin_oversight"
 
 
+class WorkflowRole(StrEnum):
+    LEAD_OWNER = "lead_owner"
+    MANAGER = "manager"
+
+
 class WaitingOn(StrEnum):
     NONE = "none"
     CLIENT = "client"

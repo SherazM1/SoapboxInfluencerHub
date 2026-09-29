@@ -27,6 +27,8 @@ from app.campaign_ops.insights.views import render_insights
 from app.campaign_ops.retail_media.views import render_retail_media
 from app.campaign_ops.state import (
     VIEWER_OPTIONS,
+    cancel_new_program,
+    clear_new_program_draft,
     get_default_section,
     get_selected_program_id,
     get_sections_for_user,
@@ -135,7 +137,16 @@ def render_initialization_control(
 
 
 def render_temporary_viewer_selector(user: CampaignOpsUser | None = None) -> str:
-    viewer = st.selectbox("Viewing as", VIEWER_OPTIONS, key="campaign_ops_viewer")
+    try:
+        viewer_options = [item.display_name for item in CampaignOpsRepository().list_active_users()]
+    except CampaignOpsError:
+        viewer_options = VIEWER_OPTIONS
+    if not viewer_options:
+        viewer_options = VIEWER_OPTIONS
+    current = st.session_state.get("campaign_ops_viewer")
+    if current not in viewer_options:
+        st.session_state["campaign_ops_viewer"] = "Bailey" if "Bailey" in viewer_options else viewer_options[0]
+    viewer = st.selectbox("Viewing as", viewer_options, key="campaign_ops_viewer")
     update_viewer_state(st.session_state, viewer, user)
     return viewer
 
@@ -200,7 +211,7 @@ def main() -> None:
         viewer = render_temporary_viewer_selector(None)
         render_setup_state(viewer, setup_status)
 
-    viewer = st.selectbox("Viewing as", VIEWER_OPTIONS, key="campaign_ops_viewer")
+    viewer = render_temporary_viewer_selector()
     user = resolve_initialized_viewer(viewer)
     if user is None:
         st.stop()
@@ -215,6 +226,12 @@ def main() -> None:
     except CampaignOpsError as exc:
         st.error(f"Unable to load Campaign Operations users: {exc}")
         users = [user]
+
+    if st.session_state.get("campaign_ops_new_program_cleanup"):
+        clear_new_program_draft(st.session_state)
+    message = st.session_state.pop("campaign_ops_program_created_message", None)
+    if message:
+        st.success(message)
 
     selected_program_id = get_selected_program_id(st.session_state)
     if selected_program_id:
@@ -238,7 +255,7 @@ def main() -> None:
         current_section = render_section_navigation(user, viewer)
     else:
         if st.button("Back to All Programs", key="campaign_ops_back_from_new_program"):
-            set_section(st.session_state, "All Programs")
+            cancel_new_program(st.session_state)
             st.rerun()
     st.divider()
     render_active_section(current_section, viewer, user, service, users)

@@ -4,7 +4,7 @@ from app.campaign_ops.ui.navigation import clear_all_specialized_state
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.permissions import can_access_admin
 
-VIEWER_OPTIONS = ["Bailey", "T", "L"]
+VIEWER_OPTIONS = ["Bailey"]
 
 PROGRAM_SECTIONS = ["All Programs", "My Programs"]
 WORKFLOW_SECTIONS = ["Influencer", "Retail Media", "eCommerce / Content", "Insights"]
@@ -113,11 +113,12 @@ def update_viewer_state(
     previous_viewer = session_state.get("campaign_ops_previous_viewer")
     sections = get_sections_for_user(user, viewer)
     if previous_viewer != viewer:
+        clear_new_program_draft(session_state)
         clear_selected_program(session_state)
         clear_all_specialized_state(session_state)
         session_state["campaign_ops_previous_viewer"] = viewer
     if session_state.get("campaign_ops_section") not in sections and not (
-        session_state.get("campaign_ops_section") == "New Program" and can_access_admin(user)
+        session_state.get("campaign_ops_section") == "New Program" and (user is None or can_access_admin(user))
     ):
         session_state["campaign_ops_section"] = get_default_section(user, viewer)
     if user is not None:
@@ -137,3 +138,24 @@ def set_selected_program(session_state: dict[str, object], program_id: str) -> N
 def get_selected_program_id(session_state: dict[str, object]) -> str | None:
     value = session_state.get(selected_program_key())
     return str(value) if value else None
+
+
+def clear_new_program_draft(session_state: dict[str, object]) -> None:
+    for key in list(session_state):
+        if key.startswith("campaign_ops_new_program_") or key == "campaign_ops_primary_workflow":
+            session_state.pop(key, None)
+    session_state["campaign_ops_create_program_open"] = False
+
+
+def cancel_new_program(session_state: dict[str, object]) -> None:
+    clear_new_program_draft(session_state)
+    set_section(session_state, "All Programs")
+
+
+def finish_new_program(session_state: dict[str, object], program_id: str) -> None:
+    # Widget keys can only be removed safely on the next render, before instantiation.
+    session_state["campaign_ops_new_program_cleanup"] = True
+    session_state["campaign_ops_create_program_open"] = False
+    session_state["campaign_ops_program_created_message"] = "Program created."
+    set_section(session_state, "All Programs")
+    set_selected_program(session_state, program_id)

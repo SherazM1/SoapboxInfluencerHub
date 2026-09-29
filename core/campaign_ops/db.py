@@ -9,7 +9,11 @@ from urllib.parse import parse_qs, urlparse
 from core.db import dict_row, load_local_env, psycopg
 
 CAMPAIGN_OPS_DATABASE_ENV_VAR = "CAMPAIGN_OPS_DATABASE_URL"
-REQUIRED_SCHEMA_TABLES = ("schema_migrations", "campaign_ops_users")
+REQUIRED_SCHEMA_TABLES = (
+    "schema_migrations",
+    "campaign_ops_users",
+    "campaign_ops_user_workflow_roles",
+)
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5
 LOGGER = logging.getLogger(__name__)
 
