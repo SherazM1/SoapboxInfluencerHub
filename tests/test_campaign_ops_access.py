@@ -139,6 +139,41 @@ class ProgramAccessTests(unittest.TestCase):
         self.assertEqual([self.records['Content'].id], [r.id for r in self.service.list_content_programs(self.users['Kate'])])
         self.assertEqual('Social Media Management', self.router.resolve(self.users['Maren'], self.programs['Social']).section)
 
+    def test_ava_identity_shares_assigned_access_across_influencer_and_smm(self):
+        ava = self.users['Ava']
+        influencer_id = self.service.create_program_with_workstreams_and_assignments(
+            self.admin, 'Ava Influencer', new_client_name='Access fixture',
+            primary_workstream_type='influencer', primary_owner_user_id=ava.id,
+            workstream_lead_user_ids={'influencer': self.users['Allyn'].id},
+        )
+        smm_id = self.service.create_program_with_workstreams_and_assignments(
+            self.admin, 'Ava SMM', new_client_name='Access fixture',
+            primary_workstream_type='smm', primary_owner_user_id=self.users['Taylor'].id,
+            workstream_lead_user_ids={'smm': ava.id},
+        )
+
+        self.assertEqual(1, sum(user.id == ava.id for user in self.repo.users))
+        self.assertEqual({self.programs['Social'], influencer_id, smm_id}, self.visible('Ava'))
+        self.assertEqual('Influencer', self.router.resolve(ava, influencer_id).section)
+        self.assertEqual('Social Media Management', self.router.resolve(ava, smm_id).section)
+        active_smm_ids = {
+            program.id for program in self.repo.programs
+            if program.is_active and program.primary_workstream_type == 'smm'
+        }
+        for administrator in (self.users['Bailey'], self.users['Jordon']):
+            self.assertTrue(active_smm_ids <= self.visible(administrator.display_name))
+        with self.assertRaises(CampaignOpsPermissionError):
+            self.router.resolve(self.users['Maren'], smm_id)
+
+    def test_direct_unauthorized_smm_open_is_denied_without_initializing(self):
+        smm_id = self.programs['Social']
+        state = {'campaign_ops_selected_program_id': smm_id}
+        with self.assertRaises(CampaignOpsPermissionError):
+            from app.campaign_ops.program_router import open_program
+            open_program(state, self.users['Emma'], self.service, smm_id)
+        self.assertNotIn('campaign_ops_selected_smm_program_id', state)
+        self.assertEqual([], self.repo.list_smm_programs_by_program(smm_id))
+
     def test_mutations_and_parent_id_spoofing_for_each_workflow(self):
         cases = [('First', self.service.update_influencer_campaign, 'Allyn'),
                  ('Content', self.service.update_content_program, 'Kate'),

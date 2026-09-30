@@ -27,6 +27,7 @@ from core.campaign_ops.enums import (
     TaskStatus,
     UserRole,
     WaitingOn,
+    WorkflowRole,
     WorkstreamType,
 )
 from core.campaign_ops.exceptions import (
@@ -93,6 +94,9 @@ from core.campaign_ops.models import (
     RetailMediaPortfolioRow,
     Resource,
     ResourceListRow,
+    SMMProgramRecord,
+    SMMTimelineRowRecord,
+    UserWorkflowRole,
     Workstream,
     Task,
     TaskListRow,
@@ -248,6 +252,14 @@ class FakePrompt4ARepository:
             CampaignOpsUser(id="22222222-2222-4222-8222-222222222222", display_name="T", role="team_member"),
             CampaignOpsUser(id="33333333-3333-4333-8333-333333333333", display_name="L", role="team_member"),
             CampaignOpsUser(id="44444444-4444-4444-8444-444444444444", display_name="Inactive", role="team_member", is_active=False),
+            CampaignOpsUser(id="55555555-5555-4555-8555-555555555555", display_name="Ava", role="team_member"),
+            CampaignOpsUser(id="66666666-6666-4666-8666-666666666666", display_name="Maren", role="team_member"),
+        ]
+        self.workflow_roles = [
+            UserWorkflowRole(id="role-smm-lead-taylor", user_id=self.users[1].id, workflow_key=WorkstreamType.SMM.value, workflow_role=WorkflowRole.LEAD_OWNER.value),
+            UserWorkflowRole(id="role-smm-lead-ava", user_id=self.users[4].id, workflow_key=WorkstreamType.SMM.value, workflow_role=WorkflowRole.LEAD_OWNER.value),
+            UserWorkflowRole(id="role-smm-manager-ava", user_id=self.users[4].id, workflow_key=WorkstreamType.SMM.value, workflow_role=WorkflowRole.MANAGER.value),
+            UserWorkflowRole(id="role-smm-manager-maren", user_id=self.users[5].id, workflow_key=WorkstreamType.SMM.value, workflow_role=WorkflowRole.MANAGER.value),
         ]
         self.clients: list[Client] = []
         self.programs: list[Program] = []
@@ -285,6 +297,8 @@ class FakePrompt4ARepository:
         self.influencer_recap_checkpoints: list[InfluencerRecapCheckpointRecord] = []
         self.influencer_recap_requirements: list[InfluencerRecapRequirementRecord] = []
         self.influencer_recap_launch_items: list[InfluencerRecapLaunchItemRecord] = []
+        self.smm_programs: list[SMMProgramRecord] = []
+        self.smm_timeline_rows: list[SMMTimelineRowRecord] = []
         self.events: list[dict[str, str | None]] = []
         self.last_portfolio_filters: dict[str, object] = {}
 
@@ -292,10 +306,105 @@ class FakePrompt4ARepository:
         return [user for user in self.users if user.is_active]
 
     def list_workflow_role_users(self, workflow_key: str, workflow_role: str) -> list[CampaignOpsUser]:
+        if workflow_key == WorkstreamType.SMM.value:
+            user_ids = {
+                role.user_id
+                for role in self.workflow_roles
+                if role.workflow_key == workflow_key
+                and role.workflow_role == workflow_role
+                and role.is_active
+            }
+            return [user for user in self.list_active_users() if user.id in user_ids]
         if workflow_key == WorkstreamType.INFLUENCER.value and workflow_role == "lead_owner":
             eligible_ids = {"22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"}
             return [user for user in self.list_active_users() if user.id in eligible_ids]
         return []
+
+    def get_smm_program_by_program(self, program_id: str) -> SMMProgramRecord | None:
+        return next((item for item in self.smm_programs if item.program_id == program_id and item.is_active), None)
+
+    def list_smm_programs_by_program(self, program_id: str) -> list[SMMProgramRecord]:
+        return [item for item in self.smm_programs if item.program_id == program_id and item.is_active]
+
+    def get_smm_program(self, smm_program_id: str) -> SMMProgramRecord | None:
+        return next((item for item in self.smm_programs if item.id == smm_program_id), None)
+
+    def create_smm_program(self, program_id: str, workstream_id: str, actor_user_id: str | None = None) -> SMMProgramRecord:
+        record = SMMProgramRecord(
+            id=f"smm-{len(self.smm_programs) + 1}",
+            program_id=program_id,
+            workstream_id=workstream_id,
+            created_by=actor_user_id,
+            updated_by=actor_user_id,
+        )
+        self.smm_programs.append(record)
+        return record
+
+    def list_smm_timeline_rows(self, smm_program_id: str, include_inactive: bool = False) -> list[SMMTimelineRowRecord]:
+        return [
+            row
+            for row in self.smm_timeline_rows
+            if row.smm_program_id == smm_program_id and (include_inactive or row.is_active)
+        ]
+
+    def get_smm_timeline_row(self, row_id: str) -> SMMTimelineRowRecord | None:
+        return next((row for row in self.smm_timeline_rows if row.id == row_id), None)
+
+    def create_smm_timeline_row(
+        self,
+        smm_program_id: str,
+        action: str,
+        due_date: date | None = None,
+        program_notes: str | None = None,
+        done: bool = False,
+        sequence_order: int = 0,
+        actor_user_id: str | None = None,
+    ) -> SMMTimelineRowRecord:
+        record = SMMTimelineRowRecord(
+            id=f"smm-row-{len(self.smm_timeline_rows) + 1}",
+            smm_program_id=smm_program_id,
+            due_date=due_date,
+            action=action,
+            done=done,
+            program_notes=program_notes,
+            sequence_order=sequence_order,
+            created_by=actor_user_id,
+            updated_by=actor_user_id,
+        )
+        self.smm_timeline_rows.append(record)
+        return record
+
+    def update_smm_timeline_row(
+        self,
+        row_id: str,
+        actor_user_id: str | None = None,
+        due_date: date | None = None,
+        action: str | None = None,
+        program_notes: str | None = None,
+        done: bool | None = None,
+        sequence_order: int | None = None,
+    ) -> SMMTimelineRowRecord:
+        row = self.get_smm_timeline_row(row_id)
+        if row is None or not row.is_active:
+            raise CampaignOpsNotFoundError("SMM timeline row was not found.")
+        for name, value in (
+            ("due_date", due_date),
+            ("action", action),
+            ("program_notes", program_notes),
+            ("done", done),
+            ("sequence_order", sequence_order),
+        ):
+            if value is not None:
+                setattr(row, name, value)
+        row.updated_by = actor_user_id
+        return row
+
+    def deactivate_smm_timeline_row(self, row_id: str, actor_user_id: str | None = None) -> None:
+        row = self.get_smm_timeline_row(row_id)
+        if row is None or not row.is_active:
+            raise CampaignOpsNotFoundError("SMM timeline row was not found.")
+        row.is_active = False
+        row.updated_by = actor_user_id
 
     def list_active_clients(self) -> list[Client]:
         return [client for client in self.clients if client.is_active]
@@ -2008,6 +2117,9 @@ class FakePrompt4ARepository:
 
     def get_program(self, program_id: str) -> Program | None:
         return next((program for program in self.programs if program.id == program_id), None)
+
+    def lock_program(self, program_id: str) -> Program | None:
+        return self.get_program(program_id)
 
     def get_program_client(self, program_id: str) -> Client | None:
         program = self.get_program(program_id)

@@ -14,7 +14,7 @@ def open_program(session_state, actor, service, program_id):
         if key.startswith("campaign_ops_influencer_draft_"):
             session_state.pop(key, None)
     session_state.pop("campaign_ops_influencer_timeline_navigation", None)
-    if destination.section in ("All Programs", "Social Media Management"):
+    if destination.section == "All Programs":
         set_section(session_state, destination.section)
     else:
         route_to_specialized_workspace(session_state, destination.section, program_id, destination.record_id)

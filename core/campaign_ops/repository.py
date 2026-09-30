@@ -68,6 +68,8 @@ from core.campaign_ops.models import (
     ReportingRequestListRow,
     ReportingRequestRecord,
     RetailMediaActivationRecord,
+    SMMProgramRecord,
+    SMMTimelineRowRecord,
     RetailMediaCampaignRecord,
     RetailMediaChannelRecord,
     RetailMediaCreativeRecord,
@@ -539,6 +541,13 @@ class CampaignOpsRepository:
     def get_program(self, program_id: str) -> Program | None:
         return self._fetch_one(
             "select * from campaign_ops_programs where id = %s",
+            (program_id,),
+            Program,
+        )
+
+    def lock_program(self, program_id: str) -> Program | None:
+        return self._fetch_one(
+            "select * from campaign_ops_programs where id = %s for update",
             (program_id,),
             Program,
         )
@@ -1031,6 +1040,147 @@ class CampaignOpsRepository:
             """,
             (program_id,),
             Workstream,
+        )
+
+    def list_smm_programs_by_program(self, program_id: str) -> list[SMMProgramRecord]:
+        return self._fetch_all(
+            """
+            select * from campaign_ops_smm_programs
+            where program_id = %s and is_active = true
+            order by created_at asc, id asc
+            """,
+            (program_id,),
+            SMMProgramRecord,
+        )
+
+    def get_smm_program_by_program(self, program_id: str) -> SMMProgramRecord | None:
+        return self._fetch_one(
+            """
+            select * from campaign_ops_smm_programs
+            where program_id = %s and is_active = true
+            order by created_at asc, id asc
+            limit 1
+            """,
+            (program_id,),
+            SMMProgramRecord,
+        )
+
+    def get_smm_program(self, smm_program_id: str) -> SMMProgramRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_smm_programs where id = %s",
+            (smm_program_id,),
+            SMMProgramRecord,
+        )
+
+    def create_smm_program(
+        self,
+        program_id: str,
+        workstream_id: str,
+        actor_user_id: str | None = None,
+    ) -> SMMProgramRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_smm_programs (program_id, workstream_id, created_by, updated_by)
+            values (%s, %s, %s, %s)
+            returning *
+            """,
+            (program_id, workstream_id, actor_user_id, actor_user_id),
+            SMMProgramRecord,
+        )
+
+    def list_smm_timeline_rows(self, smm_program_id: str, include_inactive: bool = False) -> list[SMMTimelineRowRecord]:
+        clause = "" if include_inactive else " and is_active = true "
+        return self._fetch_all(
+            f"""
+            select * from campaign_ops_smm_timeline_rows
+            where smm_program_id = %s{clause}
+            order by due_date nulls last, sequence_order asc, id asc
+            """,
+            (smm_program_id,),
+            SMMTimelineRowRecord,
+        )
+
+    def get_smm_timeline_row(self, row_id: str) -> SMMTimelineRowRecord | None:
+        return self._fetch_one(
+            "select * from campaign_ops_smm_timeline_rows where id = %s",
+            (row_id,),
+            SMMTimelineRowRecord,
+        )
+
+    def create_smm_timeline_row(
+        self,
+        smm_program_id: str,
+        action: str,
+        due_date: Any | None = None,
+        program_notes: str | None = None,
+        done: bool = False,
+        sequence_order: int = 0,
+        actor_user_id: str | None = None,
+    ) -> SMMTimelineRowRecord:
+        return self._write_returning(
+            """
+            insert into campaign_ops_smm_timeline_rows (
+                smm_program_id, due_date, action, done, program_notes, sequence_order,
+                created_by, updated_by
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s)
+            returning *
+            """,
+            (
+                smm_program_id,
+                due_date,
+                require_text(action, "action"),
+                bool(done),
+                program_notes,
+                int(sequence_order),
+                actor_user_id,
+                actor_user_id,
+            ),
+            SMMTimelineRowRecord,
+        )
+
+    def update_smm_timeline_row(
+        self,
+        row_id: str,
+        actor_user_id: str | None = None,
+        due_date: Any | None = None,
+        action: str | None = None,
+        program_notes: str | None = None,
+        done: bool | None = None,
+        sequence_order: int | None = None,
+    ) -> SMMTimelineRowRecord:
+        return self._write_returning(
+            """
+            update campaign_ops_smm_timeline_rows
+            set
+                due_date = coalesce(%s, due_date),
+                action = coalesce(%s, action),
+                program_notes = coalesce(%s, program_notes),
+                done = coalesce(%s, done),
+                sequence_order = coalesce(%s, sequence_order),
+                updated_by = %s
+            where id = %s and is_active = true
+            returning *
+            """,
+            (
+                due_date,
+                require_text(action, "action") if action is not None else None,
+                program_notes,
+                bool(done) if done is not None else None,
+                int(sequence_order) if sequence_order is not None else None,
+                actor_user_id,
+                row_id,
+            ),
+            SMMTimelineRowRecord,
+        )
+
+    def deactivate_smm_timeline_row(self, row_id: str, actor_user_id: str | None = None) -> None:
+        self._execute(
+            """
+            update campaign_ops_smm_timeline_rows
+            set is_active = false, updated_by = %s
+            where id = %s and is_active = true
+            """,
+            (actor_user_id, row_id),
         )
 
     def list_all_workstreams_by_program(self, program_id: str) -> list[Workstream]:

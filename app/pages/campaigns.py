@@ -25,6 +25,7 @@ from app.campaign_ops.content_management.views import render_content_management
 from app.campaign_ops.influencer.views import render_influencer
 from app.campaign_ops.insights.views import render_insights
 from app.campaign_ops.retail_media.views import render_retail_media
+from app.campaign_ops.smm.views import render_smm
 from app.campaign_ops.state import (
     VIEWER_OPTIONS,
     cancel_new_program,
@@ -192,8 +193,7 @@ def render_active_section(
     elif section == "Insights":
         render_insights(user, service, users)
     elif section == "Social Media Management":
-        st.subheader("Social Media Management")
-        st.info("The Social Media Management operational workspace is not available yet.")
+        render_smm(user, service)
     else:
         set_section(st.session_state, get_default_section(user, viewer))
         st.rerun()

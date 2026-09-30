@@ -33,6 +33,8 @@ class RosterRepository(FakePrompt4ARepository):
         self.users[1].display_name = "Taylor"
         self.users[2].display_name = "Lauren"
         for name in ("Jordon", "Ava", "Allyn", "Maren", "Carly", "Emma", "Kate", "Chloe"):
+            if self.get_user_by_display_name(name):
+                continue
             role = UserRole.ADMINISTRATOR.value if name == "Jordon" else UserRole.TEAM_MEMBER.value
             self.users.append(CampaignOpsUser(id=f"user-{name.lower()}", display_name=name, role=role))
         self.workflow_roles: list[UserWorkflowRole] = []
@@ -51,12 +53,13 @@ class RosterRepository(FakePrompt4ARepository):
                 )
 
     def list_workflow_role_users(self, workflow_key: str, workflow_role: str) -> list[CampaignOpsUser]:
-        user_ids = {
+        user_ids = [
             item.user_id
             for item in self.workflow_roles
             if item.is_active and item.workflow_key == workflow_key and item.workflow_role == workflow_role
-        }
-        return [user for user in self.users if user.is_active and user.id in user_ids]
+        ]
+        users_by_id = {user.id: user for user in self.users if user.is_active}
+        return [users_by_id[user_id] for user_id in user_ids if user_id in users_by_id]
 
     def list_workflow_roles(self, workflow_key=None, workflow_role=None, include_inactive=False):
         return [

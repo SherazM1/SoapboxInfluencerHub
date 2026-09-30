@@ -156,7 +156,93 @@ class RegistryRouterTests(unittest.TestCase):
         state = {}
         destination = open_program(state, self.admin, self.service, pid)
         self.assertEqual("Social Media Management", destination.section)
+        self.assertEqual(pid, destination.record_id)
+        self.assertEqual(pid, state["campaign_ops_selected_smm_program_id"])
         self.assertNotIn("campaign_ops_selected_program_id", state)
+
+    def test_smm_workspace_is_initialized_once_and_reused_by_all_registry_routes(self):
+        pid = self.create("smm", bridge=True)
+        workspace = self.repo.get_smm_program_by_program(pid)
+        rows = self.repo.list_smm_timeline_rows(workspace.id)
+        row_ids = [row.id for row in rows]
+        state = {}
+
+        for _ in range(3):
+            destination = open_program(state, self.admin, self.service, pid)
+            self.assertEqual("Social Media Management", destination.section)
+            self.assertEqual(pid, state["campaign_ops_selected_smm_program_id"])
+
+        self.assertEqual(1, len(self.repo.list_smm_programs_by_program(pid)))
+        self.assertEqual(8, len(self.repo.list_smm_timeline_rows(workspace.id)))
+        self.assertEqual(row_ids, [row.id for row in self.repo.list_smm_timeline_rows(workspace.id)])
+
+    def test_open_initializes_missing_smm_workspace_once(self):
+        pid = self.create("smm")
+        self.assertEqual([], self.repo.list_smm_programs_by_program(pid))
+        for _ in range(2):
+            open_program({}, self.admin, self.service, pid)
+        workspace = self.repo.get_smm_program_by_program(pid)
+        self.assertIsNotNone(workspace)
+        self.assertEqual(1, len(self.repo.list_smm_programs_by_program(pid)))
+        self.assertEqual(8, len(self.repo.list_smm_timeline_rows(workspace.id)))
+
+    def test_duplicate_active_smm_workspaces_fail_without_guessing(self):
+        pid = self.create("smm")
+        workstream = self.repo.list_workstreams_by_program(pid)[0]
+        self.repo.create_smm_program(pid, workstream.id)
+        self.repo.create_smm_program(pid, workstream.id)
+        with self.assertRaisesRegex(CampaignOpsValidationError, "Multiple active SMM workspaces"):
+            open_program({}, self.admin, self.service, pid)
+
+    def test_smm_section_open_uses_same_editor_and_back_returns_to_list(self):
+        app = AppTest.from_function(page_app, default_timeout=20).run()
+        repo = app.session_state.roster_repo
+        pid = ProgramRoutingService(repo).create_registry_program(
+            actor=repo.users[0], program_name="SMM section route", new_client_name="Client",
+            primary_workstream_type="smm",
+            primary_owner_user_id=repo.get_user_by_display_name("Taylor").id,
+            manager_user_id=repo.get_user_by_display_name("Ava").id,
+        )
+        app.run()
+        button(app, "Social Media Management").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            ["**Program**", "**Lead Owner**", "**Manager**", "**Open**"],
+            [widget.value for widget in app.markdown if widget.value.startswith("**")],
+        )
+        self.assertFalse(any(widget.label in ("Risk", "Cross stage", "Program status") for widget in app.selectbox))
+        button(app, "Open").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(pid, app.session_state["campaign_ops_selected_smm_program_id"])
+        self.assertEqual("Social Media Management", app.session_state["campaign_ops_section"])
+        self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
+        self.assertFalse(any(widget.label == "Open Program Workspace" for widget in app.button))
+        self.assertEqual([], list(app.tabs))
+        button(app, "Back to programs").click().run()
+        self.assertNotIn("campaign_ops_selected_smm_program_id", app.session_state)
+        self.assertTrue(any(widget.label == "Open" for widget in app.button))
+
+    def test_all_programs_and_my_programs_smm_opens_use_shared_router(self):
+        app = AppTest.from_function(page_app, default_timeout=20).run()
+        repo = app.session_state.roster_repo
+        pid = ProgramRoutingService(repo).create_registry_program(
+            actor=repo.users[0], program_name="SMM registry route", new_client_name="Client",
+            primary_workstream_type="smm",
+            primary_owner_user_id=repo.get_user_by_display_name("Taylor").id,
+            manager_user_id=repo.get_user_by_display_name("Ava").id,
+        )
+        app.run()
+        button(app, "Open").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(pid, app.session_state["campaign_ops_selected_smm_program_id"])
+        self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
+        button(app, "Back to programs").click().run()
+        button(app, "My Programs").click().run()
+        button(app, "Open").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(pid, app.session_state["campaign_ops_selected_smm_program_id"])
+        self.assertEqual("Social Media Management", app.session_state["campaign_ops_section"])
+        self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
 
     def test_unknown_workflow_never_falls_back_to_generic_workspace(self):
         pid = self.create()

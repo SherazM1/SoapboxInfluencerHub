@@ -1,12 +1,14 @@
 """Lightweight registry reads and workflow destinations; no generic workspace bundles."""
 from dataclasses import dataclass, field
-from core.campaign_ops.models import InfluencerCampaignRecord
 
+from core.campaign_ops.enums import WorkstreamType
+from core.campaign_ops.models import InfluencerCampaignRecord
 from core.campaign_ops.exceptions import CampaignOpsPermissionError, CampaignOpsValidationError
 from core.campaign_ops.influencer_timeline import InfluencerTimelineService, STAGE_LABELS
 from core.campaign_ops.permissions import program_scope_user_id, require_program_access
 from core.campaign_ops.repository import CampaignOpsRepository
 from core.campaign_ops.service import CampaignOpsService
+from core.campaign_ops.smm import SMMTimelineService
 
 WORKFLOW_SECTIONS = {
     "influencer": "Influencer",
@@ -34,13 +36,39 @@ class ProgramRoutingService(CampaignOpsService):
         return repository.list_program_registry(program_scope_user_id(actor))
 
     def create_registry_program(self, actor, **kwargs):
-        # The program, roster assignments, campaign and nine initial rows share ONE transaction.
+        # The program, assignments and workflow workspace share ONE transaction.
         def operation(repository):
             program_id = CampaignOpsService(repository).create_program_with_workstreams_and_assignments(actor, **kwargs)
             if kwargs.get("primary_workstream_type") == "influencer":
                 self._ensure_influencer(repository, actor, program_id)
+            elif kwargs.get("primary_workstream_type") == WorkstreamType.SMM.value:
+                self._ensure_smm(repository, actor, program_id)
             return program_id
         return self._transaction(operation)
+
+    def _ensure_smm(self, repository, actor, program_id):
+        program = repository.lock_program(program_id)
+        if program is None or not program.is_active or program.primary_workstream_type != WorkstreamType.SMM.value:
+            raise CampaignOpsValidationError("An active SMM Program is required.")
+        require_program_access(repository, actor, program.id, active_only=True)
+
+        workstreams = [
+            workstream for workstream in repository.list_workstreams_by_program(program.id)
+            if workstream.workstream_type == WorkstreamType.SMM.value and workstream.is_active
+        ]
+        if len(workstreams) != 1:
+            raise CampaignOpsValidationError("The SMM Program must have exactly one active SMM Workstream.")
+
+        workspaces = repository.list_smm_programs_by_program(program.id)
+        if len(workspaces) > 1:
+            raise CampaignOpsValidationError(
+                "Multiple active SMM workspaces are linked to this Program. Resolve the duplicates before opening it."
+            )
+        if workspaces and workspaces[0].workstream_id != workstreams[0].id:
+            raise CampaignOpsValidationError("The active SMM workspace is linked to a different Workstream.")
+
+        workspace, _ = SMMTimelineService(repository).initialize_program(actor, program.id)
+        return workspace
 
     def _ensure_influencer(self, repository, actor, program_id):
         # Same program row lock used by the existing timeline campaign create path.
@@ -70,7 +98,8 @@ class ProgramRoutingService(CampaignOpsService):
         if section is None:
             return ProgramDestination("All Programs", message="No workflow is configured for this Program.")
         if section == "Social Media Management":
-            return ProgramDestination(section)
+            self._transaction(lambda repo: self._ensure_smm(repo, actor, program.id))
+            return ProgramDestination(section, program.id)
         records = (repository.list_influencer_campaigns_by_program(program.id)
                    if section == "Influencer" else
                    repository.list_program_workflow_records(program.id, program.primary_workstream_type))

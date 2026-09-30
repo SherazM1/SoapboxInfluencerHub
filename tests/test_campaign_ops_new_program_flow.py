@@ -68,6 +68,27 @@ class NewProgramFlowTests(unittest.TestCase):
         self.assertEqual([], list(app.exception))
         self.assertTrue(any(w.value == "Test Influencer Program" for w in app.markdown))
 
+    def test_create_smm_program_initializes_and_opens_smm_editor(self):
+        from app.campaign_ops.formatting import WORKFLOW_LABELS
+
+        app = self.open_form()
+        repo = app.session_state.roster_repo
+        text_input(app, "Client").set_value("SMM Client")
+        text_input(app, "Program Name").set_value("New SMM Program")
+        selectbox(app, "Workflow").select(WORKFLOW_LABELS["smm"]).run()
+        selectbox(app, "Lead Owner").select(repo.get_user_by_display_name("Taylor").id)
+        selectbox(app, "Manager").select(repo.get_user_by_display_name("Ava").id)
+        button(app, "Create Program").click().run()
+
+        self.assertFalse(app.exception)
+        program_id = app.session_state["campaign_ops_selected_smm_program_id"]
+        workspace = repo.get_smm_program_by_program(program_id)
+        self.assertIsNotNone(workspace)
+        self.assertEqual(1, len(repo.list_smm_programs_by_program(program_id)))
+        self.assertEqual(8, len(repo.list_smm_timeline_rows(workspace.id)))
+        self.assertEqual("Social Media Management", app.session_state["campaign_ops_section"])
+        self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
+
     def test_rosters_change_and_insights_can_be_canceled(self):
         from app.campaign_ops.formatting import WORKFLOW_LABELS
         from tests.test_campaign_ops_roster_new_program import ROSTER

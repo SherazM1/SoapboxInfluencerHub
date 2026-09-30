@@ -13,6 +13,7 @@ SPECIALIZED_SELECTION_KEYS = {
     "Retail Media": {"campaign_ops_selected_retail_media_campaign_id"},
     "eCommerce / Content": {"campaign_ops_selected_content_program_id"},
     "Insights": {"campaign_ops_selected_insights_project_id"},
+    "Social Media Management": {"campaign_ops_selected_smm_program_id"},
 }
 
 # Include legacy editor keys so switching workflows clears older browser sessions.
@@ -92,6 +93,8 @@ def route_to_specialized_workspace(
         session_state["campaign_ops_selected_content_program_id"] = record_id
     elif section == "Insights":
         session_state["campaign_ops_selected_insights_project_id"] = record_id
+    elif section == "Social Media Management":
+        session_state["campaign_ops_selected_smm_program_id"] = program_id
 
 
 def return_to_portfolio(session_state: MutableMapping[str, Any], section: str) -> None:
