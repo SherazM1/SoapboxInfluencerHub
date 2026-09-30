@@ -9,7 +9,7 @@ from core.campaign_ops.models import CampaignOpsUser, InfluencerCampaignRecord, 
 
 from core.campaign_ops.exceptions import CampaignOpsPermissionError, CampaignOpsValidationError
 from core.campaign_ops.enums import WorkflowRole, WorkstreamType
-from core.campaign_ops.permissions import can_access_admin, can_view_program
+from core.campaign_ops.permissions import can_access_admin, program_access_allowed, require_program_access
 from core.campaign_ops.repository import CampaignOpsRepository
 from core.campaign_ops.service import CampaignOpsService
 
@@ -145,35 +145,29 @@ class InfluencerTimelineService(CampaignOpsService):
             raise CampaignOpsValidationError("Choose Planning, Live or Recapping.")
         repository = self.repository or CampaignOpsRepository()
         campaigns = repository.list_influencer_timeline_campaigns(stage)
-        access = {}
-        visible = []
-        for campaign in campaigns:
-            if can_access_admin(actor):
-                visible.append(campaign)
-                continue
-            if campaign.program_id not in access:
-                access[campaign.program_id] = can_view_program(actor,
-                    self._require_program(repository, campaign.program_id),
-                    repository.list_assignments_by_program(campaign.program_id))
-            if access[campaign.program_id]:
-                visible.append(campaign)
+        visible = self._visible_workflow_rows(repository, actor, campaigns)
         rows = repository.list_influencer_planning_steps_for_campaigns([c.id for c in visible])
         return visible, rows
 
     def workspace(self, actor: CampaignOpsUser | None, campaign_id: str, *,
                   routed_campaign: InfluencerCampaignRecord | None = None) -> tuple[InfluencerCampaignRecord, list[InfluencerPlanningStepRecord]]:
         repository = self.repository or CampaignOpsRepository()
-        campaign = routed_campaign or self._require_influencer_campaign(repository, campaign_id)
-        if campaign.id != campaign_id or not campaign.is_active:
+        # Session/prefetched objects cannot prove a child-to-Program relationship.
+        campaign = self._require_influencer_campaign(repository, campaign_id)
+        require_program_access(repository, actor, campaign.program_id, active_only=True)
+        if not campaign.is_active:
             raise CampaignOpsValidationError("Campaign is unavailable.")
-        if actor is None or not (can_access_admin(actor) or
-                can_view_program(actor, self._require_program(repository, campaign.program_id),
-                                 repository.list_assignments_by_program(campaign.program_id))):
-            raise CampaignOpsPermissionError("You do not have access to this Influencer campaign.")
         return campaign, sort_timeline(repository.list_influencer_planning_steps(campaign_id))
+
+    def authorize_campaign(self, actor, campaign_id):
+        repository = self.repository or CampaignOpsRepository()
+        campaign = self._require_influencer_campaign(repository, campaign_id)
+        require_program_access(repository, actor, campaign.program_id, active_only=True)
+        return campaign
 
     def change_owner(self, actor: CampaignOpsUser | None, campaign_id: str, owner_id: str) -> InfluencerCampaignRecord:
         def operation(repository):
+            self._require_admin(actor)
             repository.get_influencer_campaign_for_update(campaign_id)
             self._owner(repository, owner_id)
             return CampaignOpsService(repository).update_influencer_campaign(actor, campaign_id, manager_user_id=owner_id)
@@ -225,8 +219,7 @@ class InfluencerTimelineService(CampaignOpsService):
 
     def workspace_assignments(self, actor, campaign):
         repository = self.repository or CampaignOpsRepository()
-        if not can_access_admin(actor):
-            self._validate_influencer_access(repository, actor, campaign.program_id)
+        self.authorize_campaign(actor, campaign.id)
         return self._assignment_state(repository, campaign)
 
     def _save_lead_assignment(self, repository, actor, program_id, owner_id):

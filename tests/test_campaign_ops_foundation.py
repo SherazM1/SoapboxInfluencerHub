@@ -1909,8 +1909,9 @@ class FakePrompt4ARepository:
         rows = []
         for program in self.programs:
             assignments = self.list_assignments_by_program(program.id)
-            if not program.is_active or (permitted_user_id and not any(
-                a.user_id == permitted_user_id and a.is_active for a in assignments
+            from core.campaign_ops.permissions import program_access_allowed
+            if not program.is_active or (permitted_user_id and not program_access_allowed(
+                self, self.get_user_by_id(permitted_user_id), program
             )):
                 continue
             lead = next((a for a in assignments if a.is_active and a.is_primary
@@ -1964,7 +1965,8 @@ class FakePrompt4ARepository:
             assignments = [assignment for assignment in self.assignments if assignment.program_id == program.id and assignment.is_active]
             if kwargs.get("assigned_user_id") and kwargs["assigned_user_id"] not in {assignment.user_id for assignment in assignments}:
                 continue
-            if kwargs.get("permitted_user_id") and kwargs["permitted_user_id"] not in {assignment.user_id for assignment in assignments}:
+            from core.campaign_ops.permissions import program_access_allowed
+            if kwargs.get("permitted_user_id") and not program_access_allowed(self, self.get_user_by_id(kwargs["permitted_user_id"]), program):
                 continue
             if kwargs.get("primary_owner_user_id") and not any(assignment.user_id == kwargs["primary_owner_user_id"] and assignment.is_primary for assignment in assignments):
                 continue
@@ -2212,7 +2214,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertFalse(can_access_admin(member))
         self.assertFalse(can_archive_program(member))
         self.assertFalse(can_view_program(member, program, []))
-        self.assertTrue(can_view_program(viewer, program, [], explicit_program_ids={"p1"}))
+        self.assertFalse(can_view_program(viewer, program, [], explicit_program_ids={"p1"}))
 
     def test_program_owner_can_edit_program(self) -> None:
         member = CampaignOpsUser(id="u2", display_name="T", role=UserRole.TEAM_MEMBER.value)
@@ -2668,7 +2670,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertEqual(repository.last_portfolio_filters["permitted_user_id"], t_user.id)
 
         service.list_user_programs(t_user, t_user.id, {"risk_level": RiskLevel.AT_RISK.value})
-        self.assertEqual(repository.last_portfolio_filters["user_id"], t_user.id)
+        self.assertEqual(repository.last_portfolio_filters["permitted_user_id"], t_user.id)
         self.assertEqual(repository.last_portfolio_filters["risk_level"], RiskLevel.AT_RISK.value)
 
     def test_prompt4a_workspace_summary_enforces_assignment_permissions(self) -> None:
@@ -3263,7 +3265,10 @@ class CampaignOpsFoundationTests(unittest.TestCase):
 
         program_note = service.append_program_note(bailey, program_id, "TEST - Prompt 4D Program note")
         workstream_note = service.append_program_note(t_user, program_id, "TEST - Prompt 4D Workstream note", workstream_id=influencer.id)
-        task_note = service.append_program_note(l_user, program_id, "TEST - Prompt 4D Task note", workstream_id=retail.id, task_id=task.id)
+        # A secondary workflow assignment alone no longer grants Program access.
+        with self.assertRaises(CampaignOpsPermissionError):
+            service.append_program_note(l_user, program_id, "No secondary-scope access", workstream_id=retail.id, task_id=task.id)
+        task_note = service.append_program_note(bailey, program_id, "TEST - Prompt 4D Task note", workstream_id=retail.id, task_id=task.id)
         internal = service.append_program_note(bailey, program_id, "TEST - Prompt 4D Internal note", is_internal=True)
         self.assertEqual(program_note.author_user_id, bailey.id)
         self.assertEqual(workstream_note.workstream_id, influencer.id)

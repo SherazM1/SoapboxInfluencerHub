@@ -13,7 +13,7 @@ from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.content_management import CONTENT_STATUSES, CONTENT_STATUS_NOT_STARTED
 from core.campaign_ops.enums import TaskStatus
-from core.campaign_ops.exceptions import CampaignOpsError
+from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.service import CampaignOpsService
 
@@ -224,6 +224,11 @@ def render_new_program(actor: CampaignOpsUser, service: CampaignOpsService, user
 def render_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], content_program_id: str) -> None:
     try:
         content = service.get_content_program_detail(actor, content_program_id)
+    except CampaignOpsPermissionError:
+        st.session_state.pop("campaign_ops_selected_content_program_id", None)
+        st.warning("You do not have access to this program.")
+        render_portfolio(actor, service)
+        return
     except CampaignOpsError as exc:
         st.session_state.pop("campaign_ops_selected_content_program_id", None)
         st.error(f"Content Program unavailable: {exc}")

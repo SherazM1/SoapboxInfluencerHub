@@ -109,6 +109,10 @@ from core.campaign_ops.permissions import (
     can_manage_task_state,
     can_view_internal_notes,
     can_view_program,
+    program_access_allowed,
+    program_scope_user_id,
+    require_program_access,
+    ACCESS_DENIED,
 )
 from core.campaign_ops.reporting_requests import (
     REQUEST_CATEGORY_REPORT,
@@ -567,8 +571,8 @@ class CampaignOpsService:
         program = self._require_program(repository, program_id)
         assignments = repository.list_all_assignments_by_program(program_id)
         active_assignments = [assignment for assignment in assignments if assignment.is_active]
-        if not can_view_program(actor, program, active_assignments):
-            raise CampaignOpsPermissionError("You do not have permission to view this program.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return ProgramWorkspaceSummary(
             program=program,
             client=repository.get_program_client(program_id),
@@ -761,6 +765,30 @@ class CampaignOpsService:
 
         return self._transaction(operation)
 
+    def require_program_access(self, actor, program_id, *, active_only=False):
+        return require_program_access(self.repository or CampaignOpsRepository(), actor, program_id,
+                                      active_only=active_only)
+
+    def _visible_workflow_rows(self, repository, actor, rows, include_inactive=False):
+        visible = []
+        for row in rows:
+            program = repository.get_program(row.program_id)
+            if program_access_allowed(repository, actor, program) and (
+                    program.is_active or (include_inactive and can_access_admin(actor))):
+                visible.append(row)
+        return visible
+
+    def _authorized_workflow_records(self, repository, actor, records, getter):
+        # Supplied row objects are not authorization evidence: resolve the child ID afresh.
+        authorized = []
+        for row in records:
+            record = getattr(repository, getter)(row.id)
+            if record is None:
+                raise CampaignOpsPermissionError(ACCESS_DENIED)
+            require_program_access(repository, actor, record.program_id)
+            authorized.append(record)
+        return authorized
+
     def list_program_portfolio(
         self,
         actor: CampaignOpsUser | None,
@@ -769,7 +797,7 @@ class CampaignOpsService:
         """List program portfolio rows visible to the actor."""
         filters = filters or {}
         repository = self.repository or CampaignOpsRepository()
-        permitted_user_id = None if can_access_admin(actor) else actor.id if actor else ""
+        permitted_user_id = program_scope_user_id(actor)
         return repository.list_program_portfolio(
             search=filters.get("search"),
             program_name=filters.get("program_name"),
@@ -799,17 +827,10 @@ class CampaignOpsService:
         target_user_id = user_id or actor.id
         if target_user_id != actor.id and not can_access_admin(actor):
             raise CampaignOpsPermissionError("You cannot view another user's assigned programs.")
-        filters = filters or {}
-        repository = self.repository or CampaignOpsRepository()
-        return repository.list_programs_assigned_to_user(
-            user_id=target_user_id,
-            primary_workstream_type=filters.get("primary_workstream_type"),
-            connected_workstream_type=filters.get("connected_workstream_type"),
-            cross_stage=filters.get("cross_stage"),
-            status=filters.get("status"),
-            risk_level=filters.get("risk_level"),
-            active_state=filters.get("active_state", "active"),
-        )
+        target = actor if target_user_id == actor.id else self._require_active_user(
+            self.repository or CampaignOpsRepository(), target_user_id, "User")
+        return self.list_program_portfolio(target, filters)
+
 
     def normalize_waiting_on_category(self, value: str | None) -> str:
         text = (value or "").strip().lower().replace("_", " ")
@@ -1114,7 +1135,7 @@ class CampaignOpsService:
         week_end = today + timedelta(days=6 - today.weekday())
         upcoming_end = today + timedelta(days=int(filters.get("upcoming_days", 14)))
         repository = self.repository or CampaignOpsRepository()
-        permitted_user_id = None if can_access_admin(actor) else actor.id if actor else ""
+        permitted_user_id = program_scope_user_id(actor)
         programs = [row for row in self._dashboard_visible_programs(actor, filters) if self._matches_dashboard_filters(row, filters)]
         program_ids = {row.id for row in programs}
         program_map = {row.id: row for row in programs}
@@ -1331,8 +1352,8 @@ class CampaignOpsService:
         repository = self.repository or CampaignOpsRepository()
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this dashboard target.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return program
 
     def create_program_with_workstreams_and_assignments(
@@ -1640,6 +1661,7 @@ class CampaignOpsService:
         def operation(repository: CampaignOpsRepository) -> Program:
             program = self._require_program(repository, program_id)
             assignments = repository.list_assignments_by_program(program_id)
+            require_program_access(repository, actor, program_id)
             if not can_edit_program(actor, program, assignments):
                 raise CampaignOpsPermissionError("You do not have permission to edit this program.")
             if not program.is_active:
@@ -1824,6 +1846,7 @@ class CampaignOpsService:
         def operation(repository: CampaignOpsRepository) -> Workstream:
             workstream = self._require_workstream(repository, program_id, workstream_id)
             assignments = repository.list_assignments_by_program(program_id)
+            require_program_access(repository, actor, program_id)
             if not can_edit_workstream(actor, workstream, assignments):
                 raise CampaignOpsPermissionError("You do not have permission to edit this workstream.")
             if kwargs.get("workstream_type"):
@@ -1834,6 +1857,8 @@ class CampaignOpsService:
                     kwargs["workstream_type"],
                     exclude_workstream_id=workstream_id,
                 )
+            if "owner_user_id" in kwargs and kwargs["owner_user_id"] != workstream.owner_user_id:
+                self._require_admin(actor)
             if kwargs.get("owner_user_id"):
                 self._require_active_user(repository, kwargs["owner_user_id"], "Workstream lead")
             for enum_field, enum_type in {
@@ -2249,6 +2274,7 @@ class CampaignOpsService:
                 owner_user_id=kwargs.get("owner_user_id"),
                 workstream_id=kwargs.get("workstream_id"),
             )
+            require_program_access(repository, actor, program.id)
             if not can_edit_milestone(actor, program, temp, assignments):
                 raise CampaignOpsPermissionError("You do not have permission to create this milestone.")
             if not program.is_active:
@@ -2301,6 +2327,7 @@ class CampaignOpsService:
             before = self._require_milestone(repository, milestone_id)
             program = self._require_program(repository, before.program_id)
             assignments = repository.list_assignments_by_program(before.program_id)
+            require_program_access(repository, actor, program.id)
             if not can_edit_milestone(actor, program, before, assignments):
                 raise CampaignOpsPermissionError("You do not have permission to edit this milestone.")
             if not program.is_active:
@@ -2393,6 +2420,7 @@ class CampaignOpsService:
             before = self._require_milestone(repository, milestone_id)
             program = self._require_program(repository, before.program_id)
             assignments = repository.list_assignments_by_program(before.program_id)
+            require_program_access(repository, actor, program.id)
             if not can_edit_milestone(actor, program, before, assignments):
                 raise CampaignOpsPermissionError("You do not have permission to reopen this milestone.")
             if before.status != TaskStatus.COMPLETED.value:
@@ -2480,8 +2508,8 @@ class CampaignOpsService:
         repository = self.repository or CampaignOpsRepository()
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have permission to view program milestones.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return repository.list_milestone_rows_by_program(program_id, include_inactive=include_inactive)
 
     def _require_insights_project(
@@ -2502,8 +2530,8 @@ class CampaignOpsService:
     ) -> Program:
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this Insights program.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         if not program.is_active:
             raise CampaignOpsValidationError("Archived programs cannot have Insights changes.")
         return program
@@ -2515,6 +2543,10 @@ class CampaignOpsService:
         payload: dict[str, Any],
         before: InsightsProjectRecord | None = None,
     ) -> dict[str, Any]:
+        if before is not None:
+            require_program_access(repository, actor, before.program_id)
+            if payload.get("program_id") and str(payload["program_id"]) != before.program_id:
+                raise CampaignOpsValidationError("Workflow records cannot be moved to another program.")
         program_id = payload.get("program_id") or (before.program_id if before else None)
         if not program_id:
             raise CampaignOpsValidationError("Program is required.")
@@ -2681,18 +2713,11 @@ class CampaignOpsService:
     ) -> list[InsightsPortfolioRow]:
         repository = self.repository or CampaignOpsRepository()
         rows = repository.list_insights_projects(include_inactive=include_inactive)
-        if can_access_admin(actor):
-            return rows
-        visible: list[InsightsPortfolioRow] = []
-        for row in rows:
-            program = self._require_program(repository, row.program_id)
-            assignments = repository.list_assignments_by_program(row.program_id)
-            if can_view_program(actor, program, assignments):
-                visible.append(row)
-        return visible
+        return self._visible_workflow_rows(repository, actor, rows, include_inactive)
 
     def get_insights_baseline_board_data(self, actor: CampaignOpsUser | None, projects: list[InsightsPortfolioRow]) -> dict[str, Any]:
         repository = self.repository or CampaignOpsRepository()
+        projects = self._authorized_workflow_records(repository, actor, projects, "get_insights_project")
         visible_ids = [project.id for project in projects]
         return {
             "milestones": repository.list_insights_milestone_rows_for_projects(visible_ids),
@@ -2709,8 +2734,8 @@ class CampaignOpsService:
             raise CampaignOpsNotFoundError("Insights project was not found.")
         program = self._require_program(repository, detail.program_id)
         assignments = repository.list_assignments_by_program(detail.program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this Insights project.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return detail
 
     def deactivate_insights_project(self, actor: CampaignOpsUser | None, project_id: str) -> None:
@@ -2871,8 +2896,8 @@ class CampaignOpsService:
     ) -> Program:
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this Retail Media program.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         if not program.is_active:
             raise CampaignOpsValidationError("Archived programs cannot have Retail Media changes.")
         return program
@@ -2894,6 +2919,10 @@ class CampaignOpsService:
         payload: dict[str, Any],
         before: RetailMediaCampaignRecord | None = None,
     ) -> dict[str, Any]:
+        if before is not None:
+            require_program_access(repository, actor, before.program_id)
+            if payload.get("program_id") and str(payload["program_id"]) != before.program_id:
+                raise CampaignOpsValidationError("Workflow records cannot be moved to another program.")
         program_id = payload.get("program_id") or (before.program_id if before else None)
         if not program_id:
             raise CampaignOpsValidationError("Program is required.")
@@ -3034,18 +3063,11 @@ class CampaignOpsService:
     def list_retail_media_campaigns(self, actor: CampaignOpsUser | None, include_inactive: bool = False) -> list[RetailMediaPortfolioRow]:
         repository = self.repository or CampaignOpsRepository()
         rows = repository.list_retail_media_campaigns(include_inactive=include_inactive)
-        if can_access_admin(actor):
-            return rows
-        visible: list[RetailMediaPortfolioRow] = []
-        for row in rows:
-            program = self._require_program(repository, row.program_id)
-            assignments = repository.list_assignments_by_program(row.program_id)
-            if can_view_program(actor, program, assignments):
-                visible.append(row)
-        return visible
+        return self._visible_workflow_rows(repository, actor, rows, include_inactive)
 
     def get_retail_media_baseline_board_data(self, actor: CampaignOpsUser | None, campaigns: list[RetailMediaPortfolioRow]) -> dict[str, Any]:
         repository = self.repository or CampaignOpsRepository()
+        campaigns = self._authorized_workflow_records(repository, actor, campaigns, "get_retail_media_campaign")
         visible = {campaign.id: campaign for campaign in campaigns}
         campaign_ids = list(visible)
         program_ids = list({campaign.program_id for campaign in campaigns})
@@ -3068,8 +3090,8 @@ class CampaignOpsService:
         if detail is None:
             raise CampaignOpsNotFoundError("Retail Media campaign was not found.")
         program = self._require_program(repository, detail.program_id)
-        if not can_view_program(actor, program, repository.list_assignments_by_program(detail.program_id)):
-            raise CampaignOpsPermissionError("You do not have access to this Retail Media campaign.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return detail
 
     def deactivate_retail_media_campaign(self, actor: CampaignOpsUser | None, campaign_id: str) -> None:
@@ -3414,8 +3436,8 @@ class CampaignOpsService:
     def _validate_influencer_access(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, program_id: str) -> Program:
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this Influencer campaign.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         if not program.is_active:
             raise CampaignOpsValidationError("Archived programs cannot have Influencer Planning changes.")
         return program
@@ -3437,6 +3459,10 @@ class CampaignOpsService:
         return number
 
     def _validate_influencer_campaign_payload(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, payload: dict[str, Any], before: InfluencerCampaignRecord | None = None) -> dict[str, Any]:
+        if before is not None:
+            require_program_access(repository, actor, before.program_id)
+            if payload.get("program_id") and str(payload["program_id"]) != before.program_id:
+                raise CampaignOpsValidationError("Workflow records cannot be moved to another program.")
         program_id = payload.get("program_id") or (before.program_id if before else None)
         if not program_id:
             raise CampaignOpsValidationError("Program is required.")
@@ -3565,17 +3591,15 @@ class CampaignOpsService:
     def list_influencer_campaigns(self, actor: CampaignOpsUser | None, include_inactive: bool = False, manager_user_id: str | None = None, stage: str | None = INFLUENCER_STAGE_PLANNING) -> list[InfluencerPlanningPortfolioRow]:
         repository = self.repository or CampaignOpsRepository()
         rows = repository.list_influencer_campaigns(include_inactive=include_inactive, manager_user_id=manager_user_id, stage=stage)
-        if can_access_admin(actor):
-            return rows
-        return [row for row in rows if can_view_program(actor, self._require_program(repository, row.program_id), repository.list_assignments_by_program(row.program_id)) or row.manager_user_id == (actor.id if actor else None)]
+        return self._visible_workflow_rows(repository, actor, rows, include_inactive)
 
     def get_influencer_campaign_detail(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerCampaignDetail:
         repository = self.repository or CampaignOpsRepository()
         detail = repository.get_influencer_campaign_detail(campaign_id)
         if detail is None:
             raise CampaignOpsNotFoundError("Influencer campaign was not found.")
-        if not (can_view_program(actor, self._require_program(repository, detail.program_id), repository.list_assignments_by_program(detail.program_id)) or detail.manager_user_id == (actor.id if actor else None) or can_access_admin(actor)):
-            raise CampaignOpsPermissionError("You do not have access to this Influencer campaign.")
+        if not (program_access_allowed(repository, actor, repository.get_program(detail.program_id))):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return detail
 
     def deactivate_influencer_campaign(self, actor: CampaignOpsUser | None, campaign_id: str) -> None:
@@ -3881,17 +3905,15 @@ class CampaignOpsService:
     def list_influencer_live_campaigns(self, actor: CampaignOpsUser | None, include_inactive: bool = False, manager_user_id: str | None = None) -> list[InfluencerLivePortfolioRow]:
         repository = self.repository or CampaignOpsRepository()
         rows = repository.list_influencer_live_campaigns(include_inactive=include_inactive, manager_user_id=manager_user_id)
-        if can_access_admin(actor):
-            return rows
-        return [row for row in rows if can_view_program(actor, self._require_program(repository, row.program_id), repository.list_assignments_by_program(row.program_id)) or row.manager_user_id == (actor.id if actor else None)]
+        return self._visible_workflow_rows(repository, actor, rows, include_inactive)
 
     def get_influencer_live_campaign_detail(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerLivePortfolioRow:
         repository = self.repository or CampaignOpsRepository()
         detail = repository.get_influencer_live_campaign_detail(campaign_id)
         if detail is None:
             raise CampaignOpsNotFoundError("Influencer Live campaign was not found.")
-        if not (can_access_admin(actor) or can_view_program(actor, self._require_program(repository, detail.program_id), repository.list_assignments_by_program(detail.program_id)) or detail.manager_user_id == (actor.id if actor else None)):
-            raise CampaignOpsPermissionError("You do not have access to this Influencer Live campaign.")
+        if not (program_access_allowed(repository, actor, repository.get_program(detail.program_id))):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return detail
 
     def get_influencer_live_workspace_summary(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerLiveWorkspaceSummary:
@@ -3911,6 +3933,7 @@ class CampaignOpsService:
 
     def get_influencer_live_manager_board_data(self, actor: CampaignOpsUser | None, campaigns: list[InfluencerLivePortfolioRow]) -> dict[str, dict[str, list[Any]]]:
         repository = self.repository or CampaignOpsRepository()
+        campaigns = self._authorized_workflow_records(repository, actor, campaigns, "get_influencer_campaign")
         campaign_ids = [campaign.id for campaign in campaigns]
         program_ids = list(dict.fromkeys(campaign.program_id for campaign in campaigns))
         if not campaign_ids:
@@ -4398,7 +4421,7 @@ class CampaignOpsService:
     def list_influencer_recap_campaigns(self, actor: CampaignOpsUser | None, include_inactive: bool = False, manager_user_id: str | None = None) -> list[InfluencerRecapPortfolioRow]:
         repository = self.repository or CampaignOpsRepository()
         rows = repository.list_influencer_recap_campaigns(include_inactive=include_inactive, manager_user_id=manager_user_id)
-        return [row for row in rows if can_view_program(actor, repository.get_program(row.program_id), repository.list_assignments_by_program(row.program_id))]
+        return self._visible_workflow_rows(repository, actor, rows, include_inactive)
 
     def get_influencer_recap_campaign_detail(self, actor: CampaignOpsUser | None, campaign_id: str) -> InfluencerRecapPortfolioRow:
         repository = self.repository or CampaignOpsRepository()
@@ -4410,6 +4433,7 @@ class CampaignOpsService:
 
     def get_influencer_recap_manager_board_data(self, actor: CampaignOpsUser | None, campaigns: list[InfluencerRecapPortfolioRow]) -> dict[str, dict[str, list[Any]]]:
         repository = self.repository or CampaignOpsRepository()
+        campaigns = self._authorized_workflow_records(repository, actor, campaigns, "get_influencer_campaign")
         campaign_ids = [campaign.id for campaign in campaigns]
         program_ids = list(dict.fromkeys(campaign.program_id for campaign in campaigns))
         if not campaign_ids:
@@ -4743,8 +4767,8 @@ class CampaignOpsService:
     def _validate_content_access(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, program_id: str) -> Program:
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this Content Management program.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         if not program.is_active:
             raise CampaignOpsValidationError("Archived programs cannot have Content Management changes.")
         return program
@@ -4758,6 +4782,10 @@ class CampaignOpsService:
         return number
 
     def _validate_content_program_payload(self, repository: CampaignOpsRepository, actor: CampaignOpsUser | None, payload: dict[str, Any], before: ContentProgramRecord | None = None) -> dict[str, Any]:
+        if before is not None:
+            require_program_access(repository, actor, before.program_id)
+            if payload.get("program_id") and str(payload["program_id"]) != before.program_id:
+                raise CampaignOpsValidationError("Workflow records cannot be moved to another program.")
         program_id = payload.get("program_id") or (before.program_id if before else None)
         if not program_id:
             raise CampaignOpsValidationError("Program is required.")
@@ -4852,12 +4880,11 @@ class CampaignOpsService:
     def list_content_programs(self, actor: CampaignOpsUser | None, include_inactive: bool = False) -> list[ContentPortfolioRow]:
         repository = self.repository or CampaignOpsRepository()
         rows = repository.list_content_programs(include_inactive=include_inactive)
-        if can_access_admin(actor):
-            return rows
-        return [row for row in rows if can_view_program(actor, self._require_program(repository, row.program_id), repository.list_assignments_by_program(row.program_id))]
+        return self._visible_workflow_rows(repository, actor, rows, include_inactive)
 
     def get_content_baseline_board_data(self, actor: CampaignOpsUser | None, programs: list[ContentPortfolioRow]) -> dict[str, Any]:
         repository = self.repository or CampaignOpsRepository()
+        programs = self._authorized_workflow_records(repository, actor, programs, "get_content_program")
         visible = {program.id: program for program in programs}
         content_program_ids = list(visible)
         program_ids = list({program.program_id for program in programs})
@@ -4879,8 +4906,8 @@ class CampaignOpsService:
         detail = repository.get_content_program_detail(content_program_id)
         if detail is None:
             raise CampaignOpsNotFoundError("Content Program was not found.")
-        if not can_view_program(actor, self._require_program(repository, detail.program_id), repository.list_assignments_by_program(detail.program_id)):
-            raise CampaignOpsPermissionError("You do not have access to this Content Program.")
+        if not program_access_allowed(repository, actor, repository.get_program(detail.program_id)):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return detail
 
     def deactivate_content_program(self, actor: CampaignOpsUser | None, content_program_id: str) -> None:
@@ -5270,6 +5297,7 @@ class CampaignOpsService:
                 resource_type=cleaned_type,
                 workstream_id=kwargs.get("workstream_id"),
             )
+            require_program_access(repository, actor, program.id)
             if not can_edit_resource(actor, program, temp, assignments):
                 raise CampaignOpsPermissionError("You do not have permission to create this resource.")
             if not program.is_active:
@@ -5309,6 +5337,7 @@ class CampaignOpsService:
             before = self._require_resource(repository, resource_id)
             program = self._require_program(repository, before.program_id)
             assignments = repository.list_assignments_by_program(before.program_id)
+            require_program_access(repository, actor, program.id)
             if not can_edit_resource(actor, program, before, assignments):
                 raise CampaignOpsPermissionError("You do not have permission to edit this resource.")
             if not program.is_active:
@@ -5412,8 +5441,8 @@ class CampaignOpsService:
         repository = self.repository or CampaignOpsRepository()
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have permission to view program resources.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return repository.list_resource_rows_by_program(program_id, include_inactive=include_inactive)
 
     def append_program_note(
@@ -5428,7 +5457,7 @@ class CampaignOpsService:
         def operation(repository: CampaignOpsRepository) -> ProgramNote:
             program = self._require_program(repository, program_id)
             assignments = repository.list_assignments_by_program(program_id)
-            if not can_add_note(actor, program, assignments):
+            if not (program.is_active and program_access_allowed(repository, actor, program)):
                 raise CampaignOpsPermissionError("You do not have permission to add a note to this program.")
             self._validate_note_scope(
                 repository,
@@ -5471,11 +5500,11 @@ class CampaignOpsService:
         repository = self.repository or CampaignOpsRepository()
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have permission to view program notes.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return repository.list_note_rows_by_program(
             program_id,
-            include_internal=can_view_internal_notes(actor, program, assignments),
+            include_internal=program_access_allowed(repository, actor, program),
             newest_first=newest_first,
             limit=limit,
         )
@@ -5777,8 +5806,8 @@ class CampaignOpsService:
         repository = self.repository or CampaignOpsRepository()
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have permission to view program tasks.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return repository.list_task_rows_by_program(program_id, include_inactive=include_inactive)
 
     def list_user_tasks(
@@ -5823,8 +5852,8 @@ class CampaignOpsService:
     ) -> Program:
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this request program.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         if not program.is_active:
             raise CampaignOpsValidationError("Archived programs cannot have request changes.")
         return program
@@ -6085,7 +6114,7 @@ class CampaignOpsService:
         for row in rows:
             program = self._require_program(repository, row.program_id)
             assignments = repository.list_assignments_by_program(row.program_id)
-            if can_view_program(actor, program, assignments):
+            if program_access_allowed(repository, actor, program):
                 visible.append(row)
         return visible
 
@@ -6098,8 +6127,8 @@ class CampaignOpsService:
         repository = self.repository or CampaignOpsRepository()
         program = self._require_program(repository, program_id)
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this program requests.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return repository.list_requests_by_program(program_id, include_inactive=include_inactive)
 
     def get_reporting_request_detail(
@@ -6113,8 +6142,8 @@ class CampaignOpsService:
             raise CampaignOpsNotFoundError("Reporting request was not found.")
         program = self._require_program(repository, detail.program_id)
         assignments = repository.list_assignments_by_program(detail.program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this request.")
+        if not program_access_allowed(repository, actor, program):
+            raise CampaignOpsPermissionError(ACCESS_DENIED)
         return detail
 
     def group_user_tasks(

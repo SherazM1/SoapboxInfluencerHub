@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.campaign_ops.enums import AssignmentRole, UserRole
+from core.campaign_ops.exceptions import CampaignOpsPermissionError
 from core.campaign_ops.models import CampaignOpsUser, Milestone, Program, ProgramAssignment, Resource, Task, Workstream
 
 
@@ -11,7 +12,7 @@ def user_role(user: CampaignOpsUser | None) -> str | None:
 
 def is_administrator(user: CampaignOpsUser | None) -> bool:
     """Return whether a user has administrator privileges."""
-    return user_role(user) == UserRole.ADMINISTRATOR.value
+    return bool(user and user_role(user) == UserRole.ADMINISTRATOR.value and user.is_active)
 
 
 def is_team_member(user: CampaignOpsUser | None) -> bool:
@@ -44,20 +45,82 @@ def user_has_assignment(
     return False
 
 
+ACCESS_DENIED = "You do not have access to this program."
+
+
 def can_view_program(
     user: CampaignOpsUser | None,
-    program: Program,
+    program: Program | None,
     assignments: list[ProgramAssignment],
     explicit_program_ids: set[str] | None = None,
+    *,
+    workstreams: list[Workstream] = (),
 ) -> bool:
-    """Return whether a user can view a program."""
+    """Admin, primary Program Lead Owner, or primary workflow Manager only.
+
+    The retired explicit-ID argument is accepted for API compatibility, never as a grant.
+    Archived records remain available only to administrator archive tooling.
+    """
+    if user is None or not user.is_active or program is None:
+        return False
     if is_administrator(user):
         return True
-    if is_team_member(user):
-        return user_has_assignment(user, assignments, program_id=program.id)
-    if is_viewer(user):
-        return program.id in (explicit_program_ids or set())
-    return False
+    if not program.is_active or not is_team_member(user):
+        return False
+    active = [a for a in assignments if a.is_active and a.program_id == program.id and a.user_id == user.id]
+    if any(a.assignment_role == AssignmentRole.PROGRAM_OWNER.value and a.is_primary
+           and a.workstream_id is None for a in active):
+        return True
+    primary = [w for w in workstreams if w.is_active and w.program_id == program.id
+               and w.workstream_type == program.primary_workstream_type]
+    return any(w.owner_user_id == user.id or any(
+        a.workstream_id == w.id and a.assignment_role == AssignmentRole.WORKSTREAM_LEAD.value
+        for a in active) for w in primary)
+
+
+def program_access_allowed(repository, actor, program) -> bool:
+    """Fresh service-boundary authorization; roster and campaign owner fields are not grants."""
+    if actor is None or not actor.is_active or program is None:
+        return False
+    if is_administrator(actor):
+        return True
+    return can_view_program(actor, program, repository.list_assignments_by_program(program.id),
+                            workstreams=repository.list_workstreams_by_program(program.id))
+
+
+def require_program_access(repository, actor, program_id, *, active_only=False):
+    program = repository.get_program(program_id)
+    if not program_access_allowed(repository, actor, program) or (active_only and not program.is_active):
+        raise CampaignOpsPermissionError(ACCESS_DENIED)
+    return program
+
+
+def program_scope_user_id(actor):
+    """None means administrator SQL scope; invalid actors must never become an unscoped query."""
+    if actor is None or not actor.is_active or (not is_administrator(actor) and not is_team_member(actor)):
+        raise CampaignOpsPermissionError(ACCESS_DENIED)
+    return None if is_administrator(actor) else actor.id
+
+
+def program_access_sql():
+    """SQL equivalent of can_view_program for active actor IDs; Program alias is p."""
+    return """(%s::uuid is null or exists (
+        select 1 from campaign_ops_assignments access_lead
+        where access_lead.program_id = p.id and access_lead.is_active = true
+          and access_lead.assignment_role = 'program_owner' and access_lead.is_primary = true
+          and access_lead.workstream_id is null and access_lead.user_id = %s::uuid
+    ) or exists (
+        select 1 from campaign_ops_workstreams access_workstream
+        where access_workstream.program_id = p.id and access_workstream.is_active = true
+          and access_workstream.workstream_type = p.primary_workstream_type
+          and (access_workstream.owner_user_id = %s::uuid or exists (
+              select 1 from campaign_ops_assignments access_manager
+              where access_manager.program_id = p.id and access_manager.is_active = true
+                and access_manager.workstream_id = access_workstream.id
+                and access_manager.assignment_role = 'workstream_lead'
+                and access_manager.user_id = %s::uuid
+          ))
+    ))"""
 
 
 def can_edit_program(

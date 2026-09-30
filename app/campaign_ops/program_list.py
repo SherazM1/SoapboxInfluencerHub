@@ -219,7 +219,11 @@ def render_all_programs(
     users: list[CampaignOpsUser],
     clients: list[Client],
 ) -> None:
-    st.subheader("All Programs")
+    render_program_registry(actor, service, "All Programs")
+
+
+def render_program_registry(actor, service, title):
+    st.subheader(title)
     if can_access_admin(actor):
         st.button("New Program", type="primary", on_click=begin_new_program, args=(st.session_state,))
     try:
@@ -249,30 +253,4 @@ def render_my_programs(
     users: list[CampaignOpsUser],
     clients: list[Client],
 ) -> None:
-    st.subheader("My Programs")
-    if can_access_admin(actor):
-        show_all = st.checkbox("Show all programs", key="campaign_ops_my_show_all")
-        if show_all:
-            render_all_programs(actor, service, users, clients)
-            return
-    cols = st.columns(2)
-    if cols[0].button("Refresh", key="campaign_ops_my_refresh"):
-        st.session_state["campaign_ops_last_refresh"] = datetime.now(UTC).isoformat()
-        st.rerun()
-    if cols[1].button("Clear filters", key="campaign_ops_my_clear_filters"):
-        st.session_state["campaign_ops_my_program_filters"] = blank_filter_state()
-        st.rerun()
-    filters = render_portfolio_filters(
-        "campaign_ops_my_program_filters",
-        clients,
-        users,
-        include_text_filters=False,
-        include_people_filters=False,
-    )
-    try:
-        rows = service.list_user_programs(actor, actor.id, filters)
-    except CampaignOpsError as exc:
-        st.error(f"Unable to load assigned programs: {exc}")
-        return
-    render_program_rows(rows, my_programs=True)
-    render_open_program_control(rows, "campaign_ops_my_open_program")
+    render_program_registry(actor, service, "My Programs")

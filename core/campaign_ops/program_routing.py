@@ -4,7 +4,7 @@ from core.campaign_ops.models import InfluencerCampaignRecord
 
 from core.campaign_ops.exceptions import CampaignOpsPermissionError, CampaignOpsValidationError
 from core.campaign_ops.influencer_timeline import InfluencerTimelineService, STAGE_LABELS
-from core.campaign_ops.permissions import can_access_admin, can_view_program
+from core.campaign_ops.permissions import program_scope_user_id, require_program_access
 from core.campaign_ops.repository import CampaignOpsRepository
 from core.campaign_ops.service import CampaignOpsService
 
@@ -31,7 +31,7 @@ class ProgramRoutingService(CampaignOpsService):
         if actor is None:
             raise CampaignOpsPermissionError("A Campaign Operations user is required.")
         repository = self.repository or CampaignOpsRepository()
-        return repository.list_program_registry(None if can_access_admin(actor) else actor.id)
+        return repository.list_program_registry(program_scope_user_id(actor))
 
     def create_registry_program(self, actor, **kwargs):
         # The program, roster assignments, campaign and nine initial rows share ONE transaction.
@@ -52,8 +52,7 @@ class ProgramRoutingService(CampaignOpsService):
         if records:
             return records
         assignments = repository.list_assignments_by_program(program_id)
-        if not can_view_program(actor, program, assignments):
-            raise CampaignOpsPermissionError("You do not have access to this Program.")
+        require_program_access(repository, actor, program.id, active_only=True)
         lead = next((a for a in assignments if a.is_active and a.is_primary
                      and a.assignment_role == "program_owner" and a.workstream_id is None), None)
         if lead is None:
@@ -66,10 +65,7 @@ class ProgramRoutingService(CampaignOpsService):
 
     def resolve(self, actor, program_id):
         repository = self.repository or CampaignOpsRepository()
-        program = self._require_program(repository, program_id)
-        if not can_view_program(actor, program, [] if can_access_admin(actor) else
-                                repository.list_assignments_by_program(program_id)):
-            raise CampaignOpsPermissionError("You do not have access to this Program.")
+        program = require_program_access(repository, actor, program_id, active_only=True)
         section = WORKFLOW_SECTIONS.get(program.primary_workstream_type)
         if section is None:
             return ProgramDestination("All Programs", message="No workflow is configured for this Program.")

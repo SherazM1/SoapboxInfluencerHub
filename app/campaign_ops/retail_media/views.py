@@ -12,7 +12,7 @@ from app.campaign_ops.retail_media.formatting import channel_mix_label, retail_s
 from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.enums import TaskStatus
-from core.campaign_ops.exceptions import CampaignOpsError
+from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.retail_media import RETAIL_MEDIA_APPROVAL_STATUSES, RETAIL_MEDIA_CHANNEL_TYPES, RETAIL_MEDIA_STATUSES, RETAIL_MEDIA_STATUS_NOT_STARTED, RETAIL_MEDIA_SUBMISSION_STATUSES
 from core.campaign_ops.service import CampaignOpsService
@@ -255,6 +255,11 @@ def render_new_campaign(actor: CampaignOpsUser, service: CampaignOpsService, use
 def render_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], campaign_id: str) -> None:
     try:
         campaign = service.get_retail_media_campaign_detail(actor, campaign_id)
+    except CampaignOpsPermissionError:
+        st.session_state.pop("campaign_ops_selected_retail_media_campaign_id", None)
+        st.warning("You do not have access to this program.")
+        render_portfolio(actor, service)
+        return
     except CampaignOpsError as exc:
         st.session_state.pop("campaign_ops_selected_retail_media_campaign_id", None)
         st.error(f"Retail Media campaign unavailable: {exc}")

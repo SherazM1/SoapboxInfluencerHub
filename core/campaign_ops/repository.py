@@ -83,6 +83,7 @@ from core.campaign_ops.models import (
     require_text,
 )
 from core.campaign_ops.performance import record_query
+from core.campaign_ops.permissions import program_access_sql
 
 
 DEFAULT_ACTIVITY_LIMIT = 100
@@ -557,7 +558,7 @@ class CampaignOpsRepository:
     def list_program_registry(self, permitted_user_id: str | None = None) -> list[ProgramRegistryRow]:
         """One registry query; no task, timeline, activity or connected-workstream aggregates."""
         return self._fetch_all(
-            """
+            f"""
             select p.id, p.program_name, c.name as client_name, p.primary_workstream_type,
                    po.user_id as primary_owner_user_id, lead.display_name as primary_owner_name,
                    ws.owner_user_id as manager_user_id, manager.display_name as manager_name
@@ -574,15 +575,10 @@ class CampaignOpsRepository:
             left join campaign_ops_workstreams ws on ws.program_id = p.id
                 and ws.workstream_type = p.primary_workstream_type and ws.is_active = true
             left join campaign_ops_users manager on manager.id = ws.owner_user_id
-            where p.is_active = true and (%s::uuid is null or exists (
-                select 1 from campaign_ops_assignments access_assignment
-                join campaign_ops_users access_user on access_user.id = access_assignment.user_id
-                where access_assignment.program_id = p.id and access_assignment.is_active = true
-                  and access_user.is_active = true and access_assignment.user_id = %s::uuid
-            ))
+            where p.is_active = true and {program_access_sql()}
             order by p.updated_at desc, p.program_name, p.id
             """,
-            (permitted_user_id, permitted_user_id), ProgramRegistryRow,
+            (permitted_user_id,) * 4, ProgramRegistryRow,
         )
 
     def list_influencer_campaigns_by_program(self, program_id: str) -> list[InfluencerCampaignRecord]:
@@ -678,8 +674,9 @@ class CampaignOpsRepository:
             clauses.append("aa.user_ids @> array[%s]::uuid[]")
             params.append(assigned_user_id)
         if permitted_user_id:
-            clauses.append("aa.user_ids @> array[%s]::uuid[]")
-            params.append(permitted_user_id)
+            clauses.append("p.is_active = true")
+            clauses.append(program_access_sql())
+            params.extend([permitted_user_id] * 4)
 
         order_by = {
             "program_name": "p.program_name asc",

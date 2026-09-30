@@ -86,11 +86,11 @@ SESSION_KEYS = {
 
 
 def get_sections_for_user(user: CampaignOpsUser | None, viewer: str) -> list[str]:
-    return BAILEY_SECTIONS if can_access_admin(user) or viewer == "Bailey" else TEAM_MEMBER_SECTIONS
+    return BAILEY_SECTIONS if can_access_admin(user) else TEAM_MEMBER_SECTIONS
 
 
 def get_default_section(user: CampaignOpsUser | None, viewer: str) -> str:
-    return "All Programs" if can_access_admin(user) or viewer == "Bailey" else "My Programs"
+    return "All Programs" if can_access_admin(user) else "My Programs"
 
 
 def selected_program_key() -> str:

@@ -52,14 +52,14 @@ class RegistryRouterTests(unittest.TestCase):
         with patch.object(repo, "_fetch_all", return_value=[]) as fetch:
             repo.list_program_registry(self.lead.id)
         sql, params, model = fetch.call_args.args
-        self.assertEqual((self.lead.id, self.lead.id), params)
+        self.assertEqual((self.lead.id,) * 4, params)
         self.assertEqual("ProgramRegistryRow", model.__name__)
         for forbidden in ("campaign_ops_tasks", "campaign_ops_notes", "campaign_ops_activity",
                           "campaign_ops_milestones", "array_agg", "cross_stage", "risk_level"):
             self.assertNotIn(forbidden, sql)
         for required in ("assignment_role = 'program_owner'", "a.is_primary = true",
                          "ws.workstream_type = p.primary_workstream_type", "ws.owner_user_id",
-                         "access_assignment.is_active = true", "access_user.is_active = true"):
+                         "access_lead.is_active = true", "access_manager.is_active = true"):
             self.assertIn(required, sql)
 
     def test_registry_page_has_only_six_columns_and_no_filters_or_generic_loads(self):
@@ -185,11 +185,8 @@ class RegistryRouterTests(unittest.TestCase):
             self.assertTrue(any(w.label == "Save Changes" for w in app.button))
             self.assertEqual([], list(app.tabs))
             button(app, "My Programs").click().run()
-            # Administrator is not an owner: assign this test actor to exercise My Programs.
-            repo.create_assignment(pid, repo.users[0].id, "program_owner", is_primary=False)
-            repo.list_programs_assigned_to_user = lambda user_id, **filters: repo.list_program_portfolio(permitted_user_id=user_id, **filters)
-            app.run()
-            button(app, "Open Selected Program").click().run()
+            # My Programs uses the same administrator scope and row-level Open action.
+            button(app, "Open").click().run()
             self.assertFalse(app.exception)
             self.assertEqual("Influencer", app.session_state["campaign_ops_section"])
             self.assertTrue(any(w.label == "Save Changes" for w in app.button))

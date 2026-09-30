@@ -11,7 +11,7 @@ from app.campaign_ops.insights.formatting import insights_status_label, timeline
 from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.enums import TaskStatus
-from core.campaign_ops.exceptions import CampaignOpsError
+from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.insights import INSIGHTS_STATUSES, INSIGHTS_STATUS_NOT_STARTED
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.service import CampaignOpsService
@@ -217,6 +217,11 @@ def render_new_project_form(actor: CampaignOpsUser, service: CampaignOpsService,
 def render_insights_workspace(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser], project_id: str) -> None:
     try:
         project = service.get_insights_project_detail(actor, project_id)
+    except CampaignOpsPermissionError:
+        st.session_state.pop("campaign_ops_selected_insights_project_id", None)
+        st.warning("You do not have access to this program.")
+        render_portfolio(actor, service)
+        return
     except CampaignOpsError as exc:
         st.session_state.pop("campaign_ops_selected_insights_project_id", None)
         st.error(f"Insights project unavailable: {exc}")

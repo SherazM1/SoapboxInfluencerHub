@@ -6,7 +6,7 @@ from uuid import uuid4
 import pandas as pd
 import streamlit as st
 
-from core.campaign_ops.exceptions import CampaignOpsError
+from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.permissions import can_access_admin
 from core.campaign_ops.influencer_timeline import (
     ACTION_LIBRARY, EDITOR_COLUMNS, FORWARD_STAGES, STAGE_LABELS, InfluencerTimelineService, editor_record, sort_timeline,
@@ -57,6 +57,7 @@ def render_influencer(actor, service, users):
     routed = st.session_state.pop("campaign_ops_influencer_route_record", None)
     try:
         if selected:
+            service.authorize_campaign(actor, str(selected))
             snapshot = st.session_state.get(f"campaign_ops_influencer_draft_{actor.id}_{selected}")
             if snapshot:
                 # A form submission already has a displayed snapshot. The save
@@ -69,6 +70,10 @@ def render_influencer(actor, service, users):
                 render_workspace(actor, service, users, campaign, rows)
                 return
             st.session_state.pop(SELECTED, None)
+        render_portfolio(actor, service, users, stage)
+    except CampaignOpsPermissionError:
+        _back_to_campaigns()
+        st.warning("You do not have access to this program.")
         render_portfolio(actor, service, users, stage)
     except CampaignOpsError as exc:
         st.error(str(exc))

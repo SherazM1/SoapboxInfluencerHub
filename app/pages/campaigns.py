@@ -176,7 +176,7 @@ def render_active_section(
         set_section(st.session_state, get_default_section(user, viewer))
         st.rerun()
         return
-    clients = service.list_active_clients() if section == "My Programs" else []
+    clients = []
     if section == "All Programs":
         render_all_programs(user, service, users, clients)
     elif section == "My Programs":
