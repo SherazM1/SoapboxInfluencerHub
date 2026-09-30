@@ -132,7 +132,7 @@ class DirectEditorTests(unittest.TestCase):
     def test_editor_configuration_and_removed_controls(self):
         app = AppTest.from_function(timeline_app, default_timeout=20).run()
         self.assertEqual([], list(app.exception))
-        self.assertEqual(['Owner'], [s.label for s in app.selectbox])
+        self.assertEqual(['Lead Owner', 'Manager'], [s.label for s in app.selectbox])
         self.assertNotIn('Save Owner', [b.label for b in app.button])
         self.assertFalse(any(label in [b.label for b in app.button] for label in ('Edit Row', '+ Add Row', 'Remove Row')))
         self.assertFalse(any(e.label == 'Edit / Remove Row' for e in app.expander))
@@ -156,7 +156,7 @@ class DirectEditorTests(unittest.TestCase):
         app.session_state[f'influencer_timeline_table_{campaign.id}_0'] = {
             'edited_rows': {0: {'Date': '2026-06-01', 'Program Notes': 'One'}, 1: {'Action': 'Invoice Due', 'Program Notes': 'Two'}},
             'added_rows': [{'Action': 'Invoice Due'}], 'deleted_rows': [2]}
-        select(app, 'Owner').select('L')
+        select(app, 'Lead Owner').select(l.id)
         self.assertEqual(t.id, campaign.manager_user_id)
         self.assertTrue(all(r.notes is None for r in repo.influencer_planning_steps))
         original_workspace = InfluencerTimelineService.workspace
@@ -218,14 +218,14 @@ class DirectEditorTests(unittest.TestCase):
         app.session_state[f'influencer_timeline_table_{campaign.id}_0'] = {
             'edited_rows': {0: {'Action': 'Custom', 'Date': '2026-06-01', 'Program Notes': 'Buffered'}},
             'added_rows': [], 'deleted_rows': []}
-        select(app, 'Owner').select('L')
+        select(app, 'Lead Owner').select(l.id)
         button(app, 'Save Changes').click().run()
         self.assertEqual([], list(app.exception))
         self.assertEqual(1, len(app.text_input))
         self.assertTrue(app.error)
         self.assertEqual(t.id, campaign.manager_user_id)
         self.assertIsNone(repo.influencer_planning_steps[0].notes)
-        self.assertEqual('L', select(app, 'Owner').value)
+        self.assertEqual(l.id, select(app, 'Lead Owner').value)
         self.assertEqual(app.dataframe[0].proto.form_id, app.text_input[0].proto.form_id)
         app.text_input[0].set_value('Internal legal review')
         button(app, 'Save Changes').click().run()

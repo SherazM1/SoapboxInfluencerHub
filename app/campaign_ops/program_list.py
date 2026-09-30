@@ -15,7 +15,7 @@ from app.campaign_ops.formatting import (
     format_list,
     safe_text,
 )
-from app.campaign_ops.state import set_section, set_selected_program
+from app.campaign_ops.state import begin_new_program, set_section, set_selected_program
 from core.campaign_ops.enums import CrossStage, ProgramStatus, RiskLevel, WorkstreamType
 from core.campaign_ops.exceptions import CampaignOpsError
 from core.campaign_ops.models import CampaignOpsUser, Client, ProgramPortfolioRow
@@ -209,9 +209,8 @@ def render_open_program_control(rows: list[ProgramPortfolioRow], key: str) -> No
         return
     labels = {f"{row.program_name} ({safe_text(row.client_name)})": row.id for row in rows}
     selected = st.selectbox("Open Program", list(labels), key=key)
-    if st.button("Open Selected Program", type="primary", key=f"{key}_open"):
-        set_selected_program(st.session_state, labels[selected])
-        st.rerun()
+    st.button("Open Selected Program", type="primary", key=f"{key}_open",
+              on_click=set_selected_program, args=(st.session_state, labels[selected]))
 
 
 def render_all_programs(
@@ -221,10 +220,8 @@ def render_all_programs(
     clients: list[Client],
 ) -> None:
     st.subheader("All Programs")
-    if can_access_admin(actor) and st.button("New Program", type="primary"):
-        st.session_state["campaign_ops_create_program_open"] = True
-        set_section(st.session_state, "New Program")
-        st.rerun()
+    if can_access_admin(actor):
+        st.button("New Program", type="primary", on_click=begin_new_program, args=(st.session_state,))
     try:
         rows = ProgramRoutingService(service.repository).list_registry(actor)
     except CampaignOpsError as exc:

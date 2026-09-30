@@ -67,27 +67,28 @@ def render_new_program_form(
         key=f"campaign_ops_new_program_manager_{workflow_key}",
     )
 
-    if not st.button("Create Program", type="primary", key="campaign_ops_new_program_submit"):
-        return
-    if lead_id is None:
-        st.error("Choose a Lead Owner.")
-        return
-    if manager_id is None:
-        st.error("Choose a Manager.")
+    error = st.session_state.pop("campaign_ops_new_program_error", None)
+    if error:
+        st.error(error)
+    st.button("Create Program", type="primary", key="campaign_ops_new_program_submit",
+              on_click=_create_program, args=(actor, service, workflow_key))
+
+
+def _create_program(actor, service, workflow_key):
+    state = st.session_state
+    lead_id = state.get(f"campaign_ops_new_program_lead_{workflow_key}")
+    manager_id = state.get(f"campaign_ops_new_program_manager_{workflow_key}")
+    if not lead_id or not manager_id:
+        state["campaign_ops_new_program_error"] = "Choose a Lead Owner." if not lead_id else "Choose a Manager."
         return
     try:
         program_id = ProgramRoutingService(service.repository).create_registry_program(
-            actor=actor,
-            program_name=program_name,
-            new_client_name=trim_or_none(client_name),
-            primary_workstream_type=workflow_key,
-            primary_owner_user_id=lead_id,
-            manager_user_id=manager_id,
-            workstream_types=[workflow_key],
+            actor=actor, program_name=state.get("campaign_ops_new_program_name", ""),
+            new_client_name=trim_or_none(state.get("campaign_ops_new_program_client", "")),
+            primary_workstream_type=workflow_key, primary_owner_user_id=lead_id,
+            manager_user_id=manager_id, workstream_types=[workflow_key],
         )
     except CampaignOpsError as exc:
-        st.error(f"Program was not created: {exc}")
+        state["campaign_ops_new_program_error"] = f"Program was not created: {exc}"
         return
-
-    finish_new_program(st.session_state, program_id)
-    st.rerun()
+    finish_new_program(state, program_id)

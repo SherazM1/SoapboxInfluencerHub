@@ -264,9 +264,8 @@ def main() -> None:
     if current_section != "New Program":
         current_section = render_section_navigation(user, viewer)
     else:
-        if st.button("Back to All Programs", key="campaign_ops_back_from_new_program"):
-            cancel_new_program(st.session_state)
-            st.rerun()
+        st.button("Back to All Programs", key="campaign_ops_back_from_new_program",
+                  on_click=cancel_new_program, args=(st.session_state,))
     st.divider()
     render_active_section(current_section, viewer, user, service, users)
 

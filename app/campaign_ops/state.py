@@ -159,3 +159,9 @@ def finish_new_program(session_state: dict[str, object], program_id: str) -> Non
     session_state["campaign_ops_program_created_message"] = "Program created."
     set_section(session_state, "All Programs")
     set_selected_program(session_state, program_id)
+
+
+def begin_new_program(session_state: dict[str, object]) -> None:
+    clear_new_program_draft(session_state)
+    session_state["campaign_ops_create_program_open"] = True
+    set_section(session_state, "New Program")

@@ -1925,6 +1925,9 @@ class FakePrompt4ARepository:
                 manager.id if manager else None, manager.display_name if manager else None))
         return rows
 
+    def list_influencer_campaigns_by_program(self, program_id):
+        return [c for c in self.influencer_campaigns if c.program_id == program_id]
+
     def list_program_workflow_records(self, program_id, workflow):
         records = {"influencer": self.influencer_campaigns, "retail_media": self.retail_media_campaigns,
                    "ecommerce": self.content_programs, "insights": self.insights_projects}.get(workflow, [])

@@ -16,6 +16,14 @@ from tests import test_campaign_ops_foundation as foundation
 
 def fixture():
     repo, _, admin, t, l, program_id, _, _ = foundation.CampaignOpsFoundationTests()._prompt4c_fixture()
+    primary = next(a for a in repo.assignments if a.is_primary and a.assignment_role == "program_owner")
+    primary.user_id = t.id
+    manager = CampaignOpsUser(id="55555555-5555-4555-8555-555555555555", display_name="Fixture Manager", role="team_member")
+    repo.users.append(manager)
+    workstream = next(w for w in repo.workstreams if w.program_id == program_id and w.workstream_type == "influencer")
+    workstream.owner_user_id = manager.id
+    existing_roster = repo.list_workflow_role_users
+    repo.list_workflow_role_users = lambda workflow, role: [manager] if workflow == "influencer" and role == "manager" else existing_roster(workflow, role)
     repo.lock_influencer_timeline_program = repo.get_program
     repo.get_influencer_campaign_for_update = repo.get_influencer_campaign
     repo.list_influencer_timeline_campaigns = lambda stage: [c for c in repo.influencer_campaigns if c.is_active and c.influencer_stage == stage]
@@ -161,8 +169,9 @@ class TimelineTests(unittest.TestCase):
         app = AppTest.from_function(timeline_app, default_timeout=20).run()
         self.assertEqual([], list(app.exception))
         self.assertEqual(['Planning', 'Live', 'Recapping'], app.radio[0].options)
-        self.assertEqual('Owner', app.selectbox[0].label)
-        select(app, 'Owner').select('L')
+        self.assertEqual('Lead Owner', app.selectbox[0].label)
+        repo, service, actor, t, l, _ = app.session_state.fixture
+        select(app, 'Lead Owner').select(l.id)
         button(app, 'Save Changes').click().run()
         repo, service, actor, t, l, _ = app.session_state.fixture
         campaign = repo.influencer_campaigns[0]

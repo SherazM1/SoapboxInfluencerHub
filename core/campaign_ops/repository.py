@@ -585,7 +585,16 @@ class CampaignOpsRepository:
             (permitted_user_id, permitted_user_id), ProgramRegistryRow,
         )
 
+    def list_influencer_campaigns_by_program(self, program_id: str) -> list[InfluencerCampaignRecord]:
+        """Return campaign identities for routing, including archived records to avoid reseeding."""
+        return self._fetch_all(
+            "select * from campaign_ops_influencer_campaigns where program_id = %s order by id",
+            (program_id,), InfluencerCampaignRecord,
+        )
+
     def list_program_workflow_records(self, program_id: str, workflow: str) -> list[Any]:
+        if workflow == "influencer":
+            return self.list_influencer_campaigns_by_program(program_id)
         # Identifiers are exclusively selected from this fixed internal mapping.
         tables = {
             "influencer": ("campaign_ops_influencer_campaigns", InfluencerCampaignRecord),

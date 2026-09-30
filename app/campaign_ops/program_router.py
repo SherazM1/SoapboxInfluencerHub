@@ -18,6 +18,11 @@ def open_program(session_state, actor, service, program_id):
         set_section(session_state, destination.section)
     else:
         route_to_specialized_workspace(session_state, destination.section, program_id, destination.record_id)
+    session_state.pop("campaign_ops_influencer_route_record", None)
+    if destination.campaign:
+        session_state["campaign_ops_influencer_route_record"] = {
+            "actor_id": actor.id, "campaign": destination.campaign,
+        }
     if destination.stage:
         session_state["campaign_ops_influencer_timeline_navigation"] = STAGE_LABELS[destination.stage]
     if destination.message:

@@ -46,7 +46,7 @@ def workspace_app(kind, portfolio=False, create=False):
 class CleanupTests(unittest.TestCase):
     def test_navigation_and_retired_state(self):
         _, _, admin, member, _, _, _, _ = fixtures.CampaignOpsFoundationTests()._prompt4c_fixture()
-        expected = ['All Programs', 'My Programs', 'Influencer', 'Retail Media', 'eCommerce / Content', 'Insights']
+        expected = ['All Programs', 'My Programs', 'Influencer', 'Retail Media', 'eCommerce / Content', 'Insights', 'Social Media Management']
         for actor in (admin, member):
             self.assertEqual(expected, get_sections_for_user(actor, actor.display_name))
             for retired in ('Cross-Team Dashboard', 'My Work', 'Requests', 'Administration'):

@@ -160,9 +160,12 @@ class InfluencerTimelineService(CampaignOpsService):
         rows = repository.list_influencer_planning_steps_for_campaigns([c.id for c in visible])
         return visible, rows
 
-    def workspace(self, actor: CampaignOpsUser | None, campaign_id: str) -> tuple[InfluencerCampaignRecord, list[InfluencerPlanningStepRecord]]:
+    def workspace(self, actor: CampaignOpsUser | None, campaign_id: str, *,
+                  routed_campaign: InfluencerCampaignRecord | None = None) -> tuple[InfluencerCampaignRecord, list[InfluencerPlanningStepRecord]]:
         repository = self.repository or CampaignOpsRepository()
-        campaign = self._require_influencer_campaign(repository, campaign_id)
+        campaign = routed_campaign or self._require_influencer_campaign(repository, campaign_id)
+        if campaign.id != campaign_id or not campaign.is_active:
+            raise CampaignOpsValidationError("Campaign is unavailable.")
         if actor is None or not (can_access_admin(actor) or
                 can_view_program(actor, self._require_program(repository, campaign.program_id),
                                  repository.list_assignments_by_program(campaign.program_id))):
@@ -204,9 +207,51 @@ class InfluencerTimelineService(CampaignOpsService):
             CampaignOpsService(repository).deactivate_influencer_planning_step(actor, campaign_id, row_id)
         return self._transaction(operation)
 
+    def _assignment_state(self, repository, campaign):
+        assignments = repository.list_assignments_by_program(campaign.program_id)
+        primary = [a for a in assignments if a.is_active and a.is_primary
+                   and a.assignment_role == "program_owner" and a.workstream_id is None]
+        workstreams = [w for w in repository.list_workstreams_by_program(campaign.program_id)
+                       if w.is_active and w.workstream_type == "influencer"]
+        if len(primary) > 1 or len(workstreams) != 1:
+            raise CampaignOpsValidationError("Resolve conflicting Program ownership or Influencer workstreams before editing.")
+        workstream = workstreams[0]
+        return {"lead_id": primary[0].user_id if primary else None,
+                "manager_id": workstream.owner_user_id, "workstream_id": workstream.id,
+                "assignments": tuple(sorted((a.id, a.user_id, a.assignment_role, a.is_primary)
+                    for a in assignments if a.is_active and (
+                        (a.workstream_id is None and a.assignment_role == "program_owner") or
+                        (a.workstream_id == workstream.id and a.assignment_role == "workstream_lead"))))}
+
+    def workspace_assignments(self, actor, campaign):
+        repository = self.repository or CampaignOpsRepository()
+        if not can_access_admin(actor):
+            self._validate_influencer_access(repository, actor, campaign.program_id)
+        return self._assignment_state(repository, campaign)
+
+    def _save_lead_assignment(self, repository, actor, program_id, owner_id):
+        assignments = repository.list_assignments_by_program(program_id)
+        owners = [a for a in assignments if a.is_active and a.assignment_role == "program_owner"
+                  and a.workstream_id is None]
+        if any(a.is_primary and a.user_id == owner_id for a in owners):
+            return
+        for assignment in owners:
+            if assignment.is_primary:
+                repository.deactivate_assignment(assignment.id, actor_user_id=actor.id)
+        matching = next((a for a in owners if a.user_id == owner_id), None)
+        if matching:
+            repository.update_assignment(matching.id, actor_user_id=actor.id, is_primary=True)
+        else:
+            repository.create_assignment(program_id, owner_id, "program_owner", is_primary=True,
+                                         actor_user_id=actor.id)
+        repository.append_event(event_type="primary_owner_reassigned", entity_type="assignment",
+            program_id=program_id, actor_user_id=actor.id,
+            new_value_json={"user_id": owner_id}, message="Primary Lead Owner changed from the Influencer timeline.")
+
     def save_changes(self, actor: CampaignOpsUser | None, campaign_id: str, owner_id: str,
                      edited_records: list[dict], original_rows: list[InfluencerPlanningStepRecord],
-                     original_owner_id: str | None, original_stage: str) -> dict[str, int]:
+                     original_owner_id: str | None, original_stage: str, *,
+                     manager_id: str | None = None, original_assignments: dict | None = None) -> dict[str, int]:
         """Validate the whole form, then apply a differential save in one transaction."""
         edited = []
         for index, record in enumerate(edited_records, 1):
@@ -227,9 +272,22 @@ class InfluencerTimelineService(CampaignOpsService):
                 raise CampaignOpsValidationError("Campaign is unavailable.")
             self._validate_influencer_access(repository, actor, campaign.program_id)
             self._owner(repository, owner_id)
+            repository.lock_influencer_timeline_program(campaign.program_id)
+            ownership = self._assignment_state(repository, campaign)
+            if original_assignments is not None and ownership != original_assignments:
+                raise CampaignOpsValidationError("Assignments changed since you opened this campaign. Reopen it before saving.")
+            lead_changed = owner_id != ownership["lead_id"]
+            manager_changed = original_assignments is not None and manager_id != ownership["manager_id"]
+            if lead_changed or manager_changed:
+                # Assignment administration retains the existing administrator restriction.
+                self._require_admin(actor)
+            if manager_changed:
+                eligible = repository.list_workflow_role_users("influencer", "manager")
+                if manager_id not in {user.id for user in eligible}:
+                    raise CampaignOpsValidationError("Choose an active Influencer Manager.")
             current_rows = repository.list_influencer_planning_steps(campaign_id, include_inactive=True)
             current = {row.id: row for row in current_rows if row.is_active}
-            if (campaign.manager_user_id != original_owner_id or campaign.influencer_stage != original_stage
+            if ((original_assignments is None and campaign.manager_user_id != original_owner_id) or campaign.influencer_stage != original_stage
                     or set(current) != set(original)
                     or any(asdict(current[key]) != asdict(original[key]) for key in current)):
                 raise CampaignOpsValidationError("This campaign changed since you opened it. Reopen it before saving.")
@@ -277,6 +335,11 @@ class InfluencerTimelineService(CampaignOpsService):
             for row_id in sorted(removals):
                 repository.deactivate_influencer_planning_step(row_id)
                 event("deactivated", row_id, original[row_id].step_title)
+            if lead_changed:
+                self._save_lead_assignment(repository, actor, campaign.program_id, owner_id)
+            if manager_changed:
+                CampaignOpsService(repository).reassign_workstream_lead(
+                    actor, campaign.program_id, ownership["workstream_id"], manager_id)
             if owner_payload is not None:
                 before_owner = campaign.manager_user_id
                 repository.update_influencer_campaign(campaign_id, **{key: value for key, value in owner_payload.items() if key != "program_id"})
@@ -286,8 +349,11 @@ class InfluencerTimelineService(CampaignOpsService):
                     actor_user_id=actor.id if actor else None,
                     old_value_json={"manager_user_id": before_owner}, new_value_json={"manager_user_id": owner_id},
                     message=f"{self._influencer_actor_label(actor)} changed the timeline owner.")
-            return {"updated": len(updates), "added": len(additions), "removed": len(removals),
-                    "owner_changed": int(owner_payload is not None), "unchanged": len(ids) - len(updates)}
+            result = {"updated": len(updates), "added": len(additions), "removed": len(removals),
+                      "owner_changed": int(owner_payload is not None or lead_changed), "unchanged": len(ids) - len(updates)}
+            if original_assignments is not None:
+                result["manager_changed"] = int(manager_changed)
+            return result
         return self._transaction(operation)
 
     def advance(self, actor: CampaignOpsUser | None, campaign_id: str, expected_stage: str) -> InfluencerCampaignRecord:
