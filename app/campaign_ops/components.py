@@ -162,15 +162,11 @@ def render_role_caption(user: CampaignOpsUser | None) -> None:
 def render_section_navigation(user: CampaignOpsUser | None, viewer: str) -> str:
     sections = get_sections_for_user(user, viewer)
     active_section = st.session_state.get("campaign_ops_section", sections[0])
-    for group, group_sections in (("Programs", sections[:2]), ("Workflows", sections[2:])):
-        render_section_header(group)
-        columns = st.columns(len(group_sections))
-        for column, section in zip(columns, group_sections):
-            if column.button(
-                section,
-                type="primary" if section == active_section else "secondary",
-                use_container_width=True,
-            ):
-                set_section(st.session_state, section)
-                active_section = section
+    with st.container(key="campaign_ops_navigation"):
+        for group, group_sections in (("Programs", sections[:2]), ("Workflows", sections[2:])):
+            render_section_header(group)
+            columns = st.columns(len(group_sections))
+            for column, section in zip(columns, group_sections):
+                column.button(section, type="primary" if section == active_section else "secondary",
+                    use_container_width=True, on_click=set_section, args=(st.session_state, section))
     return str(active_section)

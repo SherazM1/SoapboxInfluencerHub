@@ -76,8 +76,8 @@ def get_viewer_role(viewer: str, user: CampaignOpsUser | None = None) -> str:
     return "Administrator" if viewer == "Bailey" else "Team Member"
 
 
-def resolve_initialized_viewer(viewer: str) -> CampaignOpsUser | None:
-    user, setup_error = resolve_viewer_user(viewer)
+def resolve_initialized_viewer(viewer: str, users=None) -> CampaignOpsUser | None:
+    user, setup_error = (next((u for u in users if u.display_name == viewer), None), None) if users is not None else resolve_viewer_user(viewer)
     if setup_error:
         st.warning("Campaign Operations user lookup failed. Ask Bailey to verify database setup.")
         return None
@@ -137,9 +137,9 @@ def render_initialization_control(
             st.rerun()
 
 
-def render_temporary_viewer_selector(user: CampaignOpsUser | None = None) -> str:
+def render_temporary_viewer_selector(user: CampaignOpsUser | None = None, users=None) -> str:
     try:
-        viewer_options = [item.display_name for item in CampaignOpsRepository().list_active_users()]
+        viewer_options = [item.display_name for item in (users if users is not None else CampaignOpsRepository().list_active_users())]
     except CampaignOpsError:
         viewer_options = VIEWER_OPTIONS
     if not viewer_options:
@@ -214,21 +214,19 @@ def main() -> None:
         viewer = render_temporary_viewer_selector(None)
         render_setup_state(viewer, setup_status)
 
-    viewer = render_temporary_viewer_selector()
-    user = resolve_initialized_viewer(viewer)
-    if user is None:
-        st.stop()
-        return
-
-    update_viewer_state(st.session_state, viewer, user)
-    render_database_setup(user, setup_status)
-
     service = CampaignOpsService()
     try:
         users = service.list_active_users()
     except CampaignOpsError as exc:
         st.error(f"Unable to load Campaign Operations users: {exc}")
-        users = [user]
+        return
+    viewer = render_temporary_viewer_selector(users=users)
+    user = resolve_initialized_viewer(viewer, users=users)
+    if user is None:
+        st.stop()
+        return
+    update_viewer_state(st.session_state, viewer, user)
+    render_database_setup(user, setup_status)
 
     if st.session_state.get("campaign_ops_new_program_cleanup"):
         clear_new_program_draft(st.session_state)
