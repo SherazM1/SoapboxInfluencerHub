@@ -193,20 +193,15 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual([], service.list_campaigns(actor, 'recapping')[0])
         self.assertEqual(l.id, campaign.manager_user_id)
 
-    def test_ui_create_once_and_reopen(self):
+    def test_ui_creation_redirects_to_current_program_flow(self):
         app = AppTest.from_function(timeline_app, args=(True,), default_timeout=20).run()
-        select(app, 'Owner').select('T')
-        next(item for item in app.text_input if item.label == 'Campaign').set_value('New campaign')
-        button(app, 'Create Campaign').click().run()
-        self.assertEqual([], list(app.exception))
+        self.assertFalse(any(w.label in ('Owner', 'Program') for w in app.selectbox))
+        self.assertFalse(any(w.label == 'Campaign' for w in app.text_input))
+        button(app, 'New Program').click().run()
+        self.assertEqual('New Program', app.session_state['campaign_ops_section'])
+        self.assertEqual('influencer', app.session_state['campaign_ops_new_program_fixed_workflow'])
         repo, *_ = app.session_state.fixture
-        self.assertEqual(1, len(repo.influencer_campaigns))
-        self.assertEqual(9, len(repo.influencer_planning_steps))
-        app.run()
-        button(app, 'Back to campaigns').click().run()
-        button(app, 'Open').click().run()
-        self.assertEqual([], list(app.exception))
-        self.assertEqual(9, len(repo.influencer_planning_steps))
+        self.assertEqual([], repo.influencer_campaigns)
 
     def test_ui_add_custom_edit_notes_date_and_remove(self):
         app = AppTest.from_function(timeline_app).run()

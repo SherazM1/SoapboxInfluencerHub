@@ -148,8 +148,9 @@ def clear_new_program_draft(session_state: dict[str, object]) -> None:
 
 
 def cancel_new_program(session_state: dict[str, object]) -> None:
+    destination = "Influencer" if session_state.get("campaign_ops_new_program_fixed_workflow") == "influencer" else "All Programs"
     clear_new_program_draft(session_state)
-    set_section(session_state, "All Programs")
+    set_section(session_state, destination)
 
 
 def finish_new_program(session_state: dict[str, object], program_id: str) -> None:
@@ -161,7 +162,9 @@ def finish_new_program(session_state: dict[str, object], program_id: str) -> Non
     set_selected_program(session_state, program_id)
 
 
-def begin_new_program(session_state: dict[str, object]) -> None:
+def begin_new_program(session_state: dict[str, object], workflow: str | None = None) -> None:
     clear_new_program_draft(session_state)
     session_state["campaign_ops_create_program_open"] = True
+    if workflow is not None:
+        session_state["campaign_ops_new_program_fixed_workflow"] = workflow
     set_section(session_state, "New Program")

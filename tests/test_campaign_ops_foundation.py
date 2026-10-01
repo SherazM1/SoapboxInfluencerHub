@@ -378,7 +378,7 @@ class FakePrompt4ARepository:
         self,
         row_id: str,
         actor_user_id: str | None = None,
-        due_date: date | None = None,
+        due_date: date | None = ...,
         action: str | None = None,
         program_notes: str | None = None,
         done: bool | None = None,
@@ -394,7 +394,7 @@ class FakePrompt4ARepository:
             ("done", done),
             ("sequence_order", sequence_order),
         ):
-            if value is not None:
+            if (name == "due_date" and value is not ...) or (name != "due_date" and value is not None):
                 setattr(row, name, value)
         row.updated_by = actor_user_id
         return row
@@ -2553,7 +2553,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
                                                             campaigns.main()
 
         render_setup.assert_not_called()
-        resolve_viewer.assert_called_once_with("Bailey")
+        resolve_viewer.assert_called_once_with("Bailey", users=[])
         self.assertEqual(render_active.call_count, 1)
         self.assertEqual(render_active.call_args.args[0], "All Programs")
         self.assertEqual(render_active.call_args.args[1], "Bailey")

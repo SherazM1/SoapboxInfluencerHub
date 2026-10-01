@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import streamlit as st
 
+from app.campaign_ops.state import begin_new_program
 from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
 
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
@@ -68,9 +69,9 @@ def render_influencer(actor, service, users):
 
 
 def render_portfolio(actor, service, users, stage):
-    if stage == "planning":
-        with st.expander("New Campaign", expanded=False):
-            render_new_campaign(actor, service, users)
+    if stage == "planning" and can_access_admin(actor):
+        st.button("New Program", type="primary", key="influencer_new_program",
+                  on_click=begin_new_program, args=(st.session_state, "influencer"))
     search = st.text_input("Search campaigns", key=f"influencer_timeline_search_{stage}").strip().casefold()
     campaigns, timelines = service.list_campaigns(actor, stage)
     campaigns = [campaign for campaign in campaigns if search in campaign.campaign_title.casefold()]
@@ -92,38 +93,6 @@ def render_portfolio(actor, service, users, stage):
         columns[3].write(upcoming.step_title if upcoming else "?")
         columns[4].button("Open", key=f"influencer_timeline_open_{campaign.id}",
                           on_click=_open_campaign, args=(campaign.id,))
-
-
-def _owners(service):
-    return {
-        user.display_name: user.id
-        for user in service.list_workflow_role_users("influencer", "lead_owner")
-    }
-
-
-def render_new_campaign(actor, service, users):
-    owners = _owners(service)
-    programs = service.list_program_portfolio(actor, {"active_state": "active"})
-    by_id = {program.id: program for program in programs}
-    if not owners or not by_id:
-        st.info("An accessible active program and an active Influencer Lead Owner are required.")
-        return
-    with st.form("influencer_timeline_create"):
-        owner = st.selectbox("Owner", list(owners), index=None, placeholder="Choose a Lead Owner")
-        title = st.text_input("Campaign")
-        program_id = st.selectbox("Program", list(by_id), format_func=lambda key: by_id[key].program_name)
-        submitted = st.form_submit_button("Create Campaign", type="primary")
-    if submitted:
-        if owner is None:
-            st.error("Choose a Lead Owner.")
-            return
-        try:
-            campaign = service.create_campaign(actor, program_id, title, owners[owner])
-        except CampaignOpsError as exc:
-            st.error(str(exc))
-            return
-        st.session_state[SELECTED] = campaign.id
-        _saved("Campaign created.")
 
 
 @st.fragment

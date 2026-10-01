@@ -23,6 +23,9 @@ class SMMFakeRepository:
         self.smm_programs = []
         self.smm_rows = []
 
+    def lock_program(self, program_id):
+        return self.get_program(program_id)
+
     def get_program(self, program_id):
         return next((program for program in self.programs if program.id == program_id), None)
 

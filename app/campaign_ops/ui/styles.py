@@ -4,12 +4,15 @@ import streamlit as st
 
 
 def apply_campaign_ops_styles() -> None:
-    if st.session_state.get("campaign_ops_styles_applied"):
-        return
-    st.session_state["campaign_ops_styles_applied"] = True
     st.markdown(
         """
         <style>
+        .st-key-campaign_ops_navigation button[kind="primary"] {
+            background: #087f83; border-color: #087f83; color: white;
+        }
+        .st-key-campaign_ops_navigation button:focus-visible {
+            outline: 2px solid #087f83; outline-offset: 2px;
+        }
         [data-testid="stAppViewContainer"] .campaign-ops-page-header {
             border-left: 6px solid #0f766e;
             padding: .65rem .85rem;

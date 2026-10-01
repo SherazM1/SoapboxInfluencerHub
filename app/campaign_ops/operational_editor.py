@@ -4,7 +4,7 @@ from uuid import uuid4
 import streamlit as st
 
 COLUMNS = ("Date", "Action", "Done", "Program Notes")
-WIDTHS = [1.4, 3.5, .6, 3, .7]
+WIDTHS = [1.3, 3.8, .5, 3.2, .6]
 
 
 def editor_styles():
@@ -15,6 +15,9 @@ def editor_styles():
     .st-key-ops_editor button[kind="primary"]:hover {background:#076b6f;border-color:#076b6f;}
     .st-key-ops_editor input:focus, .st-key-ops_editor textarea:focus {outline-color:#087f83;}
     .st-key-ops_editor [data-testid="stHorizontalBlock"] {align-items:start;}
+    .st-key-ops_table {border-top:1px solid #9fc9c7;}
+    .st-key-ops_table [class*="st-key-ops_row_"] {border-bottom:1px solid #dce7e6;padding:.3rem 0;}
+    .st-key-ops_table [data-testid="stVerticalBlock"] {gap:.35rem;}
     </style>""")
 
 
@@ -46,12 +49,17 @@ def _remove(snapshot, prefix, token):
 
 
 def render_rows(snapshot, prefix, *, actions=None):
-    columns = st.columns(WIDTHS)
-    for column, label in zip(columns, COLUMNS):
+    with st.container(key="ops_table"):
+        _render_table(snapshot, prefix, actions=actions)
+
+
+def _render_table(snapshot, prefix, *, actions):
+    columns = st.columns(WIDTHS, gap="small")
+    for column, label in zip(columns, (*COLUMNS, "Remove")):
         column.markdown(f"**{label}**")
     for index, row in enumerate(snapshot["editor_records"], 1):
-        with st.container(border=True):
-            columns = st.columns(WIDTHS)
+        with st.container(key=f"ops_row_{row['_draft_id']}"):
+            columns = st.columns(WIDTHS, gap="small")
             with columns[0]:
                 row["Date"] = st.date_input(f"Date, row {index}", value=row.get("Date"),
                     format="MM/DD/YYYY", key=row_key(prefix, row, "Date"), label_visibility="collapsed")

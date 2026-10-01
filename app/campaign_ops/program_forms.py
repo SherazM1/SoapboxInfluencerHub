@@ -33,13 +33,13 @@ def render_new_program_form(
     default_workflow = WORKFLOW_LABELS[WorkstreamType.INFLUENCER.value]
     client_name = st.text_input("Client", key="campaign_ops_new_program_client")
     program_name = st.text_input("Program Name", key="campaign_ops_new_program_name")
-    workflow_label = st.selectbox(
-        "Workflow",
-        workflow_labels,
-        index=workflow_labels.index(default_workflow),
-        key="campaign_ops_new_program_workflow",
-    )
-    workflow_key = workflow_by_label[workflow_label]
+    workflow_key = st.session_state.get("campaign_ops_new_program_fixed_workflow")
+    if workflow_key is None:
+        workflow_label = st.selectbox(
+            "Workflow", workflow_labels, index=workflow_labels.index(default_workflow),
+            key="campaign_ops_new_program_workflow",
+        )
+        workflow_key = workflow_by_label[workflow_label]
     try:
         lead_users = service.list_workflow_role_users(
             workflow_key, WorkflowRole.LEAD_OWNER.value

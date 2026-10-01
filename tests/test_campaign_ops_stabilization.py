@@ -1,6 +1,7 @@
 from copy import deepcopy
 from dataclasses import asdict
 import unittest
+from tests.operational_editor_helpers import apply_edits, edit, field, draft_records
 from unittest.mock import MagicMock, patch
 
 from streamlit.testing.v1 import AppTest
@@ -113,7 +114,7 @@ class StabilizationTests(unittest.TestCase):
             button(app, "Open").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(self.campaign.id, app.session_state["campaign_ops_selected_influencer_campaign_id"])
-        ids = app.dataframe[0].value["_row_id"].tolist()
+        ids = [r["_row_id"] for r in draft_records(app)]
         self.assertEqual(["Taylor", "Lauren", "Ava"], selectbox(app, "Lead Owner").options)
         self.assertEqual(["Allyn", "Maren", "Carly"], selectbox(app, "Manager").options)
         selectbox(app, "Manager").select(self.repo.get_user_by_display_name("Maren").id).run()
@@ -129,7 +130,7 @@ class StabilizationTests(unittest.TestCase):
         with patch("streamlit.rerun", side_effect=AssertionError("Redundant rerun")):
             button(app, "Open").click().run()
         self.assertFalse(app.exception)
-        self.assertEqual(ids, app.dataframe[0].value["_row_id"].tolist())
+        self.assertEqual(ids, [r["_row_id"] for r in draft_records(app)])
         self.assertEqual(self.campaign.id, app.session_state["campaign_ops_selected_influencer_campaign_id"])
         self.assertFalse(app.tabs)
 
