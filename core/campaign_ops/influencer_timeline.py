@@ -62,7 +62,7 @@ def action_title(action: str, custom: str = "") -> str:
     return title
 
 
-EDITOR_COLUMNS = ("Date", "Action", "Program Notes")
+EDITOR_COLUMNS = ("Date", "Action", "Done", "Program Notes")
 CUSTOM_STEP_TYPE = "timeline_custom"
 
 
@@ -71,7 +71,7 @@ def editor_record(row: InfluencerPlanningStepRecord) -> dict:
     return {"_row_id": row.id, "Date": row.due_date,
             "Action": "Custom" if custom else row.step_title,
             "Custom Action": row.step_title if custom else "",
-            "Program Notes": row.notes or ""}
+            "Done": row.done, "Program Notes": row.notes or ""}
 
 
 def normalize_editor_record(record: dict) -> dict | None:
@@ -88,7 +88,10 @@ def normalize_editor_record(record: dict) -> dict | None:
     due = record.get("Date")
     if due == "":
         due = None
-    if not row_id and due is None and not any((action, custom, notes)):
+    done = record.get("Done") or False
+    if not isinstance(done, bool):
+        raise CampaignOpsValidationError("Done must be a checkbox value.")
+    if not row_id and due is None and not any((action, custom, notes, done)):
         return None
     if isinstance(due, datetime):
         due = due.date()
@@ -97,7 +100,7 @@ def normalize_editor_record(record: dict) -> dict | None:
     title = action_title(action, custom)
     if action != "Custom" and custom:
         raise CampaignOpsValidationError("Clear Custom Action or choose Custom in Action.")
-    return {"id": row_id, "title": title, "date": due, "notes": notes or None, "custom": action == "Custom"}
+    return {"id": row_id, "title": title, "date": due, "notes": notes or None, "custom": action == "Custom", "done": done}
 
 
 class InfluencerTimelineService(CampaignOpsService):
@@ -295,10 +298,10 @@ class InfluencerTimelineService(CampaignOpsService):
                 before = current.get(record["id"])
                 if before:
                     was_custom = editor_record(before)["Action"] == "Custom"
-                    if (before.step_title, before.due_date, before.notes or "", was_custom) == (
-                            record["title"], record["date"], record["notes"] or "", record["custom"]):
+                    if (before.step_title, before.due_date, before.notes or "", was_custom, before.done) == (
+                            record["title"], record["date"], record["notes"] or "", record["custom"], record["done"]):
                         continue
-                    kwargs = {"step_title": record["title"], "due_date": record["date"], "notes": record["notes"]}
+                    kwargs = {"step_title": record["title"], "due_date": record["date"], "notes": record["notes"], "done": record["done"]}
                     if record["custom"]:
                         kwargs["step_type"] = CUSTOM_STEP_TYPE
                     elif was_custom:
@@ -310,7 +313,7 @@ class InfluencerTimelineService(CampaignOpsService):
                     payload = self._planning_step_payload(repository, campaign_id, {
                         "step_title": record["title"], "due_date": record["date"], "notes": record["notes"],
                         "step_type": CUSTOM_STEP_TYPE if record["custom"] else "timeline_manual",
-                        "status": "not_started", "sequence_order": next_order})
+                        "status": "not_started", "sequence_order": next_order, "done": record["done"]})
                     additions.append(payload)
             removals = set(original) - set(ids)
             def event(kind, row_id, title):

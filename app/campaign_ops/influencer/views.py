@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from uuid import uuid4
 
-import pandas as pd
 import streamlit as st
+
+from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
 
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.permissions import can_access_admin
 from core.campaign_ops.influencer_timeline import (
-    ACTION_LIBRARY, EDITOR_COLUMNS, FORWARD_STAGES, STAGE_LABELS, InfluencerTimelineService, editor_record, sort_timeline,
+    ACTION_LIBRARY, FORWARD_STAGES, STAGE_LABELS, InfluencerTimelineService, editor_record, sort_timeline,
 )
 
 SELECTED = "campaign_ops_selected_influencer_campaign_id"
@@ -53,82 +53,18 @@ def render_influencer(actor, service, users):
     message = st.session_state.pop(FLASH, None)
     if message:
         st.success(message)
-    selected = st.session_state.get(SELECTED)
-    routed = st.session_state.pop("campaign_ops_influencer_route_record", None)
-    try:
-        if selected:
-            service.authorize_campaign(actor, str(selected))
-            snapshot = st.session_state.get(f"campaign_ops_influencer_draft_{actor.id}_{selected}")
-            if snapshot:
-                # A form submission already has a displayed snapshot. The save
-                # transaction rechecks authorization and current database values.
-                campaign, rows = snapshot["campaign"], snapshot["rows"]
-            else:
-                prefetched = routed["campaign"] if routed and routed["actor_id"] == actor.id and routed["campaign"].id == selected else None
-                campaign, rows = service.workspace(actor, str(selected), routed_campaign=prefetched)
-            if campaign.influencer_stage == stage and campaign.is_active:
-                render_workspace(actor, service, users, campaign, rows)
-                return
-            st.session_state.pop(SELECTED, None)
-        render_portfolio(actor, service, users, stage)
-    except CampaignOpsPermissionError:
-        _back_to_campaigns()
+    if st.session_state.pop(FLASH + "_denied", False):
         st.warning("You do not have access to this program.")
+    selected = st.session_state.get(SELECTED)
+    st.session_state.pop("campaign_ops_influencer_route_record", None)
+    if selected:
+        render_workspace(actor, service, users, str(selected), stage)
+        snapshot = st.session_state.get(f"campaign_ops_influencer_draft_{actor.id}_{selected}")
+        if snapshot:
+            render_stage_action(actor, service, snapshot["campaign"])
+        st.button("Back to campaigns", key=f"influencer_timeline_back_{selected}", on_click=_back_to_campaigns)
+    else:
         render_portfolio(actor, service, users, stage)
-    except CampaignOpsError as exc:
-        st.error(str(exc))
-        if selected:
-            st.button("Back to campaigns", on_click=_back_to_campaigns)
-
-def _editor_display_records(records):
-    """Show saved custom text in the single visible Action column."""
-    display_records = []
-    custom_options = []
-
-    for source in records:
-        record = dict(source)
-
-        if record.get("Action") == "Custom":
-            custom_text = (record.get("Custom Action") or "").strip()
-
-            if custom_text:
-                record["Action"] = custom_text
-
-                if (
-                    custom_text not in ACTION_LIBRARY
-                    and custom_text not in custom_options
-                ):
-                    custom_options.append(custom_text)
-
-        display_records.append(record)
-
-    return display_records, custom_options
-
-
-def _normalize_editor_action(record, saved_custom_values):
-    """
-    Convert the single visible Action column back into the persisted
-    standard/custom representation.
-    """
-    token = record["_draft_id"]
-    selected_action = record.get("Action")
-    prior_custom = (saved_custom_values.get(token) or "").strip()
-
-    # Existing saved custom rows are displayed using their custom text.
-    # If the user leaves that value unchanged, preserve it internally as Custom.
-    if prior_custom and selected_action == prior_custom:
-        record["Action"] = "Custom"
-        record["Custom Action"] = prior_custom
-        return True
-
-    # User explicitly selected Custom from the dropdown.
-    if selected_action == "Custom":
-        record["Custom Action"] = prior_custom
-        return True
-
-    # Standard dropdown action.
-    record["Custom Action"] = ""
-    return False
 
 
 def render_portfolio(actor, service, users, stage):
@@ -190,117 +126,71 @@ def render_new_campaign(actor, service, users):
         _saved("Campaign created.")
 
 
-def timeline_frame(rows, records=None):
-    records = records if records is not None else [dict(editor_record(row), _draft_id=row.id) for row in rows]
-    frame = pd.DataFrame(records, columns=["_row_id", "_draft_id", *EDITOR_COLUMNS])
-    # Explicit nullable types keep the empty/all-undated editor editable too.
-    frame["Date"] = pd.to_datetime(frame["Date"])
-    for column in ("_row_id", "_draft_id", "Action", "Program Notes"):
-        frame[column] = frame[column].astype("string")
-    return frame
+@st.fragment
+def render_workspace(actor, service, users, campaign_id, stage):
+    snapshot_key = f"campaign_ops_influencer_draft_{actor.id}_{campaign_id}"
+    version_key = f"campaign_ops_influencer_editor_version_{campaign_id}"
+    try:
+        snapshot = st.session_state.get(snapshot_key)
+        if snapshot:
+            campaign = service.authorize_campaign(actor, campaign_id)
+            if campaign.influencer_stage != snapshot["stage"]:
+                raise CampaignOpsError("Campaign stage changed. Reopen the campaign before editing.")
+        else:
+            campaign, rows = service.workspace(actor, campaign_id)
+            ownership = service.workspace_assignments(actor, campaign)
+            snapshot = {
+                "campaign": deepcopy(campaign), "rows": deepcopy(rows),
+                "owner": ownership["lead_id"], "stage": campaign.influencer_stage,
+                "ownership": ownership, "editor_manager": ownership["manager_id"],
+                "lead_names": {u.id: u.display_name for u in service.list_workflow_role_users("influencer", "lead_owner")},
+                "manager_names": {u.id: u.display_name for u in service.list_workflow_role_users("influencer", "manager")},
+                "editor_records": [dict(editor_record(row), _draft_id=row.id) for row in rows],
+                "editor_owner": ownership["lead_id"],
+            }
+            st.session_state[snapshot_key] = snapshot
+        if not campaign.is_active:
+            raise CampaignOpsError("Campaign is unavailable. Reopen the campaign list.")
+        if campaign.influencer_stage != stage:
+            _back_to_campaigns()
+            st.rerun()  # Exceptional navigation out of the editor fragment.
+    except CampaignOpsPermissionError:
+        _back_to_campaigns()
+        st.session_state[FLASH + "_denied"] = True
+        st.rerun()  # The permitted list belongs to the full page, not this fragment.
+    except CampaignOpsError as exc:
+        st.error(str(exc))
+        return
+    editor_styles()
+    with st.container(key="ops_editor"):
+        st.markdown(f"### {campaign.campaign_title}")
+        for suffix, display in (("_error", st.error), ("", st.success)):
+            message = st.session_state.pop(FLASH + suffix, None)
+            if message:
+                display(message)
+        version = st.session_state.get(version_key, 0)
+        prefix = f"influencer_rows_{actor.id}_{campaign_id}_{version}"
+        owners, managers = snapshot["lead_names"], snapshot["manager_names"]
+        for label, options, field, key in (
+            ("Lead Owner", owners, "editor_owner", f"influencer_lead_{campaign_id}_{version}"),
+            ("Manager", managers, "editor_manager", f"influencer_manager_{campaign_id}_{version}"),
+        ):
+            snapshot[field] = st.selectbox(label, list(options), format_func=options.get,
+                index=list(options).index(snapshot[field]) if snapshot[field] in options else None,
+                placeholder=f"Choose a {label}", key=key, disabled=not can_access_admin(actor))
+        st.markdown("#### Timeline")
+        render_rows(snapshot, prefix, actions=ACTION_LIBRARY)
+        st.button("Save Changes", type="primary", key=f"influencer_save_{campaign_id}",
+            on_click=_save_workspace, args=(actor, service, campaign_id, snapshot_key, version_key, version, prefix))
+        st.caption("Edits stay unsaved until Save Changes. Save before leaving or moving stages.")
+        if any(row.start_date for row in snapshot["rows"]):
+            st.caption("Existing row start dates still apply: a date cannot precede that row's start date.")
 
 
-def frame_records(frame):
-    return [{key: None if pd.isna(value) else value for key, value in row.items()}
-            for row in frame.to_dict("records")]
-
-
-def render_workspace(actor, service, users, campaign, rows):
-    st.markdown(f"### {campaign.campaign_title}")
-    snapshot_key = f"campaign_ops_influencer_draft_{actor.id}_{campaign.id}"
-    version_key = f"campaign_ops_influencer_editor_version_{campaign.id}"
-    if snapshot_key not in st.session_state:
-        ownership = service.workspace_assignments(actor, campaign)
-        st.session_state[snapshot_key] = {
-            "campaign": deepcopy(campaign), "rows": deepcopy(rows),
-            "owner": ownership["lead_id"], "stage": campaign.influencer_stage,
-            "ownership": ownership, "editor_manager": ownership["manager_id"],
-            "lead_names": {u.id: u.display_name for u in service.list_workflow_role_users("influencer", "lead_owner")},
-            "manager_names": {u.id: u.display_name for u in service.list_workflow_role_users("influencer", "manager")},
-            "editor_records": [dict(editor_record(row), _draft_id=row.id) for row in rows],
-            "editor_owner": ownership["lead_id"],
-        }
+def _save_workspace(actor, service, campaign_id, snapshot_key, version_key, version, prefix):
+    """One transaction before the automatic fragment refresh; no explicit rerun."""
     snapshot = st.session_state[snapshot_key]
-    version = st.session_state.get(version_key, 0)
-    owners, managers = snapshot["lead_names"], snapshot["manager_names"]
-    if snapshot.get("widget_version") != version:
-        snapshot["widget_base"] = deepcopy(snapshot["editor_records"])
-        snapshot["widget_version"] = version
-        snapshot["added_tokens"] = {}
-    owner_key = f"influencer_lead_{campaign.id}_{version}"
-    manager_key = f"influencer_manager_{campaign.id}_{version}"
-    custom_values = {
-        row["_draft_id"]: row.get("Custom Action", "")
-        for row in snapshot["editor_records"]
-        if row.get("_draft_id")
-    }
-    owner = st.selectbox("Lead Owner", list(owners), format_func=owners.get,
-                         index=list(owners).index(snapshot["editor_owner"]) if snapshot["editor_owner"] in owners else None,
-                         placeholder="Choose a Lead Owner", key=owner_key, disabled=not can_access_admin(actor))
-    manager = st.selectbox("Manager", list(managers), format_func=managers.get,
-                           index=list(managers).index(snapshot["editor_manager"]) if snapshot["editor_manager"] in managers else None,
-                           placeholder="Choose a Manager", key=manager_key, disabled=not can_access_admin(actor))
-    st.markdown("#### Timeline")
-    edited = st.data_editor(
-        timeline_frame([], snapshot["widget_base"]),
-        key=f"influencer_timeline_table_{campaign.id}_{version}",
-        num_rows="dynamic", hide_index=True, width="stretch",
-        column_order=list(EDITOR_COLUMNS), disabled=["_row_id", "_draft_id"],
-        column_config={
-            "_row_id": None,
-            "_draft_id": None,
-            "Date": st.column_config.DateColumn("Date", format="MM/DD/YYYY", required=False),
-            "Action": st.column_config.SelectboxColumn("Action", options=list(ACTION_LIBRARY), required=True, width="large"),
-            "Program Notes": st.column_config.TextColumn("Program Notes", width="large"),
-        },
-    )
-    records = frame_records(edited)
-    custom_heading = False
-    added_index = 0
-    for index, record in enumerate(records, 1):
-        # Draft tokens survive validation/rebasing and row deletion. They are
-        # UI-only; the save service uses the separate persisted row ID.
-        token = record.get("_draft_id")
-        if not token:
-            token = snapshot["added_tokens"].setdefault(added_index, str(uuid4()))
-            added_index += 1
-        record["_draft_id"] = token
-        record["Custom Action"] = custom_values.get(token, "") if record.get("Action") == "Custom" else ""
-        if record.get("Action") == "Custom":
-            if not custom_heading:
-                st.markdown("#### Custom Actions")
-                custom_heading = True
-            context = record["Date"].strftime("%m/%d/%Y") if record["Date"] is not None else "No date"
-            st.caption(f"Row {index} · {context}")
-            record["Custom Action"] = st.text_input(
-                "Custom action",
-                value=record["Custom Action"],
-                key=f"campaign_ops_influencer_draft_custom_{campaign.id}_{version}_{token}",
-            )
-
-    snapshot["editor_records"] = records
-    snapshot["editor_owner"] = owner
-    snapshot["editor_manager"] = manager
-    st.button("Save Changes", type="primary", key=f"influencer_save_{campaign.id}",
-              on_click=_save_workspace, args=(actor, service, campaign.id, snapshot_key, version_key, version))
-    st.caption("Edits stay unsaved until Save Changes. Save before leaving or moving stages.")
-    if any(row.start_date for row in snapshot["rows"]):
-        st.caption("Existing row start dates still apply: a date cannot precede that row's start date.")
-    render_stage_action(actor, service, campaign)
-    st.button("Back to campaigns", key=f"influencer_timeline_back_{campaign.id}", on_click=_back_to_campaigns)
-
-
-def _save_workspace(actor, service, campaign_id, snapshot_key, version_key, version):
-    """Save before the automatic widget-event render; no second full-page rerun."""
-    snapshot = st.session_state[snapshot_key]
-    records = deepcopy(snapshot["widget_base"])
-    delta = st.session_state.get(f"influencer_timeline_table_{campaign_id}_{version}", {})
-    for index, changes in delta.get("edited_rows", {}).items():
-        records[int(index)].update(changes)
-    deleted = set(delta.get("deleted_rows", []))
-    records = [row for index, row in enumerate(records) if index not in deleted]
-    for index, row in enumerate(delta.get("added_rows", [])):
-        records.append({"_row_id": None, "_draft_id": snapshot["added_tokens"].setdefault(index, str(uuid4())), **row})
+    records = deepcopy(collect_rows(snapshot, prefix))
     owner = st.session_state.get(f"influencer_lead_{campaign_id}_{version}")
     manager = st.session_state.get(f"influencer_manager_{campaign_id}_{version}")
     try:
@@ -308,25 +198,12 @@ def _save_workspace(actor, service, campaign_id, snapshot_key, version_key, vers
             raise CampaignOpsError("Choose a Lead Owner.")
         if manager is None and snapshot["ownership"]["manager_id"] is not None:
             raise CampaignOpsError("Choose a Manager.")
-        for record in records:
-            value = record.get("Date")
-            if isinstance(value, str):
-                record["Date"] = pd.to_datetime(value).date() if value else None
-            if record.get("Action") == "Custom":
-                custom_key = f"campaign_ops_influencer_draft_custom_{campaign_id}_{version}_{record['_draft_id']}"
-                record["Custom Action"] = st.session_state.get(custom_key, record.get("Custom Action", "")).strip()
-                if not record["Custom Action"]:
-                    raise CampaignOpsError("Enter text for every Custom action.")
-            else:
-                record["Custom Action"] = ""
         changes = service.save_changes(actor, campaign_id, owner, records,
             snapshot["rows"], snapshot["owner"], snapshot["stage"],
             manager_id=manager, original_assignments=snapshot["ownership"])
     except (CampaignOpsError, ValueError) as exc:
-        snapshot["editor_records"] = records
         snapshot["editor_owner"], snapshot["editor_manager"] = owner, manager
-        st.session_state[version_key] = version + 1
-        st.session_state[FLASH + "_error"] = f"{exc} Nothing saved; complete the form below."
+        st.session_state[FLASH + "_error"] = f"{exc} Nothing saved."
     else:
         st.session_state.pop(snapshot_key, None)
         st.session_state[version_key] = version + 1

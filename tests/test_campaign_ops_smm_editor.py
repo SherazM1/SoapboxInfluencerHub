@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from tests.operational_editor_helpers import apply_edits, edit, field, draft_records
 
 from streamlit.testing.v1 import AppTest
 
@@ -47,7 +48,7 @@ class SMMEditorTests(unittest.TestCase):
         self.assertIn("Save Changes", [button.label for button in app.button])
         self.assertNotIn("Save Owner", [button.label for button in app.button])
         self.assertNotIn("Save Manager", [button.label for button in app.button])
-        self.assertEqual(["Date", "Action", "Done", "Program Notes"], list(app.dataframe[0].proto.column_order))
+        self.assertEqual(["Date", "Action", "Done", "Program Notes"], [w.value.strip("*") for w in app.markdown if w.value in ("**Date**", "**Action**", "**Done**", "**Program Notes**")])
 
     def test_smm_owner_and_row_changes_persist_once(self):
         initial_table_state = {
@@ -58,7 +59,7 @@ class SMMEditorTests(unittest.TestCase):
         app = AppTest.from_function(smm_app, default_timeout=20).run()
         repo, service, actor, program_id = app.session_state.smm_fixture
         current = next(ws for ws in repo.workstreams if ws.program_id == program_id and ws.workstream_type == WorkstreamType.SMM.value)
-        app.session_state[f"smm_timeline_table_{program_id}_0"] = initial_table_state
+        apply_edits(app, initial_table_state)
         ava = next(user for user in repo.list_workflow_role_users(WorkstreamType.SMM.value, "lead_owner") if user.display_name == "Ava")
         maren = next(user for user in repo.list_workflow_role_users(WorkstreamType.SMM.value, "manager") if user.display_name == "Maren")
         app.selectbox[0].select(ava.id)
@@ -67,7 +68,7 @@ class SMMEditorTests(unittest.TestCase):
         self.assertEqual([], list(app.exception))
         summary = service.get_program_workspace_summary(actor, program_id)
         lead = next(a for a in summary.assignments if a.is_active and a.is_primary and a.assignment_role == "program_owner")
-        self.assertEqual(app.session_state[f"smm_lead_owner_{program_id}"], lead.user_id)
+        self.assertEqual(ava.id, lead.user_id)
         self.assertEqual(maren.id, current.owner_user_id)
         manager_assignment = next(
             assignment

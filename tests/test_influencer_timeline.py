@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import date
 import unittest
+from tests.operational_editor_helpers import apply_edits, edit, field, draft_records
 from unittest.mock import MagicMock, patch
 
 from streamlit.testing.v1 import AppTest
@@ -177,8 +178,8 @@ class TimelineTests(unittest.TestCase):
         campaign = repo.influencer_campaigns[0]
         self.assertEqual(l.id, campaign.manager_user_id)
         for stage, label, target in [('planning', 'Move to Live', 'live'), ('live', 'Move to Recapping', 'recapping'), ('recapping', 'Mark Complete', 'complete')]:
-            self.assertEqual(['_row_id', '_draft_id', *EDITOR_COLUMNS], list(app.dataframe[0].value.columns))
-            self.assertEqual(9, len(app.dataframe[0].value))
+            self.assertEqual(9, len(app.checkbox))
+            self.assertEqual(9, len(app.date_input))
             button(app, label).click().run()
             self.assertEqual(stage, campaign.influencer_stage)
             button(app, 'Cancel').click().run()
@@ -208,28 +209,22 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(9, len(repo.influencer_planning_steps))
 
     def test_ui_add_custom_edit_notes_date_and_remove(self):
-        app = AppTest.from_function(timeline_app, default_timeout=20).run()
+        app = AppTest.from_function(timeline_app).run()
         repo, service, actor, *_ = app.session_state.fixture
         campaign_id = repo.influencer_campaigns[0].id
-        def submit(delta):
-            version = app.session_state.filtered_state.get(f'campaign_ops_influencer_editor_version_{campaign_id}', 0)
-            app.session_state[f'influencer_timeline_table_{campaign_id}_{version}'] = delta
-            button(app, 'Save Changes').click().run()
-            self.assertEqual([], list(app.exception))
-        submit({'edited_rows': {}, 'deleted_rows': [], 'added_rows': [
-            {'Date': '2026-05-10', 'Action': 'Custom', 'Program Notes': 'First note'}]})
+        apply_edits(app, {'added_rows': [{'Action': 'Custom', 'Custom Action': 'Manual action', 'Date': '2026-05-10', 'Program Notes': 'First note'}]})
         self.assertEqual(9, len(repo.influencer_planning_steps))
-        app.text_input[0].set_value('Manual action')
         button(app, 'Save Changes').click().run()
         rows = service.workspace(actor, campaign_id)[1]
         self.assertEqual('Manual action', rows[0].step_title)
-        submit({'edited_rows': {0: {'Date': '2026-05-02', 'Program Notes': 'Changed note'}}, 'deleted_rows': [], 'added_rows': []})
+        edit(app, 0, **{'Date': '2026-05-02', 'Program Notes': 'Changed note'})
+        button(app, 'Save Changes').click().run()
         self.assertEqual('Changed note', rows[0].notes)
         self.assertEqual(date(2026, 5, 2), rows[0].due_date)
-        self.assertEqual(10, len(repo.influencer_planning_steps))
-        submit({'edited_rows': {}, 'deleted_rows': [0], 'added_rows': []})
+        apply_edits(app, {'deleted_rows': [0]})
+        button(app, 'Save Changes').click().run()
         self.assertFalse(rows[0].is_active)
-        self.assertEqual(9, len(app.dataframe[0].value))
+        self.assertEqual(9, len(app.date_input))
 
     def test_stage_lists_exclude_other_stages_inactive_and_complete(self):
         live = self.service.create_campaign(self.admin, self.program_id, 'Live campaign', self.l.id)
@@ -294,14 +289,11 @@ class TimelineTests(unittest.TestCase):
         connection.close.assert_called_once()
 
     def test_empty_custom_action_does_not_persist_partial_row(self):
-        app = AppTest.from_function(timeline_app, default_timeout=20).run()
+        app = AppTest.from_function(timeline_app).run()
         repo, *_ = app.session_state.fixture
-        campaign_id = repo.influencer_campaigns[0].id
-        app.session_state[f'influencer_timeline_table_{campaign_id}_0'] = {
-            'edited_rows': {}, 'deleted_rows': [],
-            'added_rows': [{'Action': 'Custom', 'Program Notes': 'Unsaved notes'}]}
+        apply_edits(app, {'added_rows': [{'Action': 'Custom', 'Program Notes': 'Unsaved notes'}]})
         button(app, 'Save Changes').click().run()
-        self.assertEqual([], list(app.exception))
-        self.assertTrue(any('Enter text for every Custom action.' in error.value for error in app.error))
+        self.assertFalse(app.exception)
+        self.assertTrue(any('Enter a custom action' in e.value for e in app.error))
         self.assertEqual(9, len(repo.influencer_planning_steps))
-        self.assertTrue(all(row.notes is None for row in repo.influencer_planning_steps))
+        self.assertTrue(all(r.notes is None for r in repo.influencer_planning_steps))

@@ -1142,7 +1142,7 @@ class CampaignOpsRepository:
         self,
         row_id: str,
         actor_user_id: str | None = None,
-        due_date: Any | None = None,
+        due_date: Any = ...,
         action: str | None = None,
         program_notes: str | None = None,
         done: bool | None = None,
@@ -1152,7 +1152,7 @@ class CampaignOpsRepository:
             """
             update campaign_ops_smm_timeline_rows
             set
-                due_date = coalesce(%s, due_date),
+                due_date = case when %s then %s else due_date end,
                 action = coalesce(%s, action),
                 program_notes = coalesce(%s, program_notes),
                 done = coalesce(%s, done),
@@ -1162,7 +1162,8 @@ class CampaignOpsRepository:
             returning *
             """,
             (
-                due_date,
+                due_date is not ...,
+                None if due_date is ... else due_date,
                 require_text(action, "action") if action is not None else None,
                 program_notes,
                 bool(done) if done is not None else None,
@@ -3923,8 +3924,8 @@ class CampaignOpsRepository:
         return next((row for row in self.list_influencer_campaigns(include_inactive=True) if row.id == campaign_id), None)
 
     def create_influencer_planning_step(self, influencer_campaign_id: str, step_title: str, **kwargs: Any) -> InfluencerPlanningStepRecord:
-        fields = ["influencer_campaign_id", "step_type", "step_title", "step_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes"]
-        return self._create_content_child("campaign_ops_influencer_planning_steps", InfluencerPlanningStepRecord, fields, (influencer_campaign_id, kwargs.get("step_type"), require_text(step_title, "step_title"), kwargs.get("step_description"), kwargs.get("sequence_order", 0), kwargs.get("responsible_party"), kwargs.get("assigned_user_id"), kwargs.get("start_date"), kwargs.get("due_date"), kwargs.get("completed_date"), kwargs.get("status"), bool(kwargs.get("hard_deadline", False)), kwargs.get("waiting_on"), kwargs.get("notes")))
+        fields = ["influencer_campaign_id", "step_type", "step_title", "step_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes", "done"]
+        return self._create_content_child("campaign_ops_influencer_planning_steps", InfluencerPlanningStepRecord, fields, (influencer_campaign_id, kwargs.get("step_type"), require_text(step_title, "step_title"), kwargs.get("step_description"), kwargs.get("sequence_order", 0), kwargs.get("responsible_party"), kwargs.get("assigned_user_id"), kwargs.get("start_date"), kwargs.get("due_date"), kwargs.get("completed_date"), kwargs.get("status"), bool(kwargs.get("hard_deadline", False)), kwargs.get("waiting_on"), kwargs.get("notes"), bool(kwargs.get("done", False))))
 
     def list_influencer_planning_steps(self, influencer_campaign_id: str, include_inactive: bool = False) -> list[InfluencerPlanningStepRecord]:
         clause = "" if include_inactive else "and is_active = true"
@@ -3946,7 +3947,7 @@ class CampaignOpsRepository:
         return grouped
 
     def update_influencer_planning_step(self, step_id: str, **kwargs: Any) -> InfluencerPlanningStepRecord:
-        fields = ["step_type", "step_title", "step_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes"]
+        fields = ["step_type", "step_title", "step_description", "sequence_order", "responsible_party", "assigned_user_id", "start_date", "due_date", "completed_date", "status", "hard_deadline", "waiting_on", "notes", "done"]
         return self._update_content_child("campaign_ops_influencer_planning_steps", InfluencerPlanningStepRecord, step_id, fields, tuple(kwargs.get(field) for field in fields))
 
     def deactivate_influencer_planning_step(self, step_id: str) -> None:

@@ -1238,6 +1238,7 @@ class InfluencerPlanningStepRecord:
     due_date: date | None = None
     completed_date: date | None = None
     status: str | None = None
+    done: bool = False
     hard_deadline: bool = False
     waiting_on: str | None = None
     notes: str | None = None
