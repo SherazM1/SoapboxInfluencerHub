@@ -27,6 +27,18 @@ def page_app():
         campaigns.main()
 
 
+def fixed_workflow_form_app():
+    import streamlit as st
+    from app.campaign_ops.program_forms import render_new_program_form
+    from core.campaign_ops.service import CampaignOpsService
+    from tests.test_campaign_ops_roster_new_program import RosterRepository
+
+    if "roster_repo" not in st.session_state:
+        st.session_state.roster_repo = RosterRepository()
+    repository = st.session_state.roster_repo
+    render_new_program_form(repository.users[0], CampaignOpsService(repository), repository.users, [])
+
+
 class NewProgramFlowTests(unittest.TestCase):
     def open_form(self):
         app = AppTest.from_function(page_app, default_timeout=20).run()
@@ -91,6 +103,36 @@ class NewProgramFlowTests(unittest.TestCase):
         self.assertEqual(8, len(repo.list_smm_timeline_rows(workspace.id)))
         self.assertEqual("Social Media Management", app.session_state["campaign_ops_section"])
         self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
+
+    def test_creation_form_passes_retail_type_only_for_retail_media(self):
+        workflows = (
+            ("ecommerce", "Emma", "Kate", None),
+            ("influencer", "Taylor", "Allyn", None),
+            ("smm", "Taylor", "Ava", None),
+            ("retail_media", "Chloe", "Chloe", "incomm"),
+        )
+        for workflow, lead_name, manager_name, retail_type in workflows:
+            with self.subTest(workflow=workflow):
+                app = AppTest.from_function(fixed_workflow_form_app, default_timeout=20)
+                app.session_state["campaign_ops_new_program_fixed_workflow"] = workflow
+                app.run()
+                repository = app.session_state.roster_repo
+                text_input(app, "Client").set_value("Keyword Client")
+                text_input(app, "Program Name").set_value(f"{workflow} keyword test")
+                selectbox(app, "Lead Owner").select(repository.get_user_by_display_name(lead_name).id)
+                selectbox(app, "Manager").select(repository.get_user_by_display_name(manager_name).id)
+                if retail_type:
+                    selectbox(app, "Retail Type").select(retail_type)
+
+                with patch("app.campaign_ops.program_forms.ProgramRoutingService") as router:
+                    router.return_value.create_registry_program.return_value = "created-program"
+                    button(app, "Create Program").click().run()
+                    self.assertEqual([], list(app.exception))
+                    kwargs = router.return_value.create_registry_program.call_args.kwargs
+                    if workflow == "retail_media":
+                        self.assertEqual("incomm", kwargs["retail_type"])
+                    else:
+                        self.assertNotIn("retail_type", kwargs)
 
     def test_section_content_creation_opens_operational_editor(self):
         from core.campaign_ops.content_management_timeline import DEFAULT_CONTENT_MANAGEMENT_ACTIONS

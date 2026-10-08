@@ -91,13 +91,15 @@ def _create_program(actor, service, workflow_key):
         state["campaign_ops_new_program_error"] = "Choose a Lead Owner." if not lead_id else "Choose a Manager."
         return
     try:
-        program_id = ProgramRoutingService(service.repository).create_registry_program(
-            actor=actor, program_name=state.get("campaign_ops_new_program_name", ""),
+        kwargs = dict(
+            program_name=state.get("campaign_ops_new_program_name", ""),
             new_client_name=trim_or_none(state.get("campaign_ops_new_program_client", "")),
             primary_workstream_type=workflow_key, primary_owner_user_id=lead_id,
             manager_user_id=manager_id, workstream_types=[workflow_key],
-            retail_type=state.get("campaign_ops_new_program_retail_type", "general") if workflow_key == WorkstreamType.RETAIL_MEDIA.value else None,
         )
+        if workflow_key == WorkstreamType.RETAIL_MEDIA.value:
+            kwargs["retail_type"] = state.get("campaign_ops_new_program_retail_type", "general")
+        program_id = ProgramRoutingService(service.repository).create_registry_program(actor=actor, **kwargs)
     except CampaignOpsError as exc:
         state["campaign_ops_new_program_error"] = f"Program was not created: {exc}"
         return

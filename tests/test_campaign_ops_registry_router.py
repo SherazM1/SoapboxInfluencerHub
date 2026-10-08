@@ -47,6 +47,27 @@ class RegistryRouterTests(unittest.TestCase):
         self.assertEqual("Renamed Manager", row.manager_name)
         self.assertEqual(self.manager.id, row.manager_user_id)
 
+    def test_router_never_forwards_retail_type_to_generic_program_creation(self):
+        router = ProgramRoutingService(self.repo)
+        with patch.object(CampaignOpsService, "create_program_with_workstreams_and_assignments",
+                          return_value="created-program") as create_program, \
+             patch.object(router, "_ensure_influencer"), \
+             patch.object(router, "_ensure_smm"), \
+             patch.object(router, "_ensure_retail_media") as ensure_retail, \
+             patch.object(router, "_ensure_content_management"):
+            for workflow in ("ecommerce", "influencer", "smm", "retail_media"):
+                with self.subTest(workflow=workflow):
+                    router.create_registry_program(
+                        actor=self.admin,
+                        program_name="Keyword boundary",
+                        new_client_name="Keyword client",
+                        primary_workstream_type=workflow,
+                        primary_owner_user_id=self.admin.id,
+                        retail_type="incomm",
+                    )
+                    self.assertNotIn("retail_type", create_program.call_args.kwargs)
+            ensure_retail.assert_called_once_with(self.repo, self.admin, "created-program", retail_type="incomm")
+
     def test_registry_sql_has_only_registry_joins_and_existing_visibility(self):
         repo = CampaignOpsRepository()
         with patch.object(repo, "_fetch_all", return_value=[]) as fetch:

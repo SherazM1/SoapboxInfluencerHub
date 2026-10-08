@@ -39,15 +39,19 @@ class ProgramRoutingService(CampaignOpsService):
 
     def create_registry_program(self, actor, **kwargs):
         # The program, assignments and workflow workspace share ONE transaction.
+        workflow = kwargs.get("primary_workstream_type")
+        requested_retail_type = kwargs.pop("retail_type", None)
+        retail_type = requested_retail_type if workflow == WorkstreamType.RETAIL_MEDIA.value else None
+
         def operation(repository):
             program_id = CampaignOpsService(repository).create_program_with_workstreams_and_assignments(actor, **kwargs)
-            if kwargs.get("primary_workstream_type") == "influencer":
+            if workflow == "influencer":
                 self._ensure_influencer(repository, actor, program_id)
-            elif kwargs.get("primary_workstream_type") == WorkstreamType.SMM.value:
+            elif workflow == WorkstreamType.SMM.value:
                 self._ensure_smm(repository, actor, program_id)
-            elif kwargs.get("primary_workstream_type") == WorkstreamType.RETAIL_MEDIA.value:
-                self._ensure_retail_media(repository, actor, program_id, retail_type=kwargs.get("retail_type"))
-            elif kwargs.get("primary_workstream_type") == WorkstreamType.ECOMMERCE.value:
+            elif workflow == WorkstreamType.RETAIL_MEDIA.value:
+                self._ensure_retail_media(repository, actor, program_id, retail_type=retail_type)
+            elif workflow == WorkstreamType.ECOMMERCE.value:
                 self._ensure_content_management(repository, actor, program_id)
             return program_id
         return self._transaction(operation)
