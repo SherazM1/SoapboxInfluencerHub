@@ -148,7 +148,10 @@ def clear_new_program_draft(session_state: dict[str, object]) -> None:
 
 
 def cancel_new_program(session_state: dict[str, object]) -> None:
-    destination = "Influencer" if session_state.get("campaign_ops_new_program_fixed_workflow") == "influencer" else "All Programs"
+    destination = {
+        "influencer": "Influencer",
+        "ecommerce": "eCommerce / Content",
+    }.get(session_state.get("campaign_ops_new_program_fixed_workflow"), "All Programs")
     clear_new_program_draft(session_state)
     set_section(session_state, destination)
 

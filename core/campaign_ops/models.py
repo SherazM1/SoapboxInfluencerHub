@@ -196,6 +196,69 @@ class SMMTimelineRowRecord:
 
 
 @dataclass(slots=True)
+class ContentManagementProgramRecord:
+    id: str
+    program_id: str
+    workstream_id: str
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
+
+
+@dataclass(slots=True)
+class ContentManagementTimelineRowRecord:
+    id: str
+    content_management_program_id: str
+    due_date: date | None = None
+    action: str = ""
+    done: bool = False
+    program_notes: str | None = None
+    sequence_order: int = 0
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
+
+    def __post_init__(self) -> None:
+        self.action = require_text(self.action, "action")
+
+
+@dataclass(slots=True)
+class RetailMediaProgramRecord:
+    id: str
+    program_id: str
+    workstream_id: str
+    retail_type: str = "general"
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
+
+
+@dataclass(slots=True)
+class RetailMediaTimelineRowRecord:
+    id: str
+    retail_media_program_id: str
+    due_date: date | None = None
+    action: str = ""
+    done: bool = False
+    program_notes: str | None = None
+    sequence_order: int = 0
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
+
+    def __post_init__(self) -> None:
+        self.action = require_text(self.action, "action")
+
+
+@dataclass(slots=True)
 class Task:
     id: str
     program_id: str

@@ -1,21 +1,30 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from html import escape
 from typing import Any
 
 import streamlit as st
 
+from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
 from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date, format_datetime, safe_text, title_label
 from app.campaign_ops.note_views import render_notes
+from app.campaign_ops.program_router import open_program
 from app.campaign_ops.retail_media.baseline import action_display_text, current_status_text, next_current_retail_media_action, normalize_retail_media_actions, over_budget
 from app.campaign_ops.retail_media.formatting import channel_mix_label, retail_status_label
 from app.campaign_ops.state import set_selected_program
 from app.campaign_ops.validation import trim_or_none
-from core.campaign_ops.enums import TaskStatus
+from core.campaign_ops.enums import TaskStatus, WorkstreamType
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.models import CampaignOpsUser
+from core.campaign_ops.permissions import can_access_admin, require_program_access
+from core.campaign_ops.program_routing import ProgramRoutingService
+from core.campaign_ops.repository import CampaignOpsRepository
 from core.campaign_ops.retail_media import RETAIL_MEDIA_APPROVAL_STATUSES, RETAIL_MEDIA_CHANNEL_TYPES, RETAIL_MEDIA_STATUSES, RETAIL_MEDIA_STATUS_NOT_STARTED, RETAIL_MEDIA_SUBMISSION_STATUSES
+from core.campaign_ops.retail_media_timeline import RetailMediaTimelineService, sort_retail_media_timeline_rows
 from core.campaign_ops.service import CampaignOpsService
+
+SELECTED = "campaign_ops_selected_retail_media_campaign_id"
 
 SORT_OPTIONS = {
     "Recently updated": "updated_at",
@@ -32,17 +41,140 @@ SORT_OPTIONS = {
 
 
 def render_retail_media(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
-    st.subheader("Retail Media")
-    render_css()
-    selected_id = st.session_state.get("campaign_ops_selected_retail_media_campaign_id")
-    if selected_id:
-        render_workspace(actor, service, users, str(selected_id))
+    if st.session_state.pop("campaign_ops_retail_media_denied", False):
+        st.warning("You do not have access to this program.")
+    program_id = st.session_state.get(SELECTED)
+    if program_id is None:
+        _render_retail_media_program_list(actor, service)
         return
-    view = st.radio("Retail Media view", ["Retail Media Portfolio", "New Retail Media Campaign"], horizontal=True, key="campaign_ops_retail_media_view")
-    if view == "New Retail Media Campaign" or st.session_state.get("campaign_ops_retail_media_create_open"):
-        render_new_campaign(actor, service, users)
+    render_editor(actor, RetailMediaTimelineService(service.repository), str(program_id))
+    st.button("Back to programs", key=f"retail_media_back_to_programs_{program_id}", on_click=_back)
+
+
+def _back():
+    st.session_state.pop(SELECTED, None)
+    for key in list(st.session_state):
+        if key.startswith("campaign_ops_retail_media_draft_"):
+            st.session_state.pop(key, None)
+
+
+def _render_retail_media_program_list(actor, service: CampaignOpsService) -> None:
+    try:
+        programs = [
+            row for row in ProgramRoutingService(service.repository).list_registry(actor)
+            if row.primary_workstream_type == WorkstreamType.RETAIL_MEDIA.value
+        ]
+    except CampaignOpsError as exc:
+        st.error(f"Unable to load Retail Media programs: {exc}")
+        return
+
+    columns = st.columns([3, 2, 2, 1])
+    for column, label in zip(columns, ("Program", "Lead Owner", "Manager", "Open")):
+        column.markdown(f"**{label}**")
+    if not programs:
+        st.info("No active Retail Media programs are available.")
+    for program in programs:
+        columns = st.columns([3, 2, 2, 1])
+        columns[0].write(program.program_name)
+        columns[1].write(program.primary_owner_name or "-")
+        columns[2].write(program.manager_name or "-")
+        columns[3].button(
+            "Open",
+            key=f"campaign_ops_retail_media_open_{program.id}",
+            on_click=open_program,
+            args=(st.session_state, actor, service, program.id),
+        )
+
+
+@st.fragment
+def render_editor(actor, service, program_id):
+    draft_key = f"campaign_ops_retail_media_draft_{actor.id}_{program_id}"
+    version_key = f"retail_media_timeline_editor_version_{actor.id}_{program_id}"
+    repo = service.repository or CampaignOpsRepository()
+    try:
+        program = require_program_access(repo, actor, program_id, active_only=True)
+        if program.primary_workstream_type != WorkstreamType.RETAIL_MEDIA.value:
+            raise CampaignOpsError("The selected Program is not a Retail Media Program.")
+        snapshot = st.session_state.get(draft_key)
+        if snapshot is None:
+            _, rows = service.initialize_program(actor, program_id)
+            ownership = service.assignment_state(actor, program_id)
+            workspace = repo.get_retail_media_program_by_program(program_id)
+            snapshot = {
+                "rows": deepcopy(rows), "ownership": ownership,
+                "editor_owner": ownership["lead_id"], "editor_manager": ownership["manager_id"],
+                "lead_names": {u.id: u.display_name for u in service.list_workflow_role_users("retail_media", "lead_owner")},
+                "manager_names": {u.id: u.display_name for u in service.list_workflow_role_users("retail_media", "manager")},
+                "editor_records": [{"_row_id": r.id, "_draft_id": r.id, "Date": r.due_date,
+                    "Action": r.action, "Done": bool(r.done), "Program Notes": r.program_notes or ""}
+                    for r in sort_retail_media_timeline_rows(rows)],
+                "retail_type": workspace.retail_type if workspace else "general",
+            }
+            st.session_state[draft_key] = snapshot
+    except CampaignOpsPermissionError:
+        _back()
+        st.session_state["campaign_ops_retail_media_denied"] = True
+        st.rerun()
+    except CampaignOpsError as exc:
+        st.error(str(exc))
+        return
+
+    editor_styles()
+    with st.container(key="ops_editor"):
+        st.markdown(f"### {program.program_name}")
+        message = st.session_state.pop(draft_key + "_message", None)
+        if message:
+            (st.error if message[0] else st.success)(message[1])
+        version = st.session_state.get(version_key, 0)
+        prefix = f"retail_media_rows_{actor.id}_{program_id}_{version}"
+        for label, options, field, key in (
+            ("Lead Owner", snapshot["lead_names"], "editor_owner", f"{prefix}_lead"),
+            ("Manager", snapshot["manager_names"], "editor_manager", f"{prefix}_manager"),
+        ):
+            snapshot[field] = st.selectbox(label, list(options), format_func=options.get,
+                index=list(options).index(snapshot[field]) if snapshot[field] in options else None,
+                placeholder=f"Choose a {label}", key=key, disabled=not can_access_admin(actor))
+        snapshot["retail_type"] = st.selectbox(
+            "Retail Type",
+            ["general", "incomm"],
+            index=["general", "incomm"].index(snapshot.get("retail_type", "general")),
+            key=f"{prefix}_retail_type",
+            disabled=not can_access_admin(actor),
+        )
+        st.markdown("#### Timeline")
+        render_rows(snapshot, prefix, actions=(
+            "Finalize campaign brief and retailer scope",
+            "Confirm retailer setup, login access, and account owner",
+            "Collect and align product assortment and SKU list",
+            "Lock media placements, exclusions, and targeting",
+            "Finalize campaign launch calendar and flighting dates",
+            "Submit initial assets and trafficking for review",
+            "QA all targeting, creative, and placements",
+            "Launch campaign and monitor pacing",
+            "Review early performance and optimization opportunities",
+            "Refresh creative or targeting based on results",
+            "Prepare wrap-up recap and final reporting",
+            "Close campaign and archive final learnings",
+            "Custom",
+        ))
+        st.button("Save Changes", type="primary", key=f"retail_media_save_{program_id}", on_click=_save,
+            args=(actor, service, program_id, draft_key, version_key, prefix))
+        st.caption("Edits stay unsaved until Save Changes. Save before leaving.")
+
+
+def _save(actor, service, program_id, draft_key, version_key, prefix):
+    snapshot = st.session_state[draft_key]
+    records = deepcopy(collect_rows(snapshot, prefix))
+    lead, manager = st.session_state.get(f"{prefix}_lead"), st.session_state.get(f"{prefix}_manager")
+    try:
+        changes = service.save_changes(actor, program_id, records, snapshot["rows"],
+            snapshot["ownership"], lead, manager, retail_type=snapshot.get("retail_type"))
+    except (CampaignOpsError, ValueError) as exc:
+        st.session_state[draft_key + "_message"] = (True, f"{exc} Nothing saved.")
     else:
-        render_portfolio(actor, service)
+        st.session_state.pop(draft_key, None)
+        st.session_state[version_key] = st.session_state.get(version_key, 0) + 1
+        st.session_state[draft_key + "_message"] = (False, "Changes saved." if any(changes.values()) else "No changes to save.")
 
 
 def render_css() -> None:

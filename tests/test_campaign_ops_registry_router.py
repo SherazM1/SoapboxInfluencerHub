@@ -144,11 +144,18 @@ class RegistryRouterTests(unittest.TestCase):
                 state = {key: "old"}
                 open_program(state, self.admin, self.service, pid)
                 self.assertEqual(section, state["campaign_ops_section"])
-                self.assertNotIn(key, state)
+                if workflow == "ecommerce":
+                    workspace = self.repo.get_content_management_program_by_program(pid)
+                    self.assertEqual(workspace.id, state[key])
+                else:
+                    self.assertNotIn(key, state)
                 record = SimpleNamespace(id="workflow-record", is_active=True)
                 with patch.object(self.repo, "list_program_workflow_records", return_value=[record]):
                     open_program(state, self.admin, self.service, pid)
-                self.assertEqual("workflow-record", state[key])
+                if workflow == "ecommerce":
+                    self.assertEqual(workspace.id, state[key])
+                else:
+                    self.assertEqual("workflow-record", state[key])
                 self.assertNotIn("campaign_ops_selected_program_id", state)
 
     def test_smm_has_explicit_section_fallback(self):
@@ -221,6 +228,41 @@ class RegistryRouterTests(unittest.TestCase):
         button(app, "Back to programs").click().run()
         self.assertNotIn("campaign_ops_selected_smm_program_id", app.session_state)
         self.assertTrue(any(widget.label == "Open" for widget in app.button))
+
+    def test_content_registry_my_programs_and_section_open_same_editor(self):
+        app = AppTest.from_function(page_app, default_timeout=20).run()
+        repository = app.session_state.roster_repo
+        lead = repository.get_user_by_display_name("Emma")
+        manager = repository.get_user_by_display_name("Kate")
+        program_id = ProgramRoutingService(repository).create_registry_program(
+            actor=repository.users[0], program_name="Content route", new_client_name="Client",
+            primary_workstream_type="ecommerce", primary_owner_user_id=lead.id,
+            manager_user_id=manager.id,
+        )
+        workspace = repository.get_content_management_program_by_program(program_id)
+        app.run()
+
+        button(app, "Open").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(workspace.id, app.session_state["campaign_ops_selected_content_program_id"])
+        self.assertEqual("eCommerce / Content", app.session_state["campaign_ops_section"])
+        self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
+        self.assertFalse(any(widget.label == "Open Program Workspace" for widget in app.button))
+        self.assertEqual([], list(app.tabs))
+
+        button(app, "Back to programs").click().run()
+        button(app, "My Programs").click().run()
+        button(app, "Open").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(workspace.id, app.session_state["campaign_ops_selected_content_program_id"])
+        button(app, "Back to programs").click().run()
+        button(app, "eCommerce / Content").click().run()
+        self.assertEqual(["**Client**", "**Program**", "**Lead Owner**", "**Manager**", "**Open**"],
+                         [widget.value for widget in app.markdown if widget.value.startswith("**")])
+        button(app, "Open").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(workspace.id, app.session_state["campaign_ops_selected_content_program_id"])
+        self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
 
     def test_all_programs_and_my_programs_smm_opens_use_shared_router(self):
         app = AppTest.from_function(page_app, default_timeout=20).run()

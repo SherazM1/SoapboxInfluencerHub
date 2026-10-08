@@ -1,21 +1,33 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from html import escape
 from typing import Any
 
 import streamlit as st
 
+from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
 from app.campaign_ops.content_management.baseline import action_display_text, next_current_action, normalize_content_actions
 from app.campaign_ops.content_management.formatting import content_status_label
 from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date, format_datetime, safe_text, title_label
 from app.campaign_ops.note_views import render_notes
-from app.campaign_ops.state import set_selected_program
+from app.campaign_ops.program_router import open_program
+from app.campaign_ops.state import begin_new_program, set_selected_program
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.content_management import CONTENT_STATUSES, CONTENT_STATUS_NOT_STARTED
-from core.campaign_ops.enums import TaskStatus
+from core.campaign_ops.enums import TaskStatus, WorkstreamType
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.models import CampaignOpsUser
+from core.campaign_ops.permissions import can_access_admin, require_program_access
+from core.campaign_ops.program_routing import ProgramRoutingService
+from core.campaign_ops.repository import CampaignOpsRepository
+from core.campaign_ops.content_management_timeline import (
+    ContentManagementTimelineService,
+    sort_content_management_timeline_rows,
+)
 from core.campaign_ops.service import CampaignOpsService
+
+SELECTED_WORKSPACE = "campaign_ops_selected_content_program_id"
 
 SORT_OPTIONS = {
     "Recently updated": "updated_at",
@@ -33,17 +45,156 @@ SORT_OPTIONS = {
 
 
 def render_content_management(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
-    st.subheader("Content Management")
-    render_css()
-    selected_id = st.session_state.get("campaign_ops_selected_content_program_id")
-    if selected_id:
-        render_workspace(actor, service, users, str(selected_id))
+    del users
+    st.subheader("Content Management / eCommerce")
+    if st.session_state.pop("campaign_ops_content_management_denied", False):
+        st.warning("You do not have access to this program.")
+    workspace_id = st.session_state.get(SELECTED_WORKSPACE)
+    if workspace_id:
+        render_operational_editor(actor, service, str(workspace_id))
         return
-    view = st.radio("Content view", ["Content Management Portfolio", "New Content Program"], horizontal=True, key="campaign_ops_content_view")
-    if view == "New Content Program" or st.session_state.get("campaign_ops_content_create_open"):
-        render_new_program(actor, service, users)
+
+    if can_access_admin(actor):
+        st.button(
+            "New Content Program",
+            type="primary",
+            key="campaign_ops_content_new_operational_program",
+            on_click=begin_new_program,
+            args=(st.session_state, WorkstreamType.ECOMMERCE.value),
+        )
+    try:
+        programs = [
+            row for row in ProgramRoutingService(service.repository).list_registry(actor)
+            if row.primary_workstream_type == WorkstreamType.ECOMMERCE.value
+        ]
+    except CampaignOpsError as exc:
+        st.error(f"Unable to load Content Management programs: {exc}")
+        return
+
+    columns = st.columns([2, 3, 2, 2, 1])
+    for column, label in zip(columns, ("Client", "Program", "Lead Owner", "Manager", "Open")):
+        column.markdown(f"**{label}**")
+    if not programs:
+        st.info("No active Content Management / eCommerce programs are available.")
+    for program in programs:
+        columns = st.columns([2, 3, 2, 2, 1])
+        columns[0].write(safe_text(program.client_name))
+        columns[1].write(program.program_name)
+        columns[2].write(safe_text(program.primary_owner_name))
+        columns[3].write(safe_text(program.manager_name))
+        columns[4].button(
+            "Open",
+            key=f"campaign_ops_content_management_open_{program.id}",
+            on_click=open_program,
+            args=(st.session_state, actor, service, program.id),
+        )
+
+
+def _back_to_content_programs():
+    st.session_state.pop(SELECTED_WORKSPACE, None)
+    for key in list(st.session_state):
+        if key.startswith("campaign_ops_content_management_draft_"):
+            st.session_state.pop(key, None)
+
+
+@st.fragment
+def render_operational_editor(actor, service, workspace_id: str) -> None:
+    draft_key = f"campaign_ops_content_management_draft_{actor.id}_{workspace_id}"
+    version_key = f"content_management_editor_version_{actor.id}_{workspace_id}"
+    repository = service.repository or CampaignOpsRepository()
+    try:
+        workspace = repository.get_content_management_program(workspace_id)
+        if workspace is None or not workspace.is_active:
+            raise CampaignOpsError("Content Management workspace is unavailable.")
+        program = require_program_access(repository, actor, workspace.program_id, active_only=True)
+        if program.primary_workstream_type != WorkstreamType.ECOMMERCE.value:
+            raise CampaignOpsError("The selected Program is not a Content Management / eCommerce Program.")
+        timeline = ContentManagementTimelineService(service.repository)
+        snapshot = st.session_state.get(draft_key)
+        if snapshot is None:
+            workspace, rows = timeline.initialize_program(actor, program.id)
+            ownership = timeline.assignment_state(actor, program.id)
+            snapshot = {
+                "rows": deepcopy(rows),
+                "ownership": ownership,
+                "editor_owner": ownership["lead_id"],
+                "editor_manager": ownership["manager_id"],
+                "lead_names": {
+                    user.id: user.display_name
+                    for user in timeline.list_workflow_role_users("ecommerce", "lead_owner")
+                },
+                "manager_names": {
+                    user.id: user.display_name
+                    for user in timeline.list_workflow_role_users("ecommerce", "manager")
+                },
+                "editor_records": [
+                    {"_row_id": row.id, "_draft_id": row.id, "Date": row.due_date,
+                     "Action": row.action, "Done": bool(row.done),
+                     "Program Notes": row.program_notes or ""}
+                    for row in sort_content_management_timeline_rows(rows)
+                ],
+            }
+            st.session_state[draft_key] = snapshot
+    except CampaignOpsPermissionError:
+        _back_to_content_programs()
+        st.session_state["campaign_ops_content_management_denied"] = True
+        st.rerun()
+    except CampaignOpsError as exc:
+        _back_to_content_programs()
+        st.error(str(exc))
+        return
+
+    editor_styles()
+    with st.container(key="ops_editor"):
+        st.markdown(f"### {program.program_name}")
+        message = st.session_state.pop(draft_key + "_message", None)
+        if message:
+            (st.error if message[0] else st.success)(message[1])
+        prefix = f"content_management_rows_{actor.id}_{program.id}_{st.session_state.get(version_key, 0)}"
+        for label, options, field, suffix in (
+            ("Lead Owner", snapshot["lead_names"], "editor_owner", "lead"),
+            ("Manager", snapshot["manager_names"], "editor_manager", "manager"),
+        ):
+            snapshot[field] = st.selectbox(
+                label,
+                list(options),
+                format_func=options.get,
+                index=list(options).index(snapshot[field]) if snapshot[field] in options else None,
+                placeholder=f"Choose a {label}",
+                key=f"{prefix}_{suffix}",
+                disabled=not can_access_admin(actor),
+            )
+        st.markdown("#### Timeline")
+        render_rows(snapshot, prefix)
+        st.button(
+            "Save Changes",
+            type="primary",
+            key=f"content_management_save_{workspace_id}",
+            on_click=_save_content_management_changes,
+            args=(actor, timeline, program.id, draft_key, version_key, prefix),
+        )
+        st.caption("Edits stay unsaved until Save Changes. Save before leaving.")
+        st.button("Back to programs", key=f"content_management_back_{workspace_id}",
+                  on_click=_back_to_content_programs)
+
+
+def _save_content_management_changes(actor, service, program_id, draft_key, version_key, prefix):
+    snapshot = st.session_state[draft_key]
+    records = deepcopy(collect_rows(snapshot, prefix))
+    lead_id = st.session_state.get(f"{prefix}_lead")
+    manager_id = st.session_state.get(f"{prefix}_manager")
+    try:
+        changes = service.save_changes(
+            actor, program_id, records, snapshot["rows"], snapshot["ownership"], lead_id, manager_id
+        )
+    except (CampaignOpsError, ValueError) as exc:
+        st.session_state[draft_key + "_message"] = (True, f"{exc} Nothing saved.")
     else:
-        render_portfolio(actor, service)
+        st.session_state.pop(draft_key, None)
+        st.session_state[version_key] = st.session_state.get(version_key, 0) + 1
+        st.session_state[draft_key + "_message"] = (
+            False, "Changes saved." if any(changes.values()) else "No changes to save."
+        )
 
 
 def render_css() -> None:

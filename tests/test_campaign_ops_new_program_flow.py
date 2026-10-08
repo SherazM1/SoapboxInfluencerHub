@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from streamlit.testing.v1 import AppTest
+from unittest.mock import patch
+from core.campaign_ops.enums import WorkstreamType
 from tests.test_campaign_ops_roster_new_program import button, selectbox, text_input
 
 
@@ -88,6 +91,80 @@ class NewProgramFlowTests(unittest.TestCase):
         self.assertEqual(8, len(repo.list_smm_timeline_rows(workspace.id)))
         self.assertEqual("Social Media Management", app.session_state["campaign_ops_section"])
         self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
+
+    def test_section_content_creation_opens_operational_editor(self):
+        from core.campaign_ops.content_management_timeline import DEFAULT_CONTENT_MANAGEMENT_ACTIONS
+        from tests.operational_editor_helpers import edit
+
+        app = AppTest.from_function(page_app, default_timeout=20).run()
+        button(app, "eCommerce / Content").click().run()
+        button(app, "New Content Program").click().run()
+        self.assertEqual([], list(app.exception))
+        self.assertEqual(["Client", "Program Name"], [widget.label for widget in app.text_input])
+        self.assertEqual({"Lead Owner", "Manager"},
+                         {widget.label for widget in app.selectbox if widget.label != "Viewing as"})
+
+        repository = app.session_state.roster_repo
+        text_input(app, "Client").set_value("Content Client")
+        text_input(app, "Program Name").set_value("PDP Launch")
+        selectbox(app, "Lead Owner").select(repository.get_user_by_display_name("Emma").id)
+        selectbox(app, "Manager").select(repository.get_user_by_display_name("Kate").id)
+        button(app, "Create Program").click().run()
+
+        self.assertEqual([], list(app.exception))
+        program = repository.programs[0]
+        workspace = repository.get_content_management_program_by_program(program.id)
+        rows = repository.list_content_management_timeline_rows(workspace.id)
+        self.assertEqual(WorkstreamType.ECOMMERCE.value, program.primary_workstream_type)
+        self.assertEqual(DEFAULT_CONTENT_MANAGEMENT_ACTIONS, tuple(row.action for row in rows))
+        self.assertEqual(10, len(rows))
+        self.assertEqual([], repository.content_programs)
+        self.assertEqual("eCommerce / Content", app.session_state["campaign_ops_section"])
+        self.assertEqual(workspace.id, app.session_state["campaign_ops_selected_content_program_id"])
+        self.assertTrue(any(widget.label == "Save Changes" for widget in app.button))
+        self.assertFalse(any(widget.label == "Retail Type" for widget in app.selectbox))
+        self.assertTrue(any(
+            assignment.program_id == program.id and assignment.user_id == repository.get_user_by_display_name("Emma").id
+            and assignment.assignment_role == "program_owner" and assignment.is_primary
+            and assignment.workstream_id is None and assignment.is_active
+            for assignment in repository.assignments
+        ))
+        workstream = next(item for item in repository.workstreams if item.program_id == program.id)
+        self.assertEqual(repository.get_user_by_display_name("Kate").id, workstream.owner_user_id)
+        self.assertTrue(any(
+            assignment.program_id == program.id and assignment.workstream_id == workstream.id
+            and assignment.user_id == workstream.owner_user_id and assignment.assignment_role == "workstream_lead"
+            and assignment.is_active for assignment in repository.assignments
+        ))
+
+        with patch.object(repository, "update_content_management_timeline_row",
+                          wraps=repository.update_content_management_timeline_row) as update_row, \
+             patch.object(repository, "create_content_management_timeline_row",
+                          wraps=repository.create_content_management_timeline_row) as create_row, \
+             patch.object(repository, "deactivate_content_management_timeline_row",
+                          wraps=repository.deactivate_content_management_timeline_row) as remove_row:
+            edit(app, 0, **{"Date": "2026-10-15", "Action": "Edited free text",
+                            "Done": True, "Program Notes": "Buffered until save"})
+            button(app, "Add row").click().run()
+            edit(app, 10, **{"Action": "New free-text action"})
+            [widget for widget in app.button if widget.label == "×"][1].click().run()
+            self.assertEqual([], list(app.exception))
+            update_row.assert_not_called()
+            create_row.assert_not_called()
+            remove_row.assert_not_called()
+            button(app, "Save Changes").click().run()
+            self.assertEqual([], list(app.exception))
+            update_row.assert_called_once()
+            create_row.assert_called_once()
+            remove_row.assert_called_once()
+
+        active_rows = repository.list_content_management_timeline_rows(workspace.id)
+        self.assertEqual(10, len(active_rows))
+        edited = next(row for row in active_rows if row.action == "Edited free text")
+        self.assertEqual(date(2026, 10, 15), edited.due_date)
+        self.assertTrue(edited.done)
+        self.assertEqual("Buffered until save", edited.program_notes)
+        self.assertIn("New free-text action", [row.action for row in active_rows])
 
     def test_rosters_change_and_insights_can_be_canceled(self):
         from app.campaign_ops.formatting import WORKFLOW_LABELS

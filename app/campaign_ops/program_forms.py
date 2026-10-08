@@ -40,6 +40,15 @@ def render_new_program_form(
             key="campaign_ops_new_program_workflow",
         )
         workflow_key = workflow_by_label[workflow_label]
+
+    if workflow_key == WorkstreamType.RETAIL_MEDIA.value:
+        st.selectbox(
+            "Retail Type",
+            ["general", "incomm"],
+            index=0,
+            key="campaign_ops_new_program_retail_type",
+        )
+
     try:
         lead_users = service.list_workflow_role_users(
             workflow_key, WorkflowRole.LEAD_OWNER.value
@@ -87,6 +96,7 @@ def _create_program(actor, service, workflow_key):
             new_client_name=trim_or_none(state.get("campaign_ops_new_program_client", "")),
             primary_workstream_type=workflow_key, primary_owner_user_id=lead_id,
             manager_user_id=manager_id, workstream_types=[workflow_key],
+            retail_type=state.get("campaign_ops_new_program_retail_type", "general") if workflow_key == WorkstreamType.RETAIL_MEDIA.value else None,
         )
     except CampaignOpsError as exc:
         state["campaign_ops_new_program_error"] = f"Program was not created: {exc}"

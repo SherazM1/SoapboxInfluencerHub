@@ -82,6 +82,8 @@ def route_to_specialized_workspace(
     session_state.pop("campaign_ops_selected_program_id", None)
     session_state["campaign_ops_section"] = section
     if not record_id:
+        for key in SPECIALIZED_SELECTION_KEYS[section]:
+            session_state.pop(key, None)
         return
     if section == "Influencer":
         session_state["campaign_ops_selected_influencer_campaign_id"] = record_id

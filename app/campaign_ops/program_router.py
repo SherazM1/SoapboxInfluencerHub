@@ -11,7 +11,8 @@ def open_program(session_state, actor, service, program_id):
     clear_all_specialized_state(session_state)
     # Discard only editor snapshots when explicitly navigating to a program; saves are unchanged.
     for key in list(session_state):
-        if key.startswith(("campaign_ops_influencer_draft_", "campaign_ops_smm_draft_")):
+        if key.startswith(("campaign_ops_influencer_draft_", "campaign_ops_smm_draft_",
+                           "campaign_ops_content_management_draft_")):
             session_state.pop(key, None)
     session_state.pop("campaign_ops_influencer_timeline_navigation", None)
     if destination.section == "All Programs":

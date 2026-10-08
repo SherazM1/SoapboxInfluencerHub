@@ -30,6 +30,8 @@ ROSTER = {
 class RosterRepository(FakePrompt4ARepository):
     def __init__(self) -> None:
         super().__init__()
+        self.content_management_programs = []
+        self.content_management_rows = []
         self.users[1].display_name = "Taylor"
         self.users[2].display_name = "Lauren"
         for name in ("Jordon", "Ava", "Allyn", "Maren", "Carly", "Emma", "Kate", "Chloe"):
@@ -99,6 +101,64 @@ class RosterRepository(FakePrompt4ARepository):
         item.is_active = True
         item.updated_by = actor_user_id
         return item
+
+    def list_content_management_programs_by_program(self, program_id):
+        return [item for item in self.content_management_programs
+                if item.program_id == program_id and item.is_active]
+
+    def get_content_management_program_by_program(self, program_id):
+        return next(iter(self.list_content_management_programs_by_program(program_id)), None)
+
+    def get_content_management_program(self, workspace_id):
+        return next((item for item in self.content_management_programs if item.id == workspace_id), None)
+
+    def create_content_management_program(self, program_id, workstream_id, actor_user_id=None):
+        from core.campaign_ops.models import ContentManagementProgramRecord
+
+        workspace = ContentManagementProgramRecord(
+            id=f"content-workspace-{len(self.content_management_programs) + 1}",
+            program_id=program_id,
+            workstream_id=workstream_id,
+            created_by=actor_user_id,
+            updated_by=actor_user_id,
+        )
+        self.content_management_programs.append(workspace)
+        return workspace
+
+    def list_content_management_timeline_rows(self, workspace_id, include_inactive=False):
+        return [row for row in self.content_management_rows
+                if row.content_management_program_id == workspace_id
+                and (include_inactive or row.is_active)]
+
+    def create_content_management_timeline_row(
+        self, workspace_id, action, due_date=None, program_notes=None, done=False,
+        sequence_order=0, actor_user_id=None,
+    ):
+        from core.campaign_ops.models import ContentManagementTimelineRowRecord
+
+        row = ContentManagementTimelineRowRecord(
+            id=f"content-row-{len(self.content_management_rows) + 1}",
+            content_management_program_id=workspace_id,
+            action=action,
+            due_date=due_date,
+            done=done,
+            program_notes=program_notes,
+            sequence_order=sequence_order,
+            created_by=actor_user_id,
+            updated_by=actor_user_id,
+        )
+        self.content_management_rows.append(row)
+        return row
+
+    def update_content_management_timeline_row(self, row_id, **kwargs):
+        row = next(item for item in self.content_management_rows if item.id == row_id)
+        for key, value in kwargs.items():
+            if key != "actor_user_id":
+                setattr(row, key, value)
+        return row
+
+    def deactivate_content_management_timeline_row(self, row_id, actor_user_id=None):
+        next(item for item in self.content_management_rows if item.id == row_id).is_active = False
 
 
 def new_program_app():
