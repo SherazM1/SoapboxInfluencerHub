@@ -6,6 +6,7 @@ from unittest.mock import patch
 from streamlit.testing.v1 import AppTest
 from core.campaign_ops.exceptions import CampaignOpsPermissionError, CampaignOpsValidationError
 from core.campaign_ops.permissions import ACCESS_DENIED, can_view_program, program_access_allowed
+from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.program_routing import ProgramRoutingService
 from core.campaign_ops.service import CampaignOpsService
 from core.campaign_ops.influencer_timeline import InfluencerTimelineService, editor_record
@@ -96,6 +97,19 @@ class ProgramAccessTests(unittest.TestCase):
         self.assertIn(pid, self.visible('Maren'))
         grant.is_active = False
         self.assertNotIn(pid, self.visible('Maren'))
+
+    def test_unassigned_creation_eligible_roster_user_does_not_gain_program_visibility(self):
+        roster_creator = CampaignOpsUser(
+            id='content-roster-creator', display_name='Roster Creator', role='team_member'
+        )
+        self.repo.users.append(roster_creator)
+        self.repo.create_workflow_role(
+            roster_creator.id, 'ecommerce', 'lead_owner', actor_user_id=self.admin.id
+        )
+        self.assertTrue(self.service.can_create_program(roster_creator, 'ecommerce'))
+        self.assertEqual(set(), {row.id for row in self.router.list_registry(roster_creator)})
+        with self.assertRaisesRegex(CampaignOpsPermissionError, ACCESS_DENIED):
+            self.router.resolve(roster_creator, self.programs['Content'])
 
     def test_workstream_owner_without_assignment_is_a_valid_manager(self):
         pid = self.programs['First']

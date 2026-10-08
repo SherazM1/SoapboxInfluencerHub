@@ -69,7 +69,7 @@ def render_influencer(actor, service, users):
 
 
 def render_portfolio(actor, service, users, stage):
-    if stage == "planning" and can_access_admin(actor):
+    if service.can_create_program(actor, "influencer"):
         st.button("New Program", type="primary", key="influencer_new_program",
                   on_click=begin_new_program, args=(st.session_state, "influencer"))
     search = st.text_input("Search campaigns", key=f"influencer_timeline_search_{stage}").strip().casefold()

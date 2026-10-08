@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.campaign_ops.enums import AssignmentRole, UserRole
+from core.campaign_ops.enums import AssignmentRole, UserRole, WorkflowRole, WorkstreamType
 from core.campaign_ops.exceptions import CampaignOpsPermissionError
 from core.campaign_ops.models import CampaignOpsUser, Milestone, Program, ProgramAssignment, Resource, Task, Workstream
 
@@ -46,6 +46,31 @@ def user_has_assignment(
 
 
 ACCESS_DENIED = "You do not have access to this program."
+
+PROGRAM_CREATION_ROLES = {
+    WorkstreamType.INFLUENCER.value: (WorkflowRole.LEAD_OWNER.value,),
+    WorkstreamType.RETAIL_MEDIA.value: (WorkflowRole.LEAD_OWNER.value, WorkflowRole.MANAGER.value),
+    WorkstreamType.ECOMMERCE.value: (WorkflowRole.LEAD_OWNER.value, WorkflowRole.MANAGER.value),
+    WorkstreamType.SMM.value: (WorkflowRole.LEAD_OWNER.value, WorkflowRole.MANAGER.value),
+}
+
+
+def can_create_program(repository, actor: CampaignOpsUser | None, workflow_key: str) -> bool:
+    """Creation eligibility comes from admin role or active workflow roster roles only."""
+    if actor is None or not actor.is_active:
+        return False
+    try:
+        workflow = WorkstreamType(workflow_key).value
+    except (TypeError, ValueError):
+        return False
+    if is_administrator(actor):
+        return True
+    eligible_roles = PROGRAM_CREATION_ROLES.get(workflow, ())
+    return any(
+        member.id == actor.id
+        for role in eligible_roles
+        for member in repository.list_workflow_role_users(workflow, role)
+    )
 
 
 def can_view_program(

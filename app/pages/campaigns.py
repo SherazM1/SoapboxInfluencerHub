@@ -173,7 +173,11 @@ def render_active_section(
         set_section(st.session_state, get_default_section(user, viewer))
         st.rerun()
         return
-    if section == "New Program" and not can_access_admin(user):
+    fixed_workflow = st.session_state.get("campaign_ops_new_program_fixed_workflow")
+    if section == "New Program" and not (
+        can_access_admin(user) if fixed_workflow is None
+        else service.can_create_program(user, fixed_workflow)
+    ):
         set_section(st.session_state, get_default_section(user, viewer))
         st.rerun()
         return
@@ -254,7 +258,11 @@ def main() -> None:
     if current_section not in sections and current_section != "New Program":
         current_section = get_default_section(user, viewer)
         set_section(st.session_state, current_section)
-    if current_section == "New Program" and not can_access_admin(user):
+    fixed_workflow = st.session_state.get("campaign_ops_new_program_fixed_workflow")
+    if current_section == "New Program" and not (
+        can_access_admin(user) if fixed_workflow is None
+        else service.can_create_program(user, fixed_workflow)
+    ):
         current_section = get_default_section(user, viewer)
         set_section(st.session_state, current_section)
 

@@ -20,7 +20,12 @@ def render_new_program_form(
     clients: list[Client],
 ) -> None:
     st.subheader("New Program")
-    if not can_access_admin(actor):
+    workflow_key = st.session_state.get("campaign_ops_new_program_fixed_workflow")
+    can_create = (
+        can_access_admin(actor) if workflow_key is None
+        else service.can_create_program(actor, workflow_key)
+    )
+    if not can_create:
         st.warning("You do not have permission to create programs.")
         return
 
@@ -33,7 +38,6 @@ def render_new_program_form(
     default_workflow = WORKFLOW_LABELS[WorkstreamType.INFLUENCER.value]
     client_name = st.text_input("Client", key="campaign_ops_new_program_client")
     program_name = st.text_input("Program Name", key="campaign_ops_new_program_name")
-    workflow_key = st.session_state.get("campaign_ops_new_program_fixed_workflow")
     if workflow_key is None:
         workflow_label = st.selectbox(
             "Workflow", workflow_labels, index=workflow_labels.index(default_workflow),

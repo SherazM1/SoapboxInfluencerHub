@@ -117,8 +117,10 @@ def update_viewer_state(
         clear_selected_program(session_state)
         clear_all_specialized_state(session_state)
         session_state["campaign_ops_previous_viewer"] = viewer
+    fixed_workflow = session_state.get("campaign_ops_new_program_fixed_workflow")
     if session_state.get("campaign_ops_section") not in sections and not (
-        session_state.get("campaign_ops_section") == "New Program" and (user is None or can_access_admin(user))
+        session_state.get("campaign_ops_section") == "New Program"
+        and (user is None or can_access_admin(user) or fixed_workflow is not None)
     ):
         session_state["campaign_ops_section"] = get_default_section(user, viewer)
     if user is not None:
@@ -150,7 +152,9 @@ def clear_new_program_draft(session_state: dict[str, object]) -> None:
 def cancel_new_program(session_state: dict[str, object]) -> None:
     destination = {
         "influencer": "Influencer",
+        "retail_media": "Retail Media",
         "ecommerce": "eCommerce / Content",
+        "smm": "Social Media Management",
     }.get(session_state.get("campaign_ops_new_program_fixed_workflow"), "All Programs")
     clear_new_program_draft(session_state)
     set_section(session_state, destination)

@@ -54,9 +54,9 @@ def render_content_management(actor: CampaignOpsUser, service: CampaignOpsServic
         render_operational_editor(actor, service, str(workspace_id))
         return
 
-    if can_access_admin(actor):
+    if service.can_create_program(actor, WorkstreamType.ECOMMERCE.value):
         st.button(
-            "New Content Program",
+            "New Program",
             type="primary",
             key="campaign_ops_content_new_operational_program",
             on_click=begin_new_program,

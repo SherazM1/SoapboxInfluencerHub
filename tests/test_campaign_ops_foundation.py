@@ -2641,7 +2641,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         with self.assertRaises(CampaignOpsValidationError):
             service.create_client(bailey, "test - prompt 4a validation")
 
-    def test_prompt4a_team_members_cannot_create_clients_or_programs(self) -> None:
+    def test_prompt4a_team_members_cannot_create_clients_or_unrostered_programs(self) -> None:
         repository = FakePrompt4ARepository()
         service = CampaignOpsService(repository=repository)
         team_member = repository.users[1]
@@ -2653,9 +2653,9 @@ class CampaignOpsFoundationTests(unittest.TestCase):
                 actor=team_member,
                 program_name="Program",
                 new_client_name="Client",
-                primary_workstream_type=WorkstreamType.INFLUENCER.value,
+                primary_workstream_type=WorkstreamType.INSIGHTS.value,
                 primary_owner_user_id=team_member.id,
-                workstream_types=[WorkstreamType.INFLUENCER.value],
+                workstream_types=[WorkstreamType.INSIGHTS.value],
             )
 
     def test_prompt4a_program_validation_required_fields_and_dates(self) -> None:

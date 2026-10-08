@@ -5,6 +5,7 @@ import streamlit as st
 
 from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
 from app.campaign_ops.program_router import open_program
+from app.campaign_ops.state import begin_new_program
 from core.campaign_ops.enums import WorkstreamType
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.permissions import can_access_admin, require_program_access
@@ -24,6 +25,14 @@ def _back():
 
 
 def _render_smm_program_list(actor, service: CampaignOpsService) -> None:
+    if service.can_create_program(actor, WorkstreamType.SMM.value):
+        st.button(
+            "New Program",
+            type="primary",
+            key="campaign_ops_smm_new_program",
+            on_click=begin_new_program,
+            args=(st.session_state, WorkstreamType.SMM.value),
+        )
     try:
         programs = [
             row for row in ProgramRoutingService(service.repository).list_registry(actor)

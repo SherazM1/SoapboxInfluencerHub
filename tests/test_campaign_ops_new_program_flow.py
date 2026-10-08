@@ -138,9 +138,11 @@ class NewProgramFlowTests(unittest.TestCase):
         from core.campaign_ops.content_management_timeline import DEFAULT_CONTENT_MANAGEMENT_ACTIONS
         from tests.operational_editor_helpers import edit
 
-        app = AppTest.from_function(page_app, default_timeout=20).run()
+        app = AppTest.from_function(page_app, default_timeout=20)
+        app.session_state["campaign_ops_viewer"] = "Emma"
+        app.run()
         button(app, "eCommerce / Content").click().run()
-        button(app, "New Content Program").click().run()
+        button(app, "New Program").click().run()
         self.assertEqual([], list(app.exception))
         self.assertEqual(["Client", "Program Name"], [widget.label for widget in app.text_input])
         self.assertEqual({"Lead Owner", "Manager"},
@@ -207,6 +209,35 @@ class NewProgramFlowTests(unittest.TestCase):
         self.assertTrue(edited.done)
         self.assertEqual("Buffered until save", edited.program_notes)
         self.assertIn("New free-text action", [row.action for row in active_rows])
+
+    def test_workflow_sections_show_creation_control_by_roster_or_admin(self):
+        cases = tuple(
+            (actor, section, True)
+            for section, actors in (
+                ("eCommerce / Content", ("Emma", "Kate")),
+                ("Retail Media", ("Chloe",)),
+                ("Influencer", ("Taylor", "Lauren", "Ava")),
+                ("Social Media Management", ("Taylor", "Ava", "Maren")),
+            )
+            for actor in actors
+        ) + tuple(
+            (actor, section, True)
+            for actor in ("Bailey", "Jordon")
+            for section in ("eCommerce / Content", "Retail Media", "Influencer", "Social Media Management")
+        ) + (
+            ("Taylor", "eCommerce / Content", False),
+            ("Emma", "Retail Media", False),
+            ("Allyn", "Influencer", False),
+            ("Lauren", "Social Media Management", False),
+        )
+        for actor_name, section, expected in cases:
+            with self.subTest(actor=actor_name, section=section):
+                app = AppTest.from_function(page_app, default_timeout=20)
+                app.session_state["campaign_ops_viewer"] = actor_name
+                app.run()
+                button(app, section).click().run()
+                self.assertEqual([], list(app.exception))
+                self.assertEqual(expected, any(widget.label == "New Program" for widget in app.button))
 
     def test_rosters_change_and_insights_can_be_canceled(self):
         from app.campaign_ops.formatting import WORKFLOW_LABELS

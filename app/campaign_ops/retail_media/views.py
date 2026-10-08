@@ -12,7 +12,7 @@ from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.program_router import open_program
 from app.campaign_ops.retail_media.baseline import action_display_text, current_status_text, next_current_retail_media_action, normalize_retail_media_actions, over_budget
 from app.campaign_ops.retail_media.formatting import channel_mix_label, retail_status_label
-from app.campaign_ops.state import set_selected_program
+from app.campaign_ops.state import begin_new_program, set_selected_program
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.enums import TaskStatus, WorkstreamType
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
@@ -59,6 +59,14 @@ def _back():
 
 
 def _render_retail_media_program_list(actor, service: CampaignOpsService) -> None:
+    if service.can_create_program(actor, WorkstreamType.RETAIL_MEDIA.value):
+        st.button(
+            "New Program",
+            type="primary",
+            key="campaign_ops_retail_media_new_program",
+            on_click=begin_new_program,
+            args=(st.session_state, WorkstreamType.RETAIL_MEDIA.value),
+        )
     try:
         programs = [
             row for row in ProgramRoutingService(service.repository).list_registry(actor)

@@ -217,6 +217,50 @@ class WorkflowRosterTests(unittest.TestCase):
                 self.assertEqual(tuple(sorted(names)), actual)
         self.assertEqual([], self.service.list_workflow_role_users(WorkstreamType.INSIGHTS.value, WorkflowRole.LEAD_OWNER.value))
 
+    def test_program_creation_eligibility_uses_workflow_specific_roster_roles(self):
+        expected = {
+            WorkstreamType.ECOMMERCE.value: ("Emma", "Kate"),
+            WorkstreamType.RETAIL_MEDIA.value: ("Chloe",),
+            WorkstreamType.INFLUENCER.value: ("Taylor", "Lauren", "Ava"),
+            WorkstreamType.SMM.value: ("Taylor", "Ava", "Maren"),
+        }
+        for workflow, eligible_names in expected.items():
+            for name in eligible_names:
+                with self.subTest(workflow=workflow, actor=name):
+                    self.assertTrue(self.service.can_create_program(self.repository.get_user_by_display_name(name), workflow))
+        for workflow in WorkstreamType:
+            for admin_name in ("Bailey", "Jordon"):
+                with self.subTest(workflow=workflow.value, admin=admin_name):
+                    self.assertTrue(self.service.can_create_program(
+                        self.repository.get_user_by_display_name(admin_name), workflow.value
+                    ))
+        for actor_name, workflow in (
+            ("Allyn", WorkstreamType.INFLUENCER.value),
+            ("Carly", WorkstreamType.INFLUENCER.value),
+            ("Lauren", WorkstreamType.SMM.value),
+            ("Emma", WorkstreamType.RETAIL_MEDIA.value),
+            ("Chloe", WorkstreamType.ECOMMERCE.value),
+        ):
+            with self.subTest(workflow=workflow, actor=actor_name):
+                self.assertFalse(self.service.can_create_program(
+                    self.repository.get_user_by_display_name(actor_name), workflow
+                ))
+
+    def test_roster_eligible_member_can_create_without_admin_role(self):
+        emma = self.repository.get_user_by_display_name("Emma")
+        kate = self.repository.get_user_by_display_name("Kate")
+        program_id = self.service.create_program_with_workstreams_and_assignments(
+            actor=emma,
+            program_name="Emma Content Creation",
+            new_client_name="Roster Creation Client",
+            primary_workstream_type=WorkstreamType.ECOMMERCE.value,
+            primary_owner_user_id=emma.id,
+            manager_user_id=kate.id,
+            workstream_types=[WorkstreamType.ECOMMERCE.value],
+        )
+        program = self.repository.get_program(program_id)
+        self.assertEqual(WorkstreamType.ECOMMERCE.value, program.primary_workstream_type)
+
     def test_roster_seed_migration_is_idempotent_and_preserves_identity_ids(self):
         from pathlib import Path
 

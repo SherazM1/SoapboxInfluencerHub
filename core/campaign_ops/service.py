@@ -98,6 +98,7 @@ from core.campaign_ops.models import (
 from core.campaign_ops.permissions import (
     can_access_admin,
     can_add_note,
+    can_create_program as actor_can_create_program,
     can_edit_program,
     can_edit_milestone,
     can_edit_resource,
@@ -769,6 +770,11 @@ class CampaignOpsService:
         return require_program_access(self.repository or CampaignOpsRepository(), actor, program_id,
                                       active_only=active_only)
 
+    def can_create_program(self, actor, workflow_key: str) -> bool:
+        return actor_can_create_program(
+            self.repository or CampaignOpsRepository(), actor, workflow_key
+        )
+
     def _visible_workflow_rows(self, repository, actor, rows, include_inactive=False):
         visible = []
         for row in rows:
@@ -1381,7 +1387,6 @@ class CampaignOpsService:
         Workstream owner_user_id and matching workstream_lead assignment are
         the Manager. Legacy multi-workstream arguments remain supported.
         """
-        self._require_admin(actor)
         cleaned_name = require_text(program_name, "Program name")
         if not primary_workstream_type:
             raise CampaignOpsValidationError("Primary workflow is required.")
@@ -1406,6 +1411,8 @@ class CampaignOpsService:
             lead_map[primary_workflow] = manager_user_id
 
         def operation(repository: CampaignOpsRepository) -> str:
+            if not actor_can_create_program(repository, actor, primary_workflow):
+                raise CampaignOpsPermissionError("You do not have permission to create a Program in this workflow.")
             self._require_active_user(repository, primary_owner_user_id, "Primary owner")
             if manager_user_id:
                 lead_roster = repository.list_workflow_role_users(
