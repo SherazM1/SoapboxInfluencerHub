@@ -16,6 +16,13 @@ SPECIALIZED_SELECTION_KEYS = {
     "Social Media Management": {"campaign_ops_selected_smm_program_id"},
 }
 
+RETURN_CLEAR_KEYS = {
+    "campaign_ops_selected_program_id",
+    "campaign_ops_influencer_route_record",
+    "campaign_ops_influencer_timeline_navigation",
+    "campaign_ops_program_route_message",
+}
+
 # Include legacy editor keys so switching workflows clears older browser sessions.
 EDITOR_KEYS = {
     "campaign_ops_insights_timeline_edit_id",
@@ -64,6 +71,23 @@ def clear_all_specialized_state(session_state: MutableMapping[str, Any]) -> None
     clear_incompatible_specialized_state(session_state, None)
 
 
+def clear_return_state(session_state: MutableMapping[str, Any]) -> None:
+    for key in list(session_state):
+        if (
+            key in RETURN_CLEAR_KEYS
+            or key.startswith("campaign_ops_selected_")
+            or key.startswith("campaign_ops_influencer_draft_")
+            or key.startswith("campaign_ops_retail_media_draft_")
+            or key.startswith("campaign_ops_smm_draft_")
+            or key.startswith("campaign_ops_content_management_draft_")
+            or key.endswith("_route_record")
+            or key.endswith("_timeline_navigation")
+            or "_editor_version_" in key
+            or "_draft_" in key
+        ):
+            session_state.pop(key, None)
+
+
 def route_to_program_workspace(session_state: MutableMapping[str, Any], program_id: str) -> None:
     clear_all_specialized_state(session_state)
     session_state["campaign_ops_selected_program_id"] = program_id
@@ -103,7 +127,5 @@ def return_to_portfolio(session_state: MutableMapping[str, Any], section: str) -
     if section not in SPECIALIZED_SELECTION_KEYS:
         raise ValueError("Unknown workflow section.")
     clear_all_specialized_state(session_state)
-    session_state.pop("campaign_ops_selected_program_id", None)
-    session_state.pop("campaign_ops_influencer_route_record", None)
-    session_state.pop("campaign_ops_influencer_timeline_navigation", None)
+    clear_return_state(session_state)
     session_state["campaign_ops_section"] = section

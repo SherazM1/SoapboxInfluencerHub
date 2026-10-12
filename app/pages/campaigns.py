@@ -147,7 +147,7 @@ def render_temporary_viewer_selector(user: CampaignOpsUser | None = None, users=
     if current not in viewer_options:
         st.session_state["campaign_ops_viewer"] = "Bailey" if "Bailey" in viewer_options else viewer_options[0]
     with st.container(key="campaign_ops_viewer_context"):
-        viewer = st.selectbox("Viewing as", viewer_options, key="campaign_ops_viewer")
+        viewer = st.selectbox("Viewing as", viewer_options, key="campaign_ops_viewer", label_visibility="collapsed")
     update_viewer_state(st.session_state, viewer, user)
     return viewer
 

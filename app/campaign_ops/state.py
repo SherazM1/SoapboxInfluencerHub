@@ -82,6 +82,7 @@ SESSION_KEYS = {
     "campaign_ops_influencer_recap_filters",
     "campaign_ops_influencer_recap_checkpoint_edit_id",
     "campaign_ops_influencer_recap_show_inactive",
+    "campaign_ops_selected_smm_program_id",
 }
 
 

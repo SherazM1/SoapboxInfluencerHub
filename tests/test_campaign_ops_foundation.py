@@ -4751,6 +4751,36 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertNotIn("campaign_ops_influencer_route_record", state)
         self.assertNotIn("campaign_ops_influencer_timeline_navigation", state)
 
+    def test_return_to_portfolio_clears_stale_program_and_workflow_route_state(self) -> None:
+        from app.campaign_ops.ui.navigation import return_to_portfolio
+
+        state = {
+            "campaign_ops_viewer": "Bailey",
+            "campaign_ops_section": "Influencer",
+            "campaign_ops_selected_program_id": "program-1",
+            "campaign_ops_selected_influencer_campaign_id": "influencer-1",
+            "campaign_ops_selected_smm_program_id": "smm-1",
+            "campaign_ops_influencer_route_record": {"campaign": "stale"},
+            "campaign_ops_influencer_timeline_navigation": "Planning",
+            "campaign_ops_program_route_message": "Returning",
+        }
+
+        return_to_portfolio(state, "Social Media Management")
+
+        self.assertEqual("Social Media Management", state["campaign_ops_section"])
+        self.assertEqual("Bailey", state["campaign_ops_viewer"])
+        self.assertNotIn("campaign_ops_selected_program_id", state)
+        self.assertNotIn("campaign_ops_selected_influencer_campaign_id", state)
+        self.assertNotIn("campaign_ops_selected_smm_program_id", state)
+        self.assertNotIn("campaign_ops_influencer_route_record", state)
+        self.assertNotIn("campaign_ops_influencer_timeline_navigation", state)
+        self.assertNotIn("campaign_ops_program_route_message", state)
+
+    def test_session_keys_cover_smm_workflow_selection(self) -> None:
+        from app.campaign_ops.state import SESSION_KEYS
+
+        self.assertIn("campaign_ops_selected_smm_program_id", SESSION_KEYS)
+
 
 if __name__ == "__main__":
     unittest.main()
