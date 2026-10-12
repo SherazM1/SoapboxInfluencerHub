@@ -57,9 +57,8 @@ ROLE_LABELS = {
 
 def render_header() -> None:
     render_page_header(
-        "Campaign Operations",
+        "Program Tracker",
         "Track programs, owners, key dates, milestones, and blockers from one workspace.",
-        active_module="Campaign Operations",
     )
 
 
@@ -79,7 +78,7 @@ def get_viewer_role(viewer: str, user: CampaignOpsUser | None = None) -> str:
 def resolve_initialized_viewer(viewer: str, users=None) -> CampaignOpsUser | None:
     user, setup_error = (next((u for u in users if u.display_name == viewer), None), None) if users is not None else resolve_viewer_user(viewer)
     if setup_error:
-        st.warning("Campaign Operations user lookup failed. Ask Bailey to verify database setup.")
+        st.warning("Program Tracker user lookup failed. Ask Bailey to verify database setup.")
         return None
     if user is not None:
         st.session_state["campaign_ops_viewer_id"] = user.id
@@ -87,7 +86,7 @@ def resolve_initialized_viewer(viewer: str, users=None) -> CampaignOpsUser | Non
         st.session_state.pop("campaign_ops_viewer_id", None)
     render_role_caption(user)
     if user is None:
-        st.warning(f"{viewer} is not available in Campaign Operations users.")
+        st.warning(f"{viewer} is not available in Program Tracker users.")
     return user
 
 
@@ -110,7 +109,7 @@ def render_initialization_control(
         return
     with st.expander("Database Setup", expanded=False):
         if setup_status.is_initialized:
-            st.success("Campaign Operations database is initialized.")
+            st.success("Program Tracker database is initialized.")
         else:
             st.warning(setup_status.message)
         st.caption(
@@ -119,13 +118,13 @@ def render_initialization_control(
             f"connection succeeded={setup_status.connection_succeeded}; "
             f"schema initialized={setup_status.schema_initialized}"
         )
-        if st.button("Initialize Campaign Operations Database", type="secondary"):
+        if st.button("Initialize Program Tracker Database", type="secondary"):
             try:
                 result = initialize_campaign_ops_database()
             except CampaignOpsError as exc:
                 st.session_state.pop("campaign_ops_initialization_message", None)
                 st.session_state.pop("campaign_ops_initialization_result", None)
-                st.error(f"Campaign Operations database initialization failed: {exc}")
+                st.error(f"Program Tracker database initialization failed: {exc}")
                 return
             st.session_state.pop("campaign_ops_initialization_error", None)
             st.session_state.pop("campaign_ops_initialization_result", None)
@@ -147,7 +146,8 @@ def render_temporary_viewer_selector(user: CampaignOpsUser | None = None, users=
     current = st.session_state.get("campaign_ops_viewer")
     if current not in viewer_options:
         st.session_state["campaign_ops_viewer"] = "Bailey" if "Bailey" in viewer_options else viewer_options[0]
-    viewer = st.selectbox("Viewing as", viewer_options, key="campaign_ops_viewer")
+    with st.container(key="campaign_ops_viewer_context"):
+        viewer = st.selectbox("Viewing as", viewer_options, key="campaign_ops_viewer")
     update_viewer_state(st.session_state, viewer, user)
     return viewer
 
@@ -155,9 +155,9 @@ def render_temporary_viewer_selector(user: CampaignOpsUser | None = None, users=
 def render_setup_state(viewer: str, setup_status: CampaignOpsSetupStatus) -> None:
     st.warning(setup_status.message)
     if not viewer_can_initialize_in_setup(viewer):
-        st.info("Campaign Operations database setup has not been completed. Ask Bailey to initialize it.")
+        st.info("Program Tracker database setup has not been completed. Ask Bailey to initialize it.")
         st.stop()
-    st.info("Bailey can initialize Campaign Operations database setup from this page.")
+    st.info("Bailey can initialize Program Tracker database setup from this page.")
     render_initialization_control(viewer, None, setup_status)
     st.stop()
 
@@ -204,13 +204,12 @@ def render_active_section(
 
 
 def main() -> None:
-    st.set_page_config(page_title="Campaign Operations", page_icon="??", layout="wide")
+    st.set_page_config(page_title="Program Tracker", page_icon="??", layout="wide")
     hide_default_streamlit_sidebar_nav()
     clear_legacy_workflow_session_state()
     apply_campaign_ops_styles()
 
     render_header()
-    st.divider()
     render_initialization_message()
 
     setup_status = get_campaign_ops_setup_status()
@@ -222,7 +221,7 @@ def main() -> None:
     try:
         users = service.list_active_users()
     except CampaignOpsError as exc:
-        st.error(f"Unable to load Campaign Operations users: {exc}")
+        st.error(f"Unable to load Program Tracker users: {exc}")
         return
     viewer = render_temporary_viewer_selector(users=users)
     user = resolve_initialized_viewer(viewer, users=users)
@@ -266,13 +265,11 @@ def main() -> None:
         current_section = get_default_section(user, viewer)
         set_section(st.session_state, current_section)
 
-    st.divider()
     if current_section != "New Program":
         current_section = render_section_navigation(user, viewer)
     else:
         st.button("Back to All Programs", key="campaign_ops_back_from_new_program",
                   on_click=cancel_new_program, args=(st.session_state,))
-    st.divider()
     render_active_section(current_section, viewer, user, service, users)
 
 

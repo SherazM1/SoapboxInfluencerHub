@@ -53,7 +53,7 @@ def render_header() -> None:
     with title_col:
         st.title("Soapbox Influencer Hub")
         st.markdown(
-            "Select a platform function below. Campaign Operations is active now, "
+            "Select a platform function below. Program Tracker is active now, "
             "live campaign reporting is available for client-facing updates, and "
             "Influencer Pricing is available as a foundation preview."
         )

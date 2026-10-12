@@ -20,13 +20,13 @@ CAMPAIGNS_PAGE_PATH = "pages/campaigns.py"
 
 def main() -> None:
     """Render compatibility notice for the deprecated review page."""
-    st.set_page_config(page_title="Campaign Operations", page_icon="??", layout="wide")
+    st.set_page_config(page_title="Program Tracker", page_icon="??", layout="wide")
     hide_default_streamlit_sidebar_nav()
     clear_legacy_workflow_session_state()
 
-    st.title("Campaign Operations")
-    st.info("Workbook Automation has been replaced by Campaign Operations.")
-    if st.button("Open Campaign Operations", type="primary"):
+    st.title("Program Tracker")
+    st.info("Workbook Automation has been replaced by Program Tracker.")
+    if st.button("Open Program Tracker", type="primary"):
         switch_to_page(CAMPAIGNS_PAGE_PATH)
 
 
