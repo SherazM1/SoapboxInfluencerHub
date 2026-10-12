@@ -157,17 +157,25 @@ def render_operational_editor(actor, service, workspace_id: str) -> None:
         if message:
             (st.error if message[0] else st.success)(message[1])
         prefix = f"content_management_rows_{actor.id}_{program.id}_{st.session_state.get(version_key, 0)}"
-        for label, options, field, suffix in (
-            ("Lead Owner", snapshot["lead_names"], "editor_owner", "lead"),
-            ("Manager", snapshot["manager_names"], "editor_manager", "manager"),
-        ):
-            snapshot[field] = st.selectbox(
-                label,
-                list(options),
-                format_func=options.get,
-                index=list(options).index(snapshot[field]) if snapshot[field] in options else None,
-                placeholder=f"Choose a {label}",
-                key=f"{prefix}_{suffix}",
+        owner_cols = st.columns(2)
+        with owner_cols[0]:
+            snapshot["editor_owner"] = st.selectbox(
+                "Lead Owner",
+                list(snapshot["lead_names"]),
+                format_func=snapshot["lead_names"].get,
+                index=list(snapshot["lead_names"]).index(snapshot["editor_owner"]) if snapshot["editor_owner"] in snapshot["lead_names"] else None,
+                placeholder="Choose a Lead Owner",
+                key=f"{prefix}_lead",
+                disabled=not can_access_admin(actor),
+            )
+        with owner_cols[1]:
+            snapshot["editor_manager"] = st.selectbox(
+                "Manager",
+                list(snapshot["manager_names"]),
+                format_func=snapshot["manager_names"].get,
+                index=list(snapshot["manager_names"]).index(snapshot["editor_manager"]) if snapshot["editor_manager"] in snapshot["manager_names"] else None,
+                placeholder="Choose a Manager",
+                key=f"{prefix}_manager",
                 disabled=not can_access_admin(actor),
             )
         st.markdown("#### Timeline")

@@ -148,13 +148,27 @@ def render_workspace(actor, service, users, campaign_id, stage):
         version = st.session_state.get(version_key, 0)
         prefix = f"influencer_rows_{actor.id}_{campaign_id}_{version}"
         owners, managers = snapshot["lead_names"], snapshot["manager_names"]
-        for label, options, field, key in (
-            ("Lead Owner", owners, "editor_owner", f"influencer_lead_{campaign_id}_{version}"),
-            ("Manager", managers, "editor_manager", f"influencer_manager_{campaign_id}_{version}"),
-        ):
-            snapshot[field] = st.selectbox(label, list(options), format_func=options.get,
-                index=list(options).index(snapshot[field]) if snapshot[field] in options else None,
-                placeholder=f"Choose a {label}", key=key, disabled=not can_access_admin(actor))
+        owner_cols = st.columns(2)
+        with owner_cols[0]:
+            snapshot["editor_owner"] = st.selectbox(
+                "Lead Owner",
+                list(owners),
+                format_func=owners.get,
+                index=list(owners).index(snapshot["editor_owner"]) if snapshot["editor_owner"] in owners else None,
+                placeholder="Choose a Lead Owner",
+                key=f"influencer_lead_{campaign_id}_{version}",
+                disabled=not can_access_admin(actor),
+            )
+        with owner_cols[1]:
+            snapshot["editor_manager"] = st.selectbox(
+                "Manager",
+                list(managers),
+                format_func=managers.get,
+                index=list(managers).index(snapshot["editor_manager"]) if snapshot["editor_manager"] in managers else None,
+                placeholder="Choose a Manager",
+                key=f"influencer_manager_{campaign_id}_{version}",
+                disabled=not can_access_admin(actor),
+            )
         st.markdown("#### Timeline")
         render_rows(snapshot, prefix, actions=ACTION_LIBRARY)
         footer_left, footer_right = st.columns([1, 1])
