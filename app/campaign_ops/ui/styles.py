@@ -67,9 +67,9 @@ APP_CSS = """
 .st-key-campaign_ops_navigation .campaign-ops-section-header {border:0;font-size:.78rem;color:#002C47;font-weight:700;padding:0;margin:.15rem 0 .2rem;}
 .st-key-program_registry {border:1px solid #dce3e8;border-radius:4px;padding:.4rem .65rem;overflow-x:auto;background:#fff;}
 .st-key-program_registry [data-testid="stHorizontalBlock"] {gap:.65rem;align-items:center;border-bottom:1px solid #e6ebef;padding:.3rem 0;}
-.st-key-program_registry > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"]:first-child {background:#f3f6f8;color:#002C47;}
+.st-key-program_registry > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"]:first-child {background:#f3f6f8;color:#002C47;min-height:2.6rem;padding:.55rem .45rem;align-items:center;}
 .st-key-program_registry [data-testid="stVerticalBlock"] {gap:.2rem;}
-.st-key-program_registry_header {background:#f3f6f8;color:#002C47;border-bottom:1px solid #dce3e8;}
+.st-key-program_registry_header {background:#f3f6f8;color:#002C47;border-bottom:1px solid #dce3e8;min-height:2.6rem;display:flex;align-items:center;}
 .st-key-program_registry p {font-size:.875rem;margin:0;overflow-wrap:anywhere;}
 .st-key-program_registry button {min-height:1.8rem;padding:.2rem .55rem;}
 .st-key-program_registry [data-testid="stButton"] button {border-color:#c5d0d8;}

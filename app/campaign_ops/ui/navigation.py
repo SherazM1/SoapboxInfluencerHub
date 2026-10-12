@@ -18,9 +18,17 @@ SPECIALIZED_SELECTION_KEYS = {
 
 RETURN_CLEAR_KEYS = {
     "campaign_ops_selected_program_id",
+    "campaign_ops_selected_content_program_id",
     "campaign_ops_influencer_route_record",
     "campaign_ops_influencer_timeline_navigation",
     "campaign_ops_program_route_message",
+    "campaign_ops_content_view",
+    "campaign_ops_content_create_open",
+    "campaign_ops_content_edit_open",
+    "campaign_ops_content_management_denied",
+    "campaign_ops_content_deliverable_edit_id",
+    "campaign_ops_content_submission_edit_id",
+    "campaign_ops_content_invoice_edit_id",
 }
 
 # Include legacy editor keys so switching workflows clears older browser sessions.

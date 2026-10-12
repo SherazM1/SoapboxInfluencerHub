@@ -4776,6 +4776,40 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertNotIn("campaign_ops_influencer_timeline_navigation", state)
         self.assertNotIn("campaign_ops_program_route_message", state)
 
+    def test_return_to_portfolio_clears_stale_ecommerce_state(self) -> None:
+        from app.campaign_ops.ui.navigation import return_to_portfolio
+
+        state = {
+            "campaign_ops_viewer": "Bailey",
+            "campaign_ops_section": "eCommerce / Content",
+            "campaign_ops_selected_program_id": "program-1",
+            "campaign_ops_selected_content_program_id": "workspace-1",
+            "campaign_ops_content_create_open": True,
+            "campaign_ops_content_edit_open": True,
+            "campaign_ops_content_deliverable_edit_id": "deliverable-1",
+            "campaign_ops_content_management_denied": True,
+            "campaign_ops_program_route_message": "Returning",
+        }
+
+        return_to_portfolio(state, "eCommerce / Content")
+
+        self.assertEqual("eCommerce / Content", state["campaign_ops_section"])
+        self.assertEqual("Bailey", state["campaign_ops_viewer"])
+        self.assertNotIn("campaign_ops_selected_program_id", state)
+        self.assertNotIn("campaign_ops_selected_content_program_id", state)
+        self.assertNotIn("campaign_ops_content_create_open", state)
+        self.assertNotIn("campaign_ops_content_edit_open", state)
+        self.assertNotIn("campaign_ops_content_deliverable_edit_id", state)
+        self.assertNotIn("campaign_ops_content_management_denied", state)
+        self.assertNotIn("campaign_ops_program_route_message", state)
+
+    def test_registry_header_css_keeps_table_header_stable(self) -> None:
+        from app.campaign_ops.ui.styles import APP_CSS
+
+        self.assertIn(".st-key-program_registry_header", APP_CSS)
+        self.assertIn("min-height:2.6rem", APP_CSS)
+        self.assertIn("align-items:center", APP_CSS)
+
     def test_session_keys_cover_smm_workflow_selection(self) -> None:
         from app.campaign_ops.state import SESSION_KEYS
 
