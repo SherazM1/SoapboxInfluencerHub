@@ -11,6 +11,7 @@ from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date,
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.program_router import open_program
 from app.campaign_ops.retail_media.baseline import action_display_text, current_status_text, next_current_retail_media_action, normalize_retail_media_actions, over_budget
+from app.campaign_ops.ui.navigation import return_to_portfolio
 from app.campaign_ops.retail_media.formatting import channel_mix_label, retail_status_label
 from app.campaign_ops.state import begin_new_program, set_selected_program
 from app.campaign_ops.validation import trim_or_none
@@ -52,10 +53,10 @@ def render_retail_media(actor: CampaignOpsUser, service: CampaignOpsService, use
 
 
 def _back():
-    st.session_state.pop(SELECTED, None)
     for key in list(st.session_state):
         if key.startswith("campaign_ops_retail_media_draft_"):
             st.session_state.pop(key, None)
+    return_to_portfolio(st.session_state, "Retail Media")
 
 
 def _render_retail_media_program_list(actor, service: CampaignOpsService) -> None:

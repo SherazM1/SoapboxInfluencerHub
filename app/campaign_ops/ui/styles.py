@@ -24,10 +24,11 @@ EDITOR_CSS = """
 APP_CSS = """
 [data-testid="stMainBlockContainer"], .main .block-container {max-width:1320px;width:100%;margin-inline:auto;padding:1.8rem 2rem 3rem;}
 [data-testid="stMain"] {background:#FFFFFF;color:#172b3a;}
-[data-testid="stMain"] [data-testid="stVerticalBlock"] {gap:.75rem;}
+[data-testid="stMain"] [data-testid="stVerticalBlock"] {gap:1rem;}
 [data-testid="stMain"] h1, [data-testid="stMain"] h2, [data-testid="stMain"] h3 {color:#002C47;letter-spacing:-.025em;}
 [data-testid="stMain"] h1 {font-size:2rem;}
 [data-testid="stMain"] h3 {font-size:1.25rem;padding:.15rem 0;}
+[data-testid="stMain"] h4 {font-size:1.05rem;color:#002C47;font-weight:700;}
 [data-testid="stMain"] button {border:1px solid #cbd5dd;border-radius:4px;min-height:2.15rem;padding:.3rem .75rem;color:#002C47;box-shadow:none;}
 [data-testid="stMain"] button[kind="primary"] {background:#33B2C1;border-color:#33B2C1;color:#002C47;font-weight:600;}
 [data-testid="stMain"] button:hover {border-color:#33B2C1;background:#edf8f9;color:#002C47;}
@@ -43,19 +44,20 @@ APP_CSS = """
 .campaign-ops-page-header {padding:.25rem 0 .7rem;border-bottom:2px solid #33B2C1;}
 .campaign-ops-page-header h1 {margin:0;color:#002C47;}
 .campaign-ops-page-header > div {font-size:.9rem;color:#586875;margin-top:.25rem;}
-.campaign-ops-section-header {margin:.2rem 0;padding:.3rem 0;border-bottom:1px solid #dce3e8;color:#002C47;}
-.campaign-ops-section-header > div {font-size:.875rem;color:#586875;}
+.campaign-ops-section-header {margin:.75rem 0 .35rem;padding:.35rem 0 .25rem;border-bottom:1px solid #dce3e8;color:#002C47;}
+.campaign-ops-section-header > div {font-size:.875rem;color:#002C47;font-weight:700;letter-spacing:.01em;}
 .campaign-ops-empty {padding:.85rem;border:1px dashed #cbd5dd;border-radius:4px;background:#f7f9fa;color:#586875;}
 .campaign-ops-filter-note {font-size:.85rem;color:#586875;}
 .campaign-ops-badge {display:inline-block;padding:.1rem .4rem;border:1px solid #dce3e8;border-radius:3px;background:#f3f6f8;color:#002C47;font-size:.8rem;margin-right:.25rem;}
 .campaign-ops-card {border:1px solid #dce3e8;border-radius:4px;padding:.75rem;background:#FFFFFF;}
 .campaign-ops-quick-panel {border:1px solid #dce3e8;border-left:3px solid #33B2C1;background:#f3f6f8;color:#002C47;padding:.7rem;border-radius:4px;}
 .st-key-campaign_ops_viewer_context {max-width:360px;}
-.st-key-campaign_ops_navigation [data-testid="stHorizontalBlock"] {justify-content:flex-start;flex-wrap:wrap;gap:.35rem;}
+.st-key-campaign_ops_navigation {margin-top:.4rem;margin-bottom:.25rem;}
+.st-key-campaign_ops_navigation [data-testid="stHorizontalBlock"] {justify-content:flex-start;flex-wrap:wrap;gap:.45rem;}
 .st-key-campaign_ops_navigation [data-testid="stColumn"] {flex:0 0 auto !important;width:auto !important;min-width:0 !important;}
-.st-key-campaign_ops_navigation button {min-height:2rem;padding:.3rem .7rem;font-size:.875rem;}
+.st-key-campaign_ops_navigation button {min-height:2.2rem;padding:.42rem .8rem;font-size:.875rem;}
 .st-key-campaign_ops_navigation button[kind="primary"] {background:#002C47;color:#FFFFFF;border-color:#002C47;border-bottom:3px solid #33B2C1;}
-.st-key-campaign_ops_navigation .campaign-ops-section-header {border:0;font-size:.75rem;color:#586875;padding:0;}
+.st-key-campaign_ops_navigation .campaign-ops-section-header {border:0;font-size:.78rem;color:#002C47;font-weight:700;padding:0;margin:.15rem 0 .2rem;}
 .st-key-program_registry {border:1px solid #dce3e8;border-radius:4px;padding:.4rem .65rem;overflow-x:auto;}
 .st-key-program_registry [data-testid="stHorizontalBlock"] {gap:.65rem;align-items:center;border-bottom:1px solid #e6ebef;padding:.3rem 0;}
 .st-key-program_registry > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"]:first-child {background:#f3f6f8;color:#002C47;}

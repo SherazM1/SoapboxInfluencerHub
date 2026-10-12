@@ -4666,6 +4666,7 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         )
         from app.campaign_ops.ui.navigation import (
             clear_incompatible_specialized_state,
+            return_to_portfolio,
             route_to_program_workspace,
             route_to_specialized_workspace,
         )
@@ -4713,6 +4714,42 @@ class CampaignOpsFoundationTests(unittest.TestCase):
         self.assertNotIn("campaign_ops_request_edit_id", state)
         self.assertNotIn("campaign_ops_cross_team_selected_program_id", state)
         self.assertEqual(state["campaign_ops_section"], "My Programs")
+
+    def test_set_section_clears_incompatible_selection_and_keeps_target_selection(self) -> None:
+        from app.campaign_ops.state import set_section
+
+        state = {
+            "campaign_ops_section": "Influencer",
+            "campaign_ops_selected_influencer_campaign_id": "influencer-1",
+            "campaign_ops_selected_retail_media_campaign_id": "retail-1",
+            "campaign_ops_selected_program_id": "program-1",
+        }
+
+        set_section(state, "Retail Media")
+
+        self.assertEqual("Retail Media", state["campaign_ops_section"])
+        self.assertNotIn("campaign_ops_selected_influencer_campaign_id", state)
+        self.assertEqual("retail-1", state["campaign_ops_selected_retail_media_campaign_id"])
+        self.assertNotIn("campaign_ops_selected_program_id", state)
+
+    def test_return_to_portfolio_clears_active_workflow_selection(self) -> None:
+        from app.campaign_ops.ui.navigation import return_to_portfolio
+
+        state = {
+            "campaign_ops_section": "Influencer",
+            "campaign_ops_selected_program_id": "program-1",
+            "campaign_ops_selected_influencer_campaign_id": "influencer-1",
+            "campaign_ops_influencer_route_record": {"campaign": "stale"},
+            "campaign_ops_influencer_timeline_navigation": "Planning",
+        }
+
+        return_to_portfolio(state, "Influencer")
+
+        self.assertEqual("Influencer", state["campaign_ops_section"])
+        self.assertNotIn("campaign_ops_selected_program_id", state)
+        self.assertNotIn("campaign_ops_selected_influencer_campaign_id", state)
+        self.assertNotIn("campaign_ops_influencer_route_record", state)
+        self.assertNotIn("campaign_ops_influencer_timeline_navigation", state)
 
 
 if __name__ == "__main__":

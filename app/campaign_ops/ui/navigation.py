@@ -102,6 +102,8 @@ def route_to_specialized_workspace(
 def return_to_portfolio(session_state: MutableMapping[str, Any], section: str) -> None:
     if section not in SPECIALIZED_SELECTION_KEYS:
         raise ValueError("Unknown workflow section.")
-    clear_incompatible_specialized_state(session_state, section)
+    clear_all_specialized_state(session_state)
     session_state.pop("campaign_ops_selected_program_id", None)
+    session_state.pop("campaign_ops_influencer_route_record", None)
+    session_state.pop("campaign_ops_influencer_timeline_navigation", None)
     session_state["campaign_ops_section"] = section

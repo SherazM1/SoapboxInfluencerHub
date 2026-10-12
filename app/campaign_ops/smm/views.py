@@ -6,6 +6,7 @@ import streamlit as st
 from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows, render_add_row
 from app.campaign_ops.program_router import open_program
 from app.campaign_ops.state import begin_new_program
+from app.campaign_ops.ui.navigation import return_to_portfolio
 from core.campaign_ops.enums import WorkstreamType
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.permissions import can_access_admin, require_program_access
@@ -18,10 +19,10 @@ SELECTED = "campaign_ops_selected_smm_program_id"
 
 
 def _back():
-    st.session_state.pop(SELECTED, None)
     for key in list(st.session_state):
         if key.startswith("campaign_ops_smm_draft_"):
             st.session_state.pop(key, None)
+    return_to_portfolio(st.session_state, "Social Media Management")
 
 
 def _render_smm_program_list(actor, service: CampaignOpsService) -> None:

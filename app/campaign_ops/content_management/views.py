@@ -13,6 +13,7 @@ from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date,
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.program_router import open_program
 from app.campaign_ops.state import begin_new_program, set_selected_program
+from app.campaign_ops.ui.navigation import return_to_portfolio
 from app.campaign_ops.validation import trim_or_none
 from core.campaign_ops.content_management import CONTENT_STATUSES, CONTENT_STATUS_NOT_STARTED
 from core.campaign_ops.enums import TaskStatus, WorkstreamType
@@ -96,10 +97,10 @@ def render_content_management(actor: CampaignOpsUser, service: CampaignOpsServic
 
 
 def _back_to_content_programs():
-    st.session_state.pop(SELECTED_WORKSPACE, None)
     for key in list(st.session_state):
         if key.startswith("campaign_ops_content_management_draft_"):
             st.session_state.pop(key, None)
+    return_to_portfolio(st.session_state, "eCommerce / Content")
 
 
 @st.fragment

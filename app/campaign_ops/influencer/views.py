@@ -5,6 +5,7 @@ from copy import deepcopy
 import streamlit as st
 
 from app.campaign_ops.state import begin_new_program
+from app.campaign_ops.ui.navigation import return_to_portfolio
 from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows, render_add_row
 
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
@@ -36,7 +37,7 @@ def _open_campaign(campaign_id):
 
 def _back_to_campaigns():
     _discard_drafts()
-    st.session_state.pop(SELECTED, None)
+    return_to_portfolio(st.session_state, "Influencer")
 
 
 def render_influencer(actor, service, users):

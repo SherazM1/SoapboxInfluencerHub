@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.campaign_ops.ui.navigation import clear_all_specialized_state
+from app.campaign_ops.ui.navigation import clear_all_specialized_state, clear_incompatible_specialized_state
 from core.campaign_ops.models import CampaignOpsUser
 from core.campaign_ops.permissions import can_access_admin
 
@@ -130,6 +130,15 @@ def update_viewer_state(
 
 
 def set_section(session_state: dict[str, object], section: str) -> None:
+    current_section = session_state.get("campaign_ops_section")
+    if current_section != section:
+        if section in {"Influencer", "Retail Media", "eCommerce / Content", "Insights", "Social Media Management"}:
+            clear_incompatible_specialized_state(session_state, section)
+        else:
+            clear_all_specialized_state(session_state)
+        session_state.pop("campaign_ops_selected_program_id", None)
+        session_state.pop("campaign_ops_influencer_route_record", None)
+        session_state.pop("campaign_ops_influencer_timeline_navigation", None)
     session_state["campaign_ops_section"] = section
 
 
