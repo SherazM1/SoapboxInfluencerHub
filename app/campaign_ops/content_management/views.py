@@ -6,7 +6,7 @@ from typing import Any
 
 import streamlit as st
 
-from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
+from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows, render_add_row
 from app.campaign_ops.content_management.baseline import action_display_text, next_current_action, normalize_content_actions
 from app.campaign_ops.content_management.formatting import content_status_label
 from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date, format_datetime, safe_text, title_label
@@ -46,7 +46,6 @@ SORT_OPTIONS = {
 
 def render_content_management(actor: CampaignOpsUser, service: CampaignOpsService, users: list[CampaignOpsUser]) -> None:
     del users
-    st.subheader("Content Management / eCommerce")
     if st.session_state.pop("campaign_ops_content_management_denied", False):
         st.warning("You do not have access to this program.")
     workspace_id = st.session_state.get(SELECTED_WORKSPACE)
@@ -54,14 +53,17 @@ def render_content_management(actor: CampaignOpsUser, service: CampaignOpsServic
         render_operational_editor(actor, service, str(workspace_id))
         return
 
-    if service.can_create_program(actor, WorkstreamType.ECOMMERCE.value):
-        st.button(
-            "New Program",
-            type="primary",
-            key="campaign_ops_content_new_operational_program",
-            on_click=begin_new_program,
-            args=(st.session_state, WorkstreamType.ECOMMERCE.value),
-        )
+    with st.container(key="program_section_actions"):
+        heading, action = st.columns([4, 1])
+        heading.subheader("eCommerce / Content")
+        if service.can_create_program(actor, WorkstreamType.ECOMMERCE.value):
+            action.button(
+                "New Program",
+                type="primary",
+                key="campaign_ops_content_new_operational_program",
+                on_click=begin_new_program,
+                args=(st.session_state, WorkstreamType.ECOMMERCE.value),
+            )
     try:
         programs = [
             row for row in ProgramRoutingService(service.repository).list_registry(actor)
@@ -71,23 +73,26 @@ def render_content_management(actor: CampaignOpsUser, service: CampaignOpsServic
         st.error(f"Unable to load Content Management programs: {exc}")
         return
 
-    columns = st.columns([2, 3, 2, 2, 1])
-    for column, label in zip(columns, ("Client", "Program", "Lead Owner", "Manager", "Open")):
-        column.markdown(f"**{label}**")
-    if not programs:
-        st.info("No active Content Management / eCommerce programs are available.")
-    for program in programs:
-        columns = st.columns([2, 3, 2, 2, 1])
-        columns[0].write(safe_text(program.client_name))
-        columns[1].write(program.program_name)
-        columns[2].write(safe_text(program.primary_owner_name))
-        columns[3].write(safe_text(program.manager_name))
-        columns[4].button(
-            "Open",
-            key=f"campaign_ops_content_management_open_{program.id}",
-            on_click=open_program,
-            args=(st.session_state, actor, service, program.id),
-        )
+    with st.container(key="program_registry"):
+        with st.container(key="program_registry_header"):
+            columns = st.columns([2, 3, 2, 2, 1])
+            for column, label in zip(columns, ("Client", "Program", "Lead Owner", "Manager", "Open")):
+                column.markdown(f"**{label}**")
+        if not programs:
+            st.info("No active Content Management / eCommerce programs are available.")
+        for program in programs:
+            columns = st.columns([2, 3, 2, 2, 1])
+            columns[0].write(safe_text(program.client_name))
+            columns[1].write(program.program_name)
+            columns[2].write(safe_text(program.primary_owner_name))
+            columns[3].write(safe_text(program.manager_name))
+            columns[4].button(
+                "Open",
+                key=f"campaign_ops_content_management_open_{program.id}",
+                on_click=open_program,
+                args=(st.session_state, actor, service, program.id),
+            )
+
 
 
 def _back_to_content_programs():
@@ -166,13 +171,18 @@ def render_operational_editor(actor, service, workspace_id: str) -> None:
             )
         st.markdown("#### Timeline")
         render_rows(snapshot, prefix)
-        st.button(
-            "Save Changes",
-            type="primary",
-            key=f"content_management_save_{workspace_id}",
-            on_click=_save_content_management_changes,
-            args=(actor, timeline, program.id, draft_key, version_key, prefix),
-        )
+        footer_left, footer_right = st.columns([1, 1])
+        with footer_left:
+            render_add_row(snapshot, prefix)
+        with footer_right:
+            with st.container(horizontal=True, horizontal_alignment="right"):
+                st.button(
+                    "Save Changes",
+                    type="primary",
+                    key=f"content_management_save_{workspace_id}",
+                    on_click=_save_content_management_changes,
+                    args=(actor, timeline, program.id, draft_key, version_key, prefix),
+                )
         st.caption("Edits stay unsaved until Save Changes. Save before leaving.")
         st.button("Back to programs", key=f"content_management_back_{workspace_id}",
                   on_click=_back_to_content_programs)

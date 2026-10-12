@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import streamlit as st
 
-from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
+from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows, render_add_row
 from app.campaign_ops.program_router import open_program
 from app.campaign_ops.state import begin_new_program
 from core.campaign_ops.enums import WorkstreamType
@@ -25,14 +25,17 @@ def _back():
 
 
 def _render_smm_program_list(actor, service: CampaignOpsService) -> None:
-    if service.can_create_program(actor, WorkstreamType.SMM.value):
-        st.button(
-            "New Program",
-            type="primary",
-            key="campaign_ops_smm_new_program",
-            on_click=begin_new_program,
-            args=(st.session_state, WorkstreamType.SMM.value),
-        )
+    with st.container(key="program_section_actions"):
+        heading, action = st.columns([4, 1])
+        heading.subheader("Social Media Management")
+        if service.can_create_program(actor, WorkstreamType.SMM.value):
+            action.button(
+                "New Program",
+                type="primary",
+                key="campaign_ops_smm_new_program",
+                on_click=begin_new_program,
+                args=(st.session_state, WorkstreamType.SMM.value),
+            )
     try:
         programs = [
             row for row in ProgramRoutingService(service.repository).list_registry(actor)
@@ -42,22 +45,25 @@ def _render_smm_program_list(actor, service: CampaignOpsService) -> None:
         st.error(f"Unable to load SMM programs: {exc}")
         return
 
-    columns = st.columns([3, 2, 2, 1])
-    for column, label in zip(columns, ("Program", "Lead Owner", "Manager", "Open")):
-        column.markdown(f"**{label}**")
-    if not programs:
-        st.info("No active SMM programs are available.")
-    for program in programs:
-        columns = st.columns([3, 2, 2, 1])
-        columns[0].write(program.program_name)
-        columns[1].write(program.primary_owner_name or "-")
-        columns[2].write(program.manager_name or "-")
-        columns[3].button(
-            "Open",
-            key=f"campaign_ops_smm_open_{program.id}",
-            on_click=open_program,
-            args=(st.session_state, actor, service, program.id),
-        )
+    with st.container(key="program_registry"):
+        with st.container(key="program_registry_header"):
+            columns = st.columns([3, 2, 2, 1])
+            for column, label in zip(columns, ("Program", "Lead Owner", "Manager", "Open")):
+                column.markdown(f"**{label}**")
+        if not programs:
+            st.info("No active SMM programs are available.")
+        for program in programs:
+            columns = st.columns([3, 2, 2, 1])
+            columns[0].write(program.program_name)
+            columns[1].write(program.primary_owner_name or "-")
+            columns[2].write(program.manager_name or "-")
+            columns[3].button(
+                "Open",
+                key=f"campaign_ops_smm_open_{program.id}",
+                on_click=open_program,
+                args=(st.session_state, actor, service, program.id),
+            )
+
 
 
 
@@ -119,8 +125,13 @@ def render_editor(actor, service, program_id):
                 placeholder=f"Choose a {label}", key=key, disabled=not can_access_admin(actor))
         st.markdown("#### Timeline")
         render_rows(snapshot, prefix)
-        st.button("Save Changes", type="primary", key=f"smm_save_{program_id}", on_click=_save,
-            args=(actor, service, program_id, draft_key, version_key, prefix))
+        footer_left, footer_right = st.columns([1, 1])
+        with footer_left:
+            render_add_row(snapshot, prefix)
+        with footer_right:
+            with st.container(horizontal=True, horizontal_alignment="right"):
+                st.button("Save Changes", type="primary", key=f"smm_save_{program_id}", on_click=_save,
+                    args=(actor, service, program_id, draft_key, version_key, prefix))
         st.caption("Edits stay unsaved until Save Changes. Save before leaving.")
 
 

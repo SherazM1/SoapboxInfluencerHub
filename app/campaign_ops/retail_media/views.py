@@ -6,7 +6,7 @@ from typing import Any
 
 import streamlit as st
 
-from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
+from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows, render_add_row
 from app.campaign_ops.formatting import RISK_LABELS, STATUS_LABELS, format_date, format_datetime, safe_text, title_label
 from app.campaign_ops.note_views import render_notes
 from app.campaign_ops.program_router import open_program
@@ -59,14 +59,17 @@ def _back():
 
 
 def _render_retail_media_program_list(actor, service: CampaignOpsService) -> None:
-    if service.can_create_program(actor, WorkstreamType.RETAIL_MEDIA.value):
-        st.button(
-            "New Program",
-            type="primary",
-            key="campaign_ops_retail_media_new_program",
-            on_click=begin_new_program,
-            args=(st.session_state, WorkstreamType.RETAIL_MEDIA.value),
-        )
+    with st.container(key="program_section_actions"):
+        heading, action = st.columns([4, 1])
+        heading.subheader("Retail Media")
+        if service.can_create_program(actor, WorkstreamType.RETAIL_MEDIA.value):
+            action.button(
+                "New Program",
+                type="primary",
+                key="campaign_ops_retail_media_new_program",
+                on_click=begin_new_program,
+                args=(st.session_state, WorkstreamType.RETAIL_MEDIA.value),
+            )
     try:
         programs = [
             row for row in ProgramRoutingService(service.repository).list_registry(actor)
@@ -76,22 +79,25 @@ def _render_retail_media_program_list(actor, service: CampaignOpsService) -> Non
         st.error(f"Unable to load Retail Media programs: {exc}")
         return
 
-    columns = st.columns([3, 2, 2, 1])
-    for column, label in zip(columns, ("Program", "Lead Owner", "Manager", "Open")):
-        column.markdown(f"**{label}**")
-    if not programs:
-        st.info("No active Retail Media programs are available.")
-    for program in programs:
-        columns = st.columns([3, 2, 2, 1])
-        columns[0].write(program.program_name)
-        columns[1].write(program.primary_owner_name or "-")
-        columns[2].write(program.manager_name or "-")
-        columns[3].button(
-            "Open",
-            key=f"campaign_ops_retail_media_open_{program.id}",
-            on_click=open_program,
-            args=(st.session_state, actor, service, program.id),
-        )
+    with st.container(key="program_registry"):
+        with st.container(key="program_registry_header"):
+            columns = st.columns([3, 2, 2, 1])
+            for column, label in zip(columns, ("Program", "Lead Owner", "Manager", "Open")):
+                column.markdown(f"**{label}**")
+        if not programs:
+            st.info("No active Retail Media programs are available.")
+        for program in programs:
+            columns = st.columns([3, 2, 2, 1])
+            columns[0].write(program.program_name)
+            columns[1].write(program.primary_owner_name or "-")
+            columns[2].write(program.manager_name or "-")
+            columns[3].button(
+                "Open",
+                key=f"campaign_ops_retail_media_open_{program.id}",
+                on_click=open_program,
+                args=(st.session_state, actor, service, program.id),
+            )
+
 
 
 @st.fragment
@@ -165,8 +171,13 @@ def render_editor(actor, service, program_id):
             "Close campaign and archive final learnings",
             "Custom",
         ))
-        st.button("Save Changes", type="primary", key=f"retail_media_save_{program_id}", on_click=_save,
-            args=(actor, service, program_id, draft_key, version_key, prefix))
+        footer_left, footer_right = st.columns([1, 1])
+        with footer_left:
+            render_add_row(snapshot, prefix)
+        with footer_right:
+            with st.container(horizontal=True, horizontal_alignment="right"):
+                st.button("Save Changes", type="primary", key=f"retail_media_save_{program_id}", on_click=_save,
+                    args=(actor, service, program_id, draft_key, version_key, prefix))
         st.caption("Edits stay unsaved until Save Changes. Save before leaving.")
 
 

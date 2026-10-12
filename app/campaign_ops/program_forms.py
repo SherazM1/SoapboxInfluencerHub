@@ -19,72 +19,75 @@ def render_new_program_form(
     users: list[CampaignOpsUser],
     clients: list[Client],
 ) -> None:
-    st.subheader("New Program")
-    workflow_key = st.session_state.get("campaign_ops_new_program_fixed_workflow")
-    can_create = (
-        can_access_admin(actor) if workflow_key is None
-        else service.can_create_program(actor, workflow_key)
-    )
-    if not can_create:
-        st.warning("You do not have permission to create programs.")
-        return
-
-    st.button("Cancel", key="campaign_ops_new_program_cancel",
-              on_click=cancel_new_program, args=(st.session_state,))
-
-    del users, clients
-    workflow_labels = list(WORKFLOW_LABELS.values())
-    workflow_by_label = {label: key for key, label in WORKFLOW_LABELS.items()}
-    default_workflow = WORKFLOW_LABELS[WorkstreamType.INFLUENCER.value]
-    client_name = st.text_input("Client", key="campaign_ops_new_program_client")
-    program_name = st.text_input("Program Name", key="campaign_ops_new_program_name")
-    if workflow_key is None:
-        workflow_label = st.selectbox(
-            "Workflow", workflow_labels, index=workflow_labels.index(default_workflow),
-            key="campaign_ops_new_program_workflow",
+    with st.container(key="program_creation_form"):
+        heading, cancel_action = st.columns([4, 1])
+        heading.subheader("New Program")
+        workflow_key = st.session_state.get("campaign_ops_new_program_fixed_workflow")
+        can_create = (
+            can_access_admin(actor) if workflow_key is None
+            else service.can_create_program(actor, workflow_key)
         )
-        workflow_key = workflow_by_label[workflow_label]
+        if not can_create:
+            st.warning("You do not have permission to create programs.")
+            return
 
-    if workflow_key == WorkstreamType.RETAIL_MEDIA.value:
-        st.selectbox(
-            "Retail Type",
-            ["general", "incomm"],
-            index=0,
-            key="campaign_ops_new_program_retail_type",
+        cancel_action.button("Cancel", key="campaign_ops_new_program_cancel",
+                             on_click=cancel_new_program, args=(st.session_state,))
+
+        del users, clients
+        workflow_labels = list(WORKFLOW_LABELS.values())
+        workflow_by_label = {label: key for key, label in WORKFLOW_LABELS.items()}
+        default_workflow = WORKFLOW_LABELS[WorkstreamType.INFLUENCER.value]
+        client_name = st.text_input("Client", key="campaign_ops_new_program_client")
+        program_name = st.text_input("Program Name", key="campaign_ops_new_program_name")
+        if workflow_key is None:
+            workflow_label = st.selectbox(
+                "Workflow", workflow_labels, index=workflow_labels.index(default_workflow),
+                key="campaign_ops_new_program_workflow",
+            )
+            workflow_key = workflow_by_label[workflow_label]
+
+        if workflow_key == WorkstreamType.RETAIL_MEDIA.value:
+            st.selectbox(
+                "Retail Type",
+                ["general", "incomm"],
+                index=0,
+                key="campaign_ops_new_program_retail_type",
+            )
+
+        try:
+            lead_users = service.list_workflow_role_users(
+                workflow_key, WorkflowRole.LEAD_OWNER.value
+            )
+            manager_users = service.list_workflow_role_users(
+                workflow_key, WorkflowRole.MANAGER.value
+            )
+        except CampaignOpsError as exc:
+            st.error(f"Unable to load the workflow roster: {exc}")
+            return
+        if not lead_users or not manager_users:
+            st.info("No active Lead Owner / Manager roster is configured for this workflow.")
+            return
+
+        lead_names = {user.id: user.display_name for user in lead_users}
+        manager_names = {user.id: user.display_name for user in manager_users}
+        lead_id = st.selectbox(
+            "Lead Owner", list(lead_names), format_func=lead_names.get,
+            index=None, placeholder="Choose a Lead Owner",
+            key=f"campaign_ops_new_program_lead_{workflow_key}",
+        )
+        manager_id = st.selectbox(
+            "Manager", list(manager_names), format_func=manager_names.get,
+            index=None, placeholder="Choose a Manager",
+            key=f"campaign_ops_new_program_manager_{workflow_key}",
         )
 
-    try:
-        lead_users = service.list_workflow_role_users(
-            workflow_key, WorkflowRole.LEAD_OWNER.value
-        )
-        manager_users = service.list_workflow_role_users(
-            workflow_key, WorkflowRole.MANAGER.value
-        )
-    except CampaignOpsError as exc:
-        st.error(f"Unable to load the workflow roster: {exc}")
-        return
-    if not lead_users or not manager_users:
-        st.info("No active Lead Owner / Manager roster is configured for this workflow.")
-        return
+        error = st.session_state.pop("campaign_ops_new_program_error", None)
+        if error:
+            st.error(error)
+        st.button("Create Program", type="primary", key="campaign_ops_new_program_submit",
+                  on_click=_create_program, args=(actor, service, workflow_key))
 
-    lead_names = {user.id: user.display_name for user in lead_users}
-    manager_names = {user.id: user.display_name for user in manager_users}
-    lead_id = st.selectbox(
-        "Lead Owner", list(lead_names), format_func=lead_names.get,
-        index=None, placeholder="Choose a Lead Owner",
-        key=f"campaign_ops_new_program_lead_{workflow_key}",
-    )
-    manager_id = st.selectbox(
-        "Manager", list(manager_names), format_func=manager_names.get,
-        index=None, placeholder="Choose a Manager",
-        key=f"campaign_ops_new_program_manager_{workflow_key}",
-    )
-
-    error = st.session_state.pop("campaign_ops_new_program_error", None)
-    if error:
-        st.error(error)
-    st.button("Create Program", type="primary", key="campaign_ops_new_program_submit",
-              on_click=_create_program, args=(actor, service, workflow_key))
 
 
 def _create_program(actor, service, workflow_key):

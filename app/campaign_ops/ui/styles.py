@@ -1,101 +1,82 @@
-from __future__ import annotations
-
+"""Centralized Program Tracker visual system."""
 import streamlit as st
 
+EDITOR_CSS = """
+.st-key-ops_editor {border-top:2px solid #33B2C1;padding-top:.6rem;}
+.st-key-ops_editor [data-testid="stVerticalBlock"] {gap:.5rem;}
+.st-key-ops_table {border:1px solid #dce3e8;border-radius:4px;padding:.4rem .6rem;background:#FFFFFF;overflow-x:auto;}
+.st-key-ops_table [class*="st-key-ops_row_"] {border-bottom:1px solid #e6ebef;padding:.25rem 0;}
+.st-key-ops_table [data-testid="stVerticalBlock"] {gap:.25rem;}
+.st-key-ops_table [data-testid="stHorizontalBlock"] {align-items:center;gap:.5rem;}
+.st-key-ops_table > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"] {background:#f3f6f8;color:#002C47;border-bottom:1px solid #dce3e8;}
+.st-key-ops_table [data-testid="stCheckbox"] {display:flex;justify-content:center;}
+.st-key-ops_table button {padding:.2rem .4rem;min-height:2rem;}
+.st-key-ops_table p {font-size:.85rem;margin:0;}
+.st-key-ops_editor input {font-size:.875rem;}
+.st-key-ops_editor [data-testid="stHorizontalBlock"]:has(button[kind="primary"]) > [data-testid="stColumn"]:last-child [data-testid="stButton"] {display:flex;justify-content:flex-end;}
+.st-key-ops_editor h4 {color:#002C47;font-size:1rem;padding-bottom:.35rem;border-bottom:1px solid #33B2C1;}
+@media(max-width:760px) {
+.st-key-ops_table [data-testid="stHorizontalBlock"] {min-width:680px;flex-wrap:nowrap;}
+.st-key-ops_table [data-testid="stColumn"] {min-width:0;}
+}
+"""
 
-def apply_campaign_ops_styles() -> None:
-    st.markdown(
-        """
-        <style>
-        .st-key-campaign_ops_navigation button[kind="primary"] {
-            background: #087f83; border-color: #087f83; color: white;
-        }
-        .st-key-campaign_ops_navigation button:focus-visible {
-            outline: 2px solid #087f83; outline-offset: 2px;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-page-header {
-            border-left: 6px solid #0f766e;
-            padding: .65rem .85rem;
-            margin: .15rem 0 1rem 0;
-            background: #f8fafc;
-            border-bottom: 1px solid #d7dee8;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-page-header h1,
-        [data-testid="stAppViewContainer"] .campaign-ops-page-header h2 {
-            margin: 0;
-            color: #0f3f46;
-            letter-spacing: 0;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-section-header {
-            margin: 1rem 0 .35rem 0;
-            padding: .35rem .55rem;
-            border: 1px solid #d7dee8;
-            border-left: 5px solid #0f766e;
-            background: #ffffff;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-section-header strong {
-            color: #0f3f46;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-empty {
-            padding: .65rem .8rem;
-            border: 1px dashed #b7c4d4;
-            background: #fbfdff;
-            color: #475569;
-            margin: .35rem 0;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-badge {
-            display: inline-block;
-            padding: .1rem .45rem;
-            border: 1px solid #b7c4d4;
-            border-radius: 999px;
-            background: #f8fafc;
-            color: #0f172a;
-            font-size: .82rem;
-            line-height: 1.35;
-            margin-right: .25rem;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-card {
-            border: 1px solid #d7dee8;
-            border-radius: 6px;
-            padding: .75rem;
-            background: #ffffff;
-            min-height: 13rem;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-quick-panel {
-            border: 1px solid #123142;
-            background: #0f2433;
-            color: #f8fafc;
-            padding: .7rem;
-            border-radius: 6px;
-        }
-        [data-testid="stAppViewContainer"] .campaign-ops-filter-note {
-            font-size: .9rem;
-            color: #475569;
-        }
-        [data-testid="stAppViewContainer"] div[data-testid="stMetric"] {
-            border: 1px solid #d7dee8;
-            border-radius: 6px;
-            padding: .45rem .65rem;
-            background: #ffffff;
-        }
-        [data-testid="stAppViewContainer"] .stDataFrame {
-            border: 1px solid #d7dee8;
-        }
-        [data-testid="stAppViewContainer"] p, 
-        [data-testid="stAppViewContainer"] span,
-        [data-testid="stAppViewContainer"] div {
-            overflow-wrap: anywhere;
-        }
-        @media (max-width: 760px) {
-            [data-testid="stAppViewContainer"] .campaign-ops-card {
-                min-height: auto;
-            }
-            [data-testid="stAppViewContainer"] .campaign-ops-page-header {
-                padding: .55rem;
-            }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+APP_CSS = """
+[data-testid="stMainBlockContainer"], .main .block-container {max-width:1320px;width:100%;margin-inline:auto;padding:1.8rem 2rem 3rem;}
+[data-testid="stMain"] {background:#FFFFFF;color:#172b3a;}
+[data-testid="stMain"] [data-testid="stVerticalBlock"] {gap:.75rem;}
+[data-testid="stMain"] h1, [data-testid="stMain"] h2, [data-testid="stMain"] h3 {color:#002C47;letter-spacing:-.025em;}
+[data-testid="stMain"] h1 {font-size:2rem;}
+[data-testid="stMain"] h3 {font-size:1.25rem;padding:.15rem 0;}
+[data-testid="stMain"] button {border:1px solid #cbd5dd;border-radius:4px;min-height:2.15rem;padding:.3rem .75rem;color:#002C47;box-shadow:none;}
+[data-testid="stMain"] button[kind="primary"] {background:#33B2C1;border-color:#33B2C1;color:#002C47;font-weight:600;}
+[data-testid="stMain"] button:hover {border-color:#33B2C1;background:#edf8f9;color:#002C47;}
+[data-testid="stMain"] button[kind="primary"]:hover {background:#2ca3b1;}
+[data-testid="stMain"] button:focus-visible {outline:2px solid #002C47;outline-offset:2px;}
+[data-testid="stMain"] [data-baseweb="input"], [data-testid="stMain"] [data-baseweb="select"] > div, [data-testid="stMain"] [data-baseweb="textarea"] {border-radius:4px;border-color:#cbd5dd;background:#FFFFFF;min-height:2.1rem;}
+[data-testid="stMain"] [data-baseweb="input"]:focus-within, [data-testid="stMain"] [data-baseweb="select"]:focus-within > div, [data-testid="stMain"] [data-baseweb="textarea"]:focus-within {border-color:#33B2C1;box-shadow:0 0 0 1px #33B2C1;}
+[data-testid="stMain"] [data-baseweb="base-input"] {background:#FFFFFF;}
+[data-testid="stMain"] [data-baseweb="radio"]:has(input:checked) > div:first-child, [data-testid="stMain"] [data-baseweb="checkbox"]:has(input:checked) > div:first-child {background:#002C47;border-color:#002C47;}
+[data-testid="stMain"] input {padding:.4rem .6rem;color:#172b3a;}
+[data-testid="stMain"] label p {font-size:.875rem;color:#002C47;}
+[data-testid="stMain"] hr {margin:.25rem 0;border-color:#e2e8ed;}
+.campaign-ops-page-header {padding:.25rem 0 .7rem;border-bottom:2px solid #33B2C1;}
+.campaign-ops-page-header h1 {margin:0;color:#002C47;}
+.campaign-ops-page-header > div {font-size:.9rem;color:#586875;margin-top:.25rem;}
+.campaign-ops-section-header {margin:.2rem 0;padding:.3rem 0;border-bottom:1px solid #dce3e8;color:#002C47;}
+.campaign-ops-section-header > div {font-size:.875rem;color:#586875;}
+.campaign-ops-empty {padding:.85rem;border:1px dashed #cbd5dd;border-radius:4px;background:#f7f9fa;color:#586875;}
+.campaign-ops-filter-note {font-size:.85rem;color:#586875;}
+.campaign-ops-badge {display:inline-block;padding:.1rem .4rem;border:1px solid #dce3e8;border-radius:3px;background:#f3f6f8;color:#002C47;font-size:.8rem;margin-right:.25rem;}
+.campaign-ops-card {border:1px solid #dce3e8;border-radius:4px;padding:.75rem;background:#FFFFFF;}
+.campaign-ops-quick-panel {border:1px solid #dce3e8;border-left:3px solid #33B2C1;background:#f3f6f8;color:#002C47;padding:.7rem;border-radius:4px;}
+.st-key-campaign_ops_viewer_context {max-width:360px;}
+.st-key-campaign_ops_navigation [data-testid="stHorizontalBlock"] {justify-content:flex-start;flex-wrap:wrap;gap:.35rem;}
+.st-key-campaign_ops_navigation [data-testid="stColumn"] {flex:0 0 auto !important;width:auto !important;min-width:0 !important;}
+.st-key-campaign_ops_navigation button {min-height:2rem;padding:.3rem .7rem;font-size:.875rem;}
+.st-key-campaign_ops_navigation button[kind="primary"] {background:#002C47;color:#FFFFFF;border-color:#002C47;border-bottom:3px solid #33B2C1;}
+.st-key-campaign_ops_navigation .campaign-ops-section-header {border:0;font-size:.75rem;color:#586875;padding:0;}
+.st-key-program_registry {border:1px solid #dce3e8;border-radius:4px;padding:.4rem .65rem;overflow-x:auto;}
+.st-key-program_registry [data-testid="stHorizontalBlock"] {gap:.65rem;align-items:center;border-bottom:1px solid #e6ebef;padding:.3rem 0;}
+.st-key-program_registry > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"]:first-child {background:#f3f6f8;color:#002C47;}
+.st-key-program_registry [data-testid="stVerticalBlock"] {gap:.2rem;}
+.st-key-program_registry_header {background:#f3f6f8;color:#002C47;}
+.st-key-program_registry p {font-size:.875rem;margin:0;overflow-wrap:anywhere;}
+.st-key-program_registry button {min-height:1.85rem;padding:.2rem .55rem;}
+.st-key-program_section_actions [data-testid="stHorizontalBlock"] {align-items:center;}
+.st-key-program_section_actions [data-testid="stColumn"]:last-child [data-testid="stButton"] {display:flex;justify-content:flex-end;}
+.st-key-program_creation_form [data-testid="stHorizontalBlock"] {flex-wrap:nowrap;align-items:center;}
+.st-key-program_creation_form [data-testid="stColumn"]:last-child {display:flex;justify-content:flex-end;}
+.st-key-program_creation_form {max-width:800px;border:1px solid #dce3e8;border-top:2px solid #33B2C1;border-radius:4px;padding:1rem;}
+@media(max-width:760px) {
+[data-testid="stMainBlockContainer"], .main .block-container {padding:1rem .75rem 2rem;}
+.st-key-program_registry [data-testid="stHorizontalBlock"] {min-width:700px;flex-wrap:nowrap;}
+.st-key-program_registry [data-testid="stColumn"] {min-width:0;}
+}
+"""
 
+def apply_editor_styles():
+    st.html(f"<style>{APP_CSS}{EDITOR_CSS}</style>")
+
+def apply_campaign_ops_styles():
+    st.markdown(f"<style>{APP_CSS}{EDITOR_CSS}</style>", unsafe_allow_html=True)

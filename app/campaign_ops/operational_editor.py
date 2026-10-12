@@ -4,21 +4,12 @@ from uuid import uuid4
 import streamlit as st
 
 COLUMNS = ("Date", "Action", "Done", "Program Notes")
-WIDTHS = [1.3, 3.8, .5, 3.2, .6]
+WIDTHS = [15, 40, 7, 32, 6]
 
 
 def editor_styles():
-    st.html("""<style>
-    .st-key-ops_editor {border-top:3px solid #087f83;padding-top:.6rem;}
-    .st-key-ops_editor [data-testid="stVerticalBlockBorderWrapper"] {border-color:#c9dedd;}
-    .st-key-ops_editor button[kind="primary"] {background:#087f83;border-color:#087f83;color:white;}
-    .st-key-ops_editor button[kind="primary"]:hover {background:#076b6f;border-color:#076b6f;}
-    .st-key-ops_editor input:focus, .st-key-ops_editor textarea:focus {outline-color:#087f83;}
-    .st-key-ops_editor [data-testid="stHorizontalBlock"] {align-items:start;}
-    .st-key-ops_table {border-top:1px solid #9fc9c7;}
-    .st-key-ops_table [class*="st-key-ops_row_"] {border-bottom:1px solid #dce7e6;padding:.3rem 0;}
-    .st-key-ops_table [data-testid="stVerticalBlock"] {gap:.35rem;}
-    </style>""")
+    from app.campaign_ops.ui.styles import apply_editor_styles
+    apply_editor_styles()
 
 
 def row_key(prefix, record, field):
@@ -88,4 +79,7 @@ def _render_table(snapshot, prefix, *, actions):
                     key=row_key(prefix, row, "Program Notes"), label_visibility="collapsed")
             columns[4].button("×", key=row_key(prefix, row, "remove"), help=f"Remove row {index}",
                 on_click=_remove, args=(snapshot, prefix, row["_draft_id"]))
+
+
+def render_add_row(snapshot, prefix):
     st.button("Add row", key=f"{prefix}_add", on_click=_add, args=(snapshot, prefix))

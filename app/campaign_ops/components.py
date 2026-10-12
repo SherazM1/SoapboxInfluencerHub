@@ -100,7 +100,7 @@ def render_initialization_message() -> None:
         if isinstance(raw_message, InitializationDisplaySummary)
         else format_initialization_result(raw_message)
     )
-    st.success(summary.initialized_status)
+    st.success(summary.initialized_status.replace("Campaign Operations", "Program Tracker"))
     render_summary_list(
         "Applied migrations",
         summary.applied_migrations,
@@ -120,7 +120,7 @@ def render_database_setup(
         return
     with st.expander("Database Setup", expanded=False):
         if setup_status.is_initialized:
-            st.success("Campaign Operations database is initialized.")
+            st.success("Program Tracker database is initialized.")
         else:
             st.warning(setup_status.message)
         st.caption(
@@ -133,13 +133,13 @@ def render_database_setup(
             "Show migration details after maintenance run",
             key="campaign_ops_show_setup_details",
         )
-        if st.button("Initialize Campaign Operations Database", type="secondary"):
+        if st.button("Initialize Program Tracker Database", type="secondary"):
             try:
                 result = initialize_campaign_ops_database()
             except CampaignOpsError as exc:
                 st.session_state.pop("campaign_ops_initialization_message", None)
                 st.session_state["campaign_ops_initialization_error"] = str(exc)
-                st.error(f"Campaign Operations database initialization failed: {exc}")
+                st.error(f"Program Tracker database initialization failed: {exc}")
                 return
             st.session_state.pop("campaign_ops_initialization_error", None)
             st.session_state.pop("campaign_ops_initialization_result", None)
@@ -168,5 +168,5 @@ def render_section_navigation(user: CampaignOpsUser | None, viewer: str) -> str:
             columns = st.columns(len(group_sections))
             for column, section in zip(columns, group_sections):
                 column.button(section, type="primary" if section == active_section else "secondary",
-                    use_container_width=True, on_click=set_section, args=(st.session_state, section))
+                    use_container_width=False, on_click=set_section, args=(st.session_state, section))
     return str(active_section)

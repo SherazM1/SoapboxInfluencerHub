@@ -5,7 +5,7 @@ from copy import deepcopy
 import streamlit as st
 
 from app.campaign_ops.state import begin_new_program
-from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows
+from app.campaign_ops.operational_editor import collect_rows, editor_styles, render_rows, render_add_row
 
 from core.campaign_ops.exceptions import CampaignOpsError, CampaignOpsPermissionError
 from core.campaign_ops.permissions import can_access_admin
@@ -44,7 +44,8 @@ def render_influencer(actor, service, users):
     pending = st.session_state.pop(PENDING, None)
     if pending:
         st.session_state["campaign_ops_influencer_view"] = pending
-    st.subheader("Influencer")
+    if st.session_state.get(SELECTED):
+        st.subheader("Influencer")
     label = st.radio("Influencer workspace", list(STAGE_LABELS.values()), horizontal=True,
                      key="campaign_ops_influencer_view")
     stage = next(key for key, value in STAGE_LABELS.items() if value == label)
@@ -69,30 +70,36 @@ def render_influencer(actor, service, users):
 
 
 def render_portfolio(actor, service, users, stage):
-    if service.can_create_program(actor, "influencer"):
-        st.button("New Program", type="primary", key="influencer_new_program",
-                  on_click=begin_new_program, args=(st.session_state, "influencer"))
+    with st.container(key="program_section_actions"):
+        heading, action = st.columns([4, 1])
+        heading.subheader("Influencer")
+        if service.can_create_program(actor, "influencer"):
+            action.button("New Program", type="primary", key="influencer_new_program",
+                      on_click=begin_new_program, args=(st.session_state, "influencer"))
     search = st.text_input("Search campaigns", key=f"influencer_timeline_search_{stage}").strip().casefold()
     campaigns, timelines = service.list_campaigns(actor, stage)
     campaigns = [campaign for campaign in campaigns if search in campaign.campaign_title.casefold()]
     owners = {user.id: user.display_name for user in users}
-    columns = st.columns([4, 1, 2, 5, 1])
-    for column, label in zip(columns, ("Campaign", "Owner", "Next Date", "Next Action", "Open")):
-        column.markdown(f"**{label}**")
-    if not campaigns:
-        st.info("No campaigns in this view.")
-    for campaign in campaigns:
-        timeline = sort_timeline(timelines.get(campaign.id, []))
-        # Existing completion statuses remain meaningful for next-action summaries,
-        # while every active row remains visible in the historical timeline.
-        upcoming = next((row for row in timeline if row.status not in ("complete", "cancelled")), None)
-        columns = st.columns([4, 1, 2, 5, 1])
-        columns[0].write(campaign.campaign_title)
-        columns[1].write(owners.get(campaign.manager_user_id, "Unassigned"))
-        columns[2].write(upcoming.due_date.strftime("%m/%d/%Y") if upcoming and upcoming.due_date else "?")
-        columns[3].write(upcoming.step_title if upcoming else "?")
-        columns[4].button("Open", key=f"influencer_timeline_open_{campaign.id}",
-                          on_click=_open_campaign, args=(campaign.id,))
+    with st.container(key="program_registry"):
+        with st.container(key="program_registry_header"):
+            columns = st.columns([4, 1, 2, 5, 1])
+            for column, label in zip(columns, ("Campaign", "Owner", "Next Date", "Next Action", "Open")):
+                column.markdown(f"**{label}**")
+        if not campaigns:
+            st.info("No campaigns in this view.")
+        for campaign in campaigns:
+            timeline = sort_timeline(timelines.get(campaign.id, []))
+            # Existing completion statuses remain meaningful for next-action summaries,
+            # while every active row remains visible in the historical timeline.
+            upcoming = next((row for row in timeline if row.status not in ("complete", "cancelled")), None)
+            columns = st.columns([4, 1, 2, 5, 1])
+            columns[0].write(campaign.campaign_title)
+            columns[1].write(owners.get(campaign.manager_user_id, "Unassigned"))
+            columns[2].write(upcoming.due_date.strftime("%m/%d/%Y") if upcoming and upcoming.due_date else "?")
+            columns[3].write(upcoming.step_title if upcoming else "?")
+            columns[4].button("Open", key=f"influencer_timeline_open_{campaign.id}",
+                              on_click=_open_campaign, args=(campaign.id,))
+
 
 
 @st.fragment
@@ -149,8 +156,13 @@ def render_workspace(actor, service, users, campaign_id, stage):
                 placeholder=f"Choose a {label}", key=key, disabled=not can_access_admin(actor))
         st.markdown("#### Timeline")
         render_rows(snapshot, prefix, actions=ACTION_LIBRARY)
-        st.button("Save Changes", type="primary", key=f"influencer_save_{campaign_id}",
-            on_click=_save_workspace, args=(actor, service, campaign_id, snapshot_key, version_key, version, prefix))
+        footer_left, footer_right = st.columns([1, 1])
+        with footer_left:
+            render_add_row(snapshot, prefix)
+        with footer_right:
+            with st.container(horizontal=True, horizontal_alignment="right"):
+                st.button("Save Changes", type="primary", key=f"influencer_save_{campaign_id}",
+                    on_click=_save_workspace, args=(actor, service, campaign_id, snapshot_key, version_key, version, prefix))
         st.caption("Edits stay unsaved until Save Changes. Save before leaving or moving stages.")
         if any(row.start_date for row in snapshot["rows"]):
             st.caption("Existing row start dates still apply: a date cannot precede that row's start date.")

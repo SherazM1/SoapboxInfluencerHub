@@ -223,28 +223,32 @@ def render_all_programs(
 
 
 def render_program_registry(actor, service, title):
-    st.subheader(title)
-    if can_access_admin(actor):
-        st.button("New Program", type="primary", on_click=begin_new_program, args=(st.session_state,))
+    with st.container(key="program_section_actions"):
+        heading, action = st.columns([4, 1])
+        heading.subheader(title)
+        if can_access_admin(actor):
+            action.button("New Program", type="primary", on_click=begin_new_program, args=(st.session_state,))
     try:
         rows = ProgramRoutingService(service.repository).list_registry(actor)
     except CampaignOpsError as exc:
         st.error(f"Unable to load programs: {exc}")
         return
-    columns = st.columns([2, 3, 2, 2, 2, 1])
-    for column, label in zip(columns, ("Client", "Program", "Workflow", "Lead Owner", "Manager", "Open")):
-        column.markdown(f"**{label}**")
-    if not rows:
-        st.info("No active programs are available.")
-    for row in rows:
-        columns = st.columns([2, 3, 2, 2, 2, 1])
-        for column, value in zip(columns, (
-            row.client_name, row.program_name, WORKFLOW_LABELS.get(row.primary_workstream_type, "-"),
-            row.primary_owner_name, row.manager_name,
-        )):
-            column.write(safe_text(value))
-        columns[5].button("Open", key=f"campaign_ops_registry_open_{row.id}",
-                          on_click=set_selected_program, args=(st.session_state, row.id))
+    with st.container(key="program_registry"):
+        with st.container(key="program_registry_header"):
+            columns = st.columns([2, 3, 2, 2, 2, 1])
+            for column, label in zip(columns, ("Client", "Program", "Workflow", "Lead Owner", "Manager", "Open")):
+                column.markdown(f"**{label}**")
+        if not rows:
+            st.info("No active programs are available.")
+        for row in rows:
+            columns = st.columns([2, 3, 2, 2, 2, 1])
+            for column, value in zip(columns, (
+                row.client_name, row.program_name, WORKFLOW_LABELS.get(row.primary_workstream_type, "-"),
+                row.primary_owner_name, row.manager_name,
+            )):
+                column.write(safe_text(value))
+            columns[5].button("Open", key=f"campaign_ops_registry_open_{row.id}",
+                              on_click=set_selected_program, args=(st.session_state, row.id))
 
 
 def render_my_programs(
